@@ -700,6 +700,15 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
                     [theItem setRepresentedObject:dict];
                     [theItem setTarget:self];
                     [theMenu addItem:theItem];
+
+                    NSMenuItem *altItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ \u2325", theTitle]
+                                                                     action:mySelector
+                                                              keyEquivalent:@""];
+                    [altItem setRepresentedObject:dict];
+                    [altItem setTarget:self];
+                    [altItem setKeyEquivalentModifierMask:NSEventModifierFlagOption];
+                    altItem.alternate = YES;
+                    [theMenu addItem:altItem];
                     didAdd = YES;
                 }
                 break;
@@ -858,11 +867,20 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
 
 - (void)contextMenuActionSendText:(id)sender {
     [self evaluateCustomActionDictionary:[sender representedObject] completion:^(NSString *value) {
-        DLog(@"Send text: %@", value);
-        if (!value) {
-            return;
+        BOOL alternate = [sender isAlternate];
+        if (alternate) {
+            DLog(@"Copy text to pasteboard: %@", value);
+            if (!value) {
+                return;
+            }
+            [self.delegate contextMenu:self copyText:value];
+        } else {
+            DLog(@"Send text: %@", value);
+            if (!value) {
+                return;
+            }
+            [self.delegate contextMenu:self insertText:value];
         }
-        [self.delegate contextMenu:self insertText:value];
     }];
 }
 

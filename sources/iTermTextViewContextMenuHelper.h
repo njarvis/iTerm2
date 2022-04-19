@@ -103,6 +103,7 @@ toggleTerminalStateForMenuItem:(NSMenuItem *)item;
 - (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu addContextMenuItems:(NSMenu *)theMenu;
 - (id<VT100RemoteHostReading>)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu remoteHostOnLine:(int)line;
 - (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu insertText:(NSString *)text;
+- (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu copyText:(NSString *)text;
 - (BOOL)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu hasOutputForCommandMark:(id<VT100ScreenMarkReading>)commandMark;
 - (VT100GridCoordRange)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu
        rangeOfOutputForCommandMark:(id<VT100ScreenMarkReading>)mark;

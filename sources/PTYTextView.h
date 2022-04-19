@@ -95,6 +95,7 @@ typedef NS_ENUM(NSInteger, PTYCharType) {
 - (void)textViewSelectionDidChangeToTruncatedString:(NSString *)maybeSelection;
 - (void)launchCoprocessWithCommand:(NSString *)command;
 - (void)insertText:(NSString *)string;
+- (void)copyText:(NSString *)string;
 - (PTYTask *)shell;
 - (BOOL)alertOnNextMark;
 - (void)startDownloadOverSCP:(SCPPath *)path;

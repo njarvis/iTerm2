@@ -3498,6 +3498,12 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 }
 
+- (void)copyText:(NSString *)string {
+    if (string != nil) {
+        [self screenCopyStringToPasteboard:string];
+    }
+}
+
 - (NSData *)dataByRemovingControlCodes:(NSData *)data {
     NSMutableData *output = [NSMutableData dataWithCapacity:[data length]];
     const unsigned char *p = data.bytes;

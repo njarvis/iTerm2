@@ -1154,6 +1154,10 @@ hasOpenAnnotationInRange:(VT100GridCoordRange)coordRange {
     [self.delegate insertText:text];
 }
 
+- (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu copyText:(NSString *)text {
+     [self.delegate copyText:text];
+}
+
 - (BOOL)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu hasOutputForCommandMark:(id<VT100ScreenMarkReading>)commandMark {
     return [self.dataSource textViewRangeOfOutputForCommandMark:commandMark].start.x != -1;
 }
