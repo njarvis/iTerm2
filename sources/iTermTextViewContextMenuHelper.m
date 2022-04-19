@@ -689,7 +689,10 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
                                                        withCaptureComponents:components
                                                             workingDirectory:workingDirectory
                                                                   remoteHost:remoteHost];
-
+                    BOOL hasAlt =
+                        [ContextMenuActionPrefsController hasAlternativeAction:[ContextMenuActionPrefsController
+                                                                                    actionForActionDict:action]];
+                    
                     NSMenuItem *theItem = [[NSMenuItem alloc] initWithTitle:theTitle
                                                                      action:mySelector
                                                               keyEquivalent:@""];
@@ -701,14 +704,16 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
                     [theItem setTarget:self];
                     [theMenu addItem:theItem];
 
-                    NSMenuItem *altItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ \u2325", theTitle]
-                                                                     action:mySelector
-                                                              keyEquivalent:@""];
-                    [altItem setRepresentedObject:dict];
-                    [altItem setTarget:self];
-                    [altItem setKeyEquivalentModifierMask:NSEventModifierFlagOption];
-                    altItem.alternate = YES;
-                    [theMenu addItem:altItem];
+                    if (hasAlt) {
+                        NSMenuItem *altItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ \u2325", theTitle]
+                                                                         action:mySelector
+                                                                  keyEquivalent:@""];
+                        [altItem setRepresentedObject:dict];
+                        [altItem setTarget:self];
+                        [altItem setKeyEquivalentModifierMask:NSEventModifierFlagOption];
+                        altItem.alternate = YES;
+                        [theMenu addItem:altItem];
+                    }
                     didAdd = YES;
                 }
                 break;
