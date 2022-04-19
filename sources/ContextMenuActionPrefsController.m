@@ -89,6 +89,22 @@ NSString *iTermSmartSelectionActionContextKeyRemoteHost = @"remoteHost";
     return nil;
 }
 
++ (BOOL)hasAlternativeAction:(ContextMenuActions)action {
+    switch (action) {
+        case kRunCommandContextMenuAction:
+        case kRunCommandInWindowContextMenuAction:
+        case kRunCoprocessContextMenuAction:
+        case kOpenFileContextMenuAction:
+        case kCopyContextMenuAction:
+        case kOpenUrlContextMenuAction:
+            return false;
+        case kSendTextContextMenuAction:
+            return true;
+    }
+
+    return false;
+}
+
 + (void)computeParameterForActionDict:(NSDictionary *)dict
                 withCaptureComponents:(NSArray *)components
                      useInterpolation:(BOOL)useInterpolation

@@ -45,6 +45,8 @@ typedef NS_ENUM(NSInteger, ContextMenuActions) {
                 workingDirectory:(NSString *)workingDirectory
                       remoteHost:(id<VT100RemoteHostReading>)remoteHost;
 
++ (BOOL)hasAlternativeAction:(ContextMenuActions)action;
+
 // Use this as the keys into the dictionary that get passed to the `dict` parameter of
 // computeParameterForActionDict:….
 extern NSString *iTermSmartSelectionActionContextKeyAction;
