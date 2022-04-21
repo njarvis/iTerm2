@@ -688,7 +688,8 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
                         [ContextMenuActionPrefsController titleForActionDict:action
                                                        withCaptureComponents:components
                                                             workingDirectory:workingDirectory
-                                                                  remoteHost:remoteHost];
+                                                                  remoteHost:remoteHost
+                                                              forAlternative:false];
                     BOOL hasAlt =
                         [ContextMenuActionPrefsController hasAlternativeAction:[ContextMenuActionPrefsController
                                                                                     actionForActionDict:action]];
@@ -705,7 +706,13 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
                     [theMenu addItem:theItem];
 
                     if (hasAlt) {
-                        NSMenuItem *altItem = [[NSMenuItem alloc] initWithTitle:[NSString stringWithFormat:@"%@ \u2325", theTitle]
+                        NSString *altTitle =
+                            [ContextMenuActionPrefsController titleForActionDict:action
+                                                           withCaptureComponents:components
+                                                                workingDirectory:workingDirectory
+                                                                      remoteHost:remoteHost
+                                                                  forAlternative:true];
+                        NSMenuItem *altItem = [[NSMenuItem alloc] initWithTitle:altTitle
                                                                          action:mySelector
                                                                   keyEquivalent:@""];
                         [altItem setRepresentedObject:dict];

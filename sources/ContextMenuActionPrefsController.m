@@ -50,7 +50,8 @@ NSString *iTermSmartSelectionActionContextKeyRemoteHost = @"remoteHost";
 + (NSString *)titleForActionDict:(NSDictionary *)dict
            withCaptureComponents:(NSArray *)components
                 workingDirectory:(NSString *)workingDirectory
-                      remoteHost:(id<VT100RemoteHostReading>)remoteHost {
+                      remoteHost:(id<VT100RemoteHostReading>)remoteHost
+                  forAlternative:(BOOL)alternative {
     NSString *title = [dict objectForKey:kTitleKey];
     for (int i = 0; i < 9; i++) {
         NSString *repl = @"";
@@ -64,6 +65,9 @@ NSString *iTermSmartSelectionActionContextKeyRemoteHost = @"remoteHost";
     title = [title stringByReplacingEscapedChar:'h' withString:remoteHost.hostname];
     title = [title stringByReplacingEscapedChar:'u' withString:remoteHost.username];
     title = [title stringByReplacingEscapedChar:'\\' withString:@"\\"];
+    if (alternative) {
+        title = [title stringByAppendingString:@"  (\u2325)"];
+    }
 
     return title;
 }
@@ -165,9 +169,9 @@ NSString *iTermSmartSelectionActionContextKeyRemoteHost = @"remoteHost";
 
 - (void)updateHelpText {
     if (_useInterpolatedStringsButton.state == NSControlStateValueOn) {
-        _parameterInfoTextField.stringValue = @"In “parameter,” use \\(matches[i]) where i=0 for the entire match and i>0 for capture groups.";
+        _parameterInfoTextField.stringValue = @"In “title” and “parameter”, use \\(matches[i]) where i=0 for the entire match and i>0 for capture groups.";
     } else {
-        _parameterInfoTextField.stringValue = @"In “parameter,” use \\0 for match, \\1…\\9 for match groups, \\d for directory, \\u for user, \\h for host.";
+        _parameterInfoTextField.stringValue = @"In “title” and “parameter”, use \\0 for match, \\1…\\9 for match groups, \\d for directory, \\u for user, \\h for host.";
     }
 }
 

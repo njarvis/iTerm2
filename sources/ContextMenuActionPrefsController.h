@@ -43,7 +43,8 @@ typedef NS_ENUM(NSInteger, ContextMenuActions) {
 + (NSString *)titleForActionDict:(NSDictionary *)dict
            withCaptureComponents:(NSArray *)components
                 workingDirectory:(NSString *)workingDirectory
-                      remoteHost:(id<VT100RemoteHostReading>)remoteHost;
+                      remoteHost:(id<VT100RemoteHostReading>)remoteHost
+                  forAlternative:(BOOL)alternative;
 
 + (BOOL)hasAlternativeAction:(ContextMenuActions)action;
 
