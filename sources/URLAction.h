@@ -58,6 +58,7 @@ typedef NS_ENUM(NSInteger, URLActionType) {
 // For kURLActionSmartSelectionAction, the selector to invoke. This URLAction
 // will be passed as the argument.
 @property(nonatomic, assign) SEL selector;
+@property(nonatomic) BOOL isAlternate;
 
 @property(nonatomic) BOOL hover;
 

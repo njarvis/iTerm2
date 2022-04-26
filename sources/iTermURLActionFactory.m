@@ -413,15 +413,11 @@ static NSMutableArray<iTermURLActionFactory *> *sFactories;
         URLAction *action = [URLAction urlActionToPerformSmartSelectionRule:smartMatch.rule
                                                                    onString:content];
         action.range = smartRange;
-        NSInteger index = 0;
-        if (self.alternate && actions.count > 1) {
-            DLog(@"Selecting alternate action from %@", actions);
-            index = 1;
-        }
-        ContextMenuActions value = [ContextMenuActionPrefsController actionForActionDict:actions[index]];
+        ContextMenuActions value = [ContextMenuActionPrefsController actionForActionDict:actions[0]];
         action.selector = NSSelectorFromString(self.selectors[@(value)]);
+        action.isAlternate = self.alternate;
 
-        action.representedObject = @{ iTermSmartSelectionActionContextKeyAction: actions[index],
+        action.representedObject = @{ iTermSmartSelectionActionContextKeyAction: actions[0],
                                       iTermSmartSelectionActionContextKeyComponents: smartMatch.components,
                                       iTermSmartSelectionActionContextKeyWorkingDirectory: self.workingDirectory ?: [NSNull null],
                                       iTermSmartSelectionActionContextKeyRemoteHost: (id)self.remoteHost ?: [NSNull null]};
