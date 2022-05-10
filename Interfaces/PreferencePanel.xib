@@ -1934,6 +1934,7 @@ DQ
                                 <menuItem title="Login Shell" state="on" tag="1" id="KVK-Yx-UwL"/>
                                 <menuItem title="Command" id="uua-tF-2uE"/>
                                 <menuItem title="Custom Shell" tag="2" id="e7Q-Nz-XFN"/>
+                                <menuItem title="SSH" tag="3" id="lh1-TY-qbn"/>
                             </items>
                         </menu>
                     </popUpButtonCell>
