@@ -7247,6 +7247,18 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     [self.delegate sessionUpdateMetalAllowed];
 }
 
+- (NSString *)textViewCurrentSSHSessionName {
+    if (!_conductor) {
+        return nil;
+    }
+    return _conductor.sshIdentity.description;
+}
+
+- (void)textViewDisconnectSSH {
+    [_conductor quit];
+}
+
+
 - (void)highlightMarkOrNote:(id<IntervalTreeImmutableObject>)obj {
     if ([obj isKindOfClass:[iTermMark class]]) {
         BOOL hasErrorCode = NO;
@@ -13703,6 +13715,10 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 - (NSInteger)screenEndSSH:(NSString *)uniqueID {
     DLog(@"%@", uniqueID);
     BOOL found = NO;
+    if (![_conductor ancestryContainsClientUniqueID:uniqueID]) {
+        DLog(@"Ancestry does not contain this unique ID");
+        return 0;
+    }
     while (_conductor != nil && !found) {
         found = [_conductor.clientUniqueID isEqual:uniqueID];
         [self unhookSSHConductor];
@@ -16356,6 +16372,17 @@ getOptionKeyBehaviorLeft:(iTermOptionKeyBehavior *)left
         [mutableState appendCarriageReturnLineFeed];
     }];
     [self unhookSSHConductor];
+}
+
+- (void)conductorQuit {
+    NSString *identity = _conductor.sshIdentity.description;
+    [_screen mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
+        [mutableState appendBannerMessage:[NSString stringWithFormat:@"Disconnected from %@", identity]];
+    }];
+    [self unhookSSHConductor];
+    [_sshHostNames removeLastObject];
+    [_sshWriteQueue setLength:0];
+
 }
 
 @end
