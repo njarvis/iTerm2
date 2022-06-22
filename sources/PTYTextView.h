@@ -261,6 +261,7 @@ extern NSNotificationName iTermPortholesDidChange;
 - (void)textViewDidAddOrRemovePorthole;
 - (NSString *)textViewCurrentSSHSessionName;
 - (void)textViewDisconnectSSH;
+- (void)textViewShowFindIndicator:(VT100GridCoordRange)range;
 
 @end
 
