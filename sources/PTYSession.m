@@ -11859,6 +11859,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     _originalProfile = [newProfile copy];
     [self remarry];
     if (preserveName) {
+        [self.variablesScope setValuesFromDictionary:@{ iTermVariableKeySessionProfileName: newProfile[KEY_NAME] ?: [NSNull null] }];
         return;
     }
     [self profileDidChangeToProfileWithName:newProfile[KEY_NAME]];
