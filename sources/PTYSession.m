@@ -7342,6 +7342,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 }
 
 - (void)nextMark {
+    if ([_modeHandler nextMark]) {
+        return;
+    }
     [self nextMarkOrNote:NO];
 }
 
@@ -7350,6 +7353,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 }
 
 - (void)previousMark {
+    if ([_modeHandler previousMark]) {
+        return;
+    }
     [self previousMarkOrNote:NO];
 }
 
