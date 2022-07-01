@@ -11204,9 +11204,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 
 - (void)screenNeedsRedraw {
     [self refresh];
-    [_textview updateNoteViewFrames];
-    [_textview updatePortholeFrames];
-    [_textview setNeedsDisplay:YES];
+    [_textview updateSubviewFrames];
 }
 
 - (void)screenUpdateDisplay:(BOOL)redraw {
