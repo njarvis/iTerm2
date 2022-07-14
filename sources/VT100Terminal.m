@@ -1964,6 +1964,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             receivingFile_ = NO;
         }
     } else if (_copyMode != VT100TerminalCopyModeNone) {
+        DLog(@"Copy mode %ld", _copyMode);
         if (token->type == XTERMCC_MULTITOKEN_BODY) {
             [_delegate terminalDidReceiveBase64PasteboardString:token.string ?: @""];
             return;
@@ -1985,6 +1986,8 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             [_delegate terminalPasteboardReceiptEndedUnexpectedly];
             _copyMode = VT100TerminalCopyModeNone;
         }
+    } else {
+        DLog(@"No copy mode %ld", _copyMode);
     }
 
     if (token->savingData &&
@@ -3944,6 +3947,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     NSArray *kvp = [self keyValuePairInToken:token];
     NSString *key = kvp[0];
     NSString *value = kvp[1];
+    DLog(@"Key %@, Value %@", key, value);
     if ([key isEqualToString:@"CursorShape"]) {
         // Value must be an integer. Bogusly, non-numbers are treated as 0.
         int shape = [value intValue];
@@ -3999,11 +4003,12 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
         if ([_delegate terminalIsTrusted]) {
             NSArray<NSString *> *parts = [value componentsSeparatedByString:@";"];
             int mode;
-            if (parts.count == 0) {
+            if (parts.count == 1) {
                 mode = 1;
             } else {
                 mode = parts[0].intValue;
             }
+            DLog(@"Copy parts %@, mode %d", parts, mode);
             switch (mode) {
                 case 1:
                     // Contains the entirety.
