@@ -1869,7 +1869,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 - (void)setInitialTabStops {
     [self.tabStops removeAllObjects];
     const int kInitialTabWindow = 1000;
-    const int width = [iTermAdvancedSettingsModel defaultTabStopWidth];
+    const int width = MAX(1, [iTermAdvancedSettingsModel defaultTabStopWidth]);
     for (int i = 0; i < kInitialTabWindow; i += width) {
         [self.tabStops addObject:@(i)];
     }
@@ -4954,7 +4954,7 @@ launchCoprocessWithCommand:(NSString *)command
 
 // Runs on the main thread or while joined.
 - (void)tokenExecutorHandleSideEffectFlags:(NSInteger)flags {
-    DLog(@"tokenExecutorHandleSideEffectFlags:%lx", (long long)flags);
+    DLog(@"tokenExecutorHandleSideEffectFlags:%llx", (long long)flags);
     if (flags & VT100ScreenMutableStateSideEffectFlagNeedsRedraw) {
         [self performSideEffect:^(id<VT100ScreenDelegate> delegate) {
             [delegate screenNeedsRedraw];
