@@ -36,6 +36,7 @@ extern NSString * const kTmuxGatewayErrorDomain;
 - (TmuxController *)tmuxController;
 - (BOOL)tmuxUpdateLayoutForWindow:(int)windowId
                            layout:(NSString *)layout
+                    visibleLayout:(NSString *)visibleLayout
                            zoomed:(NSNumber *)zoomed
                              only:(BOOL)only;
 - (void)tmuxWindowAddedWithId:(int)windowId;
@@ -65,6 +66,7 @@ extern NSString * const kTmuxGatewayErrorDomain;
 - (void)tmuxActiveWindowPaneDidChangeInWindow:(int)windowID toWindowPane:(int)paneID;
 - (void)tmuxSessionWindowDidChangeTo:(int)windowID;
 - (void)tmuxWindowPaneDidPause:(int)wp notification:(BOOL)notification;
+- (void)tmuxSessionPasteDidChange:(NSString *)pasteBufferName;
 @end
 
 typedef NS_ENUM(NSInteger, ControlCommand) {
@@ -79,7 +81,7 @@ typedef NS_ENUM(NSInteger, ControlCommand) {
 // Should all protocol-level input be logged to the gateway's session?
 @property(nonatomic, assign) BOOL tmuxLogging;
 @property(nonatomic, readonly) NSWindowController<iTermWindowController> *window;
-@property(nonatomic, readonly) id<TmuxGatewayDelegate> delegate;
+@property(nonatomic, weak) id<TmuxGatewayDelegate> delegate;
 @property(nonatomic, retain) NSDecimalNumber *minimumServerVersion;
 @property(nonatomic, retain) NSDecimalNumber *maximumServerVersion;
 @property(nonatomic, assign) BOOL acceptNotifications;

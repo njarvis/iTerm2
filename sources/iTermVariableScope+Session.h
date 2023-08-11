@@ -56,6 +56,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nullable, nonatomic, copy) NSString *logFilename;
 @property (nullable, nonatomic, copy) NSArray *mouseInfo;
 @property (nonatomic) BOOL applicationKeypad;
+@property (nullable, nonatomic, strong) NSString *homeDirectory;
+@property (nonatomic) NSInteger sshIntegrationLevel;
+@property (nullable, nonatomic, copy) NSString *shell;
+@property (nullable, nonatomic, copy) NSString *uname;
 
 @end
 

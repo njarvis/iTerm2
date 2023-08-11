@@ -116,6 +116,7 @@ extern NSString *const PTYTabVariableTitleOverride;
                                                              sessions:(NSArray *)sessions;
 
 + (PTYTab *)openTabWithTmuxLayout:(NSMutableDictionary *)parseTree
+                    visibleLayout:(NSMutableDictionary *)visibleParseTree
                        inTerminal:(NSWindowController<iTermWindowController> *)term
                        tmuxWindow:(int)tmuxWindow
                    tmuxController:(TmuxController *)tmuxController;
@@ -130,6 +131,11 @@ extern NSString *const PTYTabVariableTitleOverride;
 
 + (NSDictionary *)arrangementForSessionWithGUID:(NSString *)sessionGUID
                                   inArrangement:(NSDictionary *)arrangement;
+
+- (NSDictionary *)arrangementWithOnlySession:(PTYSession *)session
+                                     profile:(Profile *)profile
+                                 saveProgram:(BOOL)saveProgram
+                                pendingJumps:(NSArray<iTermSSHReconnectionInfo *> *)pendingJumps;
 
 + (void)openPartialAttachmentsForArrangement:(NSDictionary *)arrangement
                                   completion:(void (^)(NSDictionary *))completion;
@@ -218,6 +224,7 @@ extern NSString *const PTYTabVariableTitleOverride;
 // are "well formed".
 - (void)numberOfSessionsDidChange;
 - (BOOL)updatePaneTitles;
+- (void)updateSessionOrdinals;
 
 - (void)resizeViewsInViewHierarchy:(NSView *)view
                       forNewLayout:(NSMutableDictionary *)parseTree;
@@ -225,16 +232,16 @@ extern NSString *const PTYTabVariableTitleOverride;
 // Size we are given the current layout
 
 - (void)setTmuxLayout:(NSMutableDictionary *)parseTree
+        visibleLayout:(NSMutableDictionary *)visibleParseTree
        tmuxController:(TmuxController *)tmuxController
                zoomed:(NSNumber *)zoomed;
 // Returns true if the tmux layout is too large for the window to accommodate.
 - (BOOL)updatedTmuxLayoutRequiresAdjustment;
 - (TmuxController *)tmuxController;
 
-- (void)setTmuxFont:(NSFont *)font
-       nonAsciiFont:(NSFont *)nonAsciiFont
-           hSpacing:(double)hs
-           vSpacing:(double)vs;
+- (void)setTmuxFontTable:(iTermFontTable *)fontTable
+                hSpacing:(double)hs
+                vSpacing:(double)vs;
 
 - (void)moveCurrentSessionDividerBy:(int)direction horizontally:(BOOL)horizontally;
 - (BOOL)canMoveCurrentSessionDividerBy:(int)direction horizontally:(BOOL)horizontally;
@@ -270,5 +277,7 @@ extern NSString *const PTYTabVariableTitleOverride;
 - (void)arrangeSplitPanesEvenly;
 - (void)bounceMetal;
 - (void)makeActive;
+- (void)willDeselectTab;
+- (void)didSelectTab;
 
 @end

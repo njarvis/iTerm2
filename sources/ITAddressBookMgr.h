@@ -114,14 +114,17 @@
 #define KEYTEMPLATE_ANSI_X_COLOR   @"Ansi %d Color"
 #define KEY_SMART_CURSOR_COLOR     @"Smart Cursor Color"
 #define KEY_MINIMUM_CONTRAST       @"Minimum Contrast"
+#define KEY_FAINT_TEXT_ALPHA       @"Faint Text Alpha"
 #define KEY_TAB_COLOR              @"Tab Color"
 #define KEY_USE_TAB_COLOR          @"Use Tab Color"
+#define KEY_USE_SELECTED_TEXT_COLOR @"Use Selected Text Color"
 #define KEY_UNDERLINE_COLOR        @"Underline Color"
 #define KEY_USE_UNDERLINE_COLOR    @"Use Underline Color"
 #define KEY_CURSOR_BOOST           @"Cursor Boost"
 #define KEY_USE_CURSOR_GUIDE       @"Use Cursor Guide"
 #define KEY_CURSOR_GUIDE_COLOR     @"Cursor Guide Color"
 #define KEY_BADGE_COLOR            @"Badge Color"
+
 // End of key swith light and dark variants
 #define KEY_USE_SEPARATE_COLORS_FOR_LIGHT_AND_DARK_MODE @"Use Separate Colors for Light and Dark Mode"
 #define COLORS_LIGHT_MODE_SUFFIX @" (Light)"
@@ -140,6 +143,7 @@
 #define KEY_SPACE                  @"Space"  // integer, iTermProfileSpaceSetting
 #define KEY_NORMAL_FONT            @"Normal Font"
 #define KEY_NON_ASCII_FONT         @"Non Ascii Font"
+#define KEY_FONT_CONFIG            @"Special Font Config"
 #define KEY_HORIZONTAL_SPACING     @"Horizontal Spacing"
 #define KEY_VERTICAL_SPACING       @"Vertical Spacing"
 #define KEY_BLINKING_CURSOR        @"Blinking Cursor"
@@ -202,6 +206,7 @@
 #define KEY_LOAD_SHELL_INTEGRATION_AUTOMATICALLY @"Load Shell Integration Automatically"
 
 #define KEY_SET_LOCALE_VARS                   @"Set Local Environment Vars"
+#define KEY_CUSTOM_LOCALE                     @"Custom Locale"
 #define KEY_CHARACTER_ENCODING                @"Character Encoding"
 #define KEY_SCROLLBACK_LINES                  @"Scrollback Lines"
 #define KEY_UNLIMITED_SCROLLBACK              @"Unlimited Scrollback"
@@ -210,6 +215,7 @@
 #define KEY_USE_CANONICAL_PARSER              @"Use Canonical Parser"  // Deprecated
 #define KEY_PLACE_PROMPT_AT_FIRST_COLUMN      @"Place Prompt at First Column"
 #define KEY_SHOW_MARK_INDICATORS              @"Show Mark Indicators"
+#define KEY_SHOW_OFFSCREEN_COMMANDLINE        @"Show Offscreen Command line"
 
 // Session
 #define KEY_AUTOLOG                           @"Automatically Log"
@@ -262,6 +268,7 @@
 #define KEY_SMART_SELECTION_ACTIONS_USE_INTERPOLATED_STRINGS @"Smart Selection Actions Use Interpolated Strings"  // Bool
 #define KEY_SEMANTIC_HISTORY                 @"Semantic History"
 #define KEY_BOUND_HOSTS                      @"Bound Hosts"
+#define KEY_SNIPPETS_FILTER                  @"Snippets Filter"
 
 // Dynamic Profiles (not in prefs ui)
 #define KEY_DYNAMIC_PROFILE_PARENT_NAME      @"Dynamic Profile Parent Name"
@@ -279,6 +286,14 @@
 // This is not a real setting. It's a way to communicate that a newly created
 // window should not use auto-saved frames (see -loadAutoSave). Takes a boolean.
 #define KEY_DISABLE_AUTO_FRAME               @"Disable Auto Frame"
+
+// This is not a real setting. It's used to make a session short-lived single use, such as when
+// showing a man url. It takes a NSNumber boolean.
+#define KEY_SHORT_LIVED_SINGLE_USE           @"Short-Lived Single Use"
+
+// This is not a real setting. It's used to keep the session scrolled to the top until the user
+// moves it to the bottom. This is useful for showing man pages. It's a NSNumber boolean.
+#define KEY_LOCK_SCROLL_ON_LAUNCH            @"Lock Scroll on Launch"
 
 @class iTermVariableScope;
 
@@ -429,6 +444,12 @@ typedef NS_ENUM(NSUInteger, iTermLoggingStyle) {
     iTermLoggingStyleAsciicast
 };
 
+typedef NS_ENUM(NSUInteger, iTermSetLocalVarsMode) {
+    iTermSetLocalVarsModeDoNotSet = 0,
+    iTermSetLocalVarsModeSetAutomatically = 1,
+    iTermSetLocalVarsModeCustom = 2
+};
+
 static inline iTermLoggingStyle iTermLoggingStyleFromUserDefaultsValue(NSUInteger value) {
     switch (value) {
         case iTermLoggingStyleHTML:
@@ -439,6 +460,8 @@ static inline iTermLoggingStyle iTermLoggingStyleFromUserDefaultsValue(NSUIntege
     }
     return iTermLoggingStyleRaw;
 }
+
+NSString *iTermPathToSSH(void);
 
 @interface ITAddressBookMgr : NSObject <NSNetServiceBrowserDelegate, NSNetServiceDelegate>
 

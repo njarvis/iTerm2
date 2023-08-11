@@ -61,10 +61,6 @@ extern NSString *const kSSKeychainWhereKey;
 // If set, use iCloud keychain.
 @property (class) BOOL synchronized;
 
-// If set and synchronized is off, gives the path to the keychain to use.
-// If unset and synchronized is off, the login keychain is used.
-@property (class, copy) NSString *pathToKeychain;
-
 #pragma mark - Classic methods
 
 /**
@@ -79,6 +75,10 @@ extern NSString *const kSSKeychainWhereKey;
  have a password for the given parameters.
  */
 + (NSString *)passwordForService:(NSString *)serviceName account:(NSString *)account error:(NSError **)error;
++ (NSString *)passwordForService:(NSString *)serviceName
+                         account:(NSString *)account
+                           label:(NSString *)label
+                           error:(NSError *__autoreleasing *)error;
 
 
 /**
@@ -91,8 +91,8 @@ extern NSString *const kSSKeychainWhereKey;
  @return Returns `YES` on success, or `NO` on failure.
  */
 + (BOOL)deletePasswordForService:(NSString *)serviceName account:(NSString *)account;
-+ (BOOL)deletePasswordForService:(NSString *)serviceName account:(NSString *)account error:(NSError **)error;
-
++ (BOOL)deletePasswordForService:(NSString *)serviceName account:(NSString *)account error:(NSError *__autoreleasing*)error;
++ (BOOL)deletePasswordForService:(NSString *)serviceName account:(NSString *)account label:(NSString *)label error:(NSError *__autoreleasing *)error;
 
 /**
  Sets a password in the Keychain.
@@ -106,8 +106,8 @@ extern NSString *const kSSKeychainWhereKey;
  @return Returns `YES` on success, or `NO` on failure.
  */
 + (BOOL)setPassword:(NSString *)password forService:(NSString *)serviceName account:(NSString *)account;
-+ (BOOL)setPassword:(NSString *)password forService:(NSString *)serviceName account:(NSString *)account error:(NSError **)error;
-
++ (BOOL)setPassword:(NSString *)password forService:(NSString *)serviceName account:(NSString *)account error:(NSError *__autoreleasing*)error;
++ (BOOL)setPassword:(NSString *)password forService:(NSString *)serviceName account:(NSString *)account label:(NSString *)label error:(NSError *__autoreleasing *)error;
 
 /**
  Returns an array containing the Keychain's accounts, or `nil` if the Keychain has no accounts.
@@ -138,7 +138,6 @@ extern NSString *const kSSKeychainWhereKey;
 
 #pragma mark - Configuration
 
-#if __IPHONE_4_0 && TARGET_OS_IPHONE
 /**
  Returns the accessibility type for all future passwords saved to the Keychain.
 
@@ -162,6 +161,5 @@ extern NSString *const kSSKeychainWhereKey;
  @see accessibilityType
  */
 + (void)setAccessibilityType:(CFTypeRef)accessibilityType;
-#endif
 
 @end

@@ -80,6 +80,8 @@ extern NSString *const kTurnOffBracketedPasteOnHostChangeAnnouncementIdentifier;
               hasInvalidPWD:(NSString *)badPWD
          forSessionWithGuid:(NSString *)sessionGUID;
 - (void)offerToDisableTriggersInInteractiveApps;
+- (void)tmuxDidUpdatePasteBuffer;
+- (void)openURL:(NSURL *)url;
 
 @end
 

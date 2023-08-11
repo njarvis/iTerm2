@@ -12,6 +12,7 @@
 @class iTermColorMap;
 @class iTermExternalAttributeIndex;
 @protocol iTermMark;
+@class iTermOffscreenCommandLine;
 @protocol IntervalTreeImmutableObject;
 @class PTYAnnotation;
 @protocol PTYAnnotationReading;
@@ -109,6 +110,7 @@
 - (VT100GridCoordRange)coordRangeOfAnnotation:(id<IntervalTreeImmutableObject>)note;
 - (NSArray *)charactersWithNotesOnLine:(int)line;
 - (id<VT100ScreenMarkReading>)markOnLine:(int)line;
+- (void)removeNamedMark:(id<VT100ScreenMarkReading>)mark;
 
 - (NSString *)workingDirectoryOnLine:(int)line;
 
@@ -146,5 +148,7 @@
 - (void)changeHeightOfMark:(id<iTermMark>)mark to:(int)newHeight;
 
 - (VT100GridCoordRange)coordRangeOfPorthole:(id<Porthole>)porthole;
+- (iTermOffscreenCommandLine *)offscreenCommandLineBefore:(int)line;
+- (NSInteger)numberOfCellsUsedInRange:(VT100GridRange)range;
 
 @end

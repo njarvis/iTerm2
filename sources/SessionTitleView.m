@@ -112,6 +112,11 @@ static const CGFloat kButtonSize = 17;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
+- (void)scrollWheel:(NSEvent *)event {
+    DLog(@"%@", event);
+    [super scrollWheel:event];
+}
+
 - (NSMenu *)menu {
     return delegate_.menu;
 }
@@ -212,7 +217,7 @@ static const CGFloat kButtonSize = 17;
             prefix = [NSString stringForModifiersWithMask:(NSEventModifierFlagCommand | NSEventModifierFlagOption)];
             break;
 
-        case kPreferencesModifierTagControl:
+        case kPreferencesModifierTagLegacyRightControl:
             prefix = [NSString stringForModifiersWithMask:NSEventModifierFlagControl];
             break;
     }

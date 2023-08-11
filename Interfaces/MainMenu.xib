@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="20037" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
+<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="21701" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
     <dependencies>
         <deployment identifier="macosx"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="20037"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="21701"/>
     </dependencies>
     <objects>
         <customObject id="-2" userLabel="File's Owner" customClass="NSApplication">
@@ -31,7 +31,7 @@
                             <menuItem isSeparatorItem="YES" id="Dxk-DH-qzi">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Check For Updates…" identifier="Check For Updates…" id="880">
+                            <menuItem title="Check for Updates…" identifier="Check For Updates…" id="880">
                                 <connections>
                                     <action selector="checkForUpdatesFromMenu:" target="201" id="vmh-LD-TwW"/>
                                 </connections>
@@ -325,18 +325,6 @@ DQ
                                                 <action selector="sshDisconnect:" target="-1" id="ccH-a0-Ijh"/>
                                             </connections>
                                         </menuItem>
-                                        <menuItem title="Remove File Provider" identifier="ssh.Remove File Provider" id="kyU-0L-Ich">
-                                            <modifierMask key="keyEquivalentModifierMask"/>
-                                            <connections>
-                                                <action selector="removeFileProvider:" target="201" id="oT8-Bp-WIB"/>
-                                            </connections>
-                                        </menuItem>
-                                        <menuItem title="Add File Provider" identifier="ssh.Add File Provider" id="7jg-eO-XJf">
-                                            <modifierMask key="keyEquivalentModifierMask"/>
-                                            <connections>
-                                                <action selector="addFileProvider:" target="201" id="9w6-ep-5cn"/>
-                                            </connections>
-                                        </menuItem>
                                     </items>
                                 </menu>
                             </menuItem>
@@ -507,6 +495,12 @@ DQ
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="renderSelection:" target="-1" id="CYd-u9-J4s"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="b0A-74-lFS"/>
+                            <menuItem title="Engage Artificial Intelligence" keyEquivalent="b" identifier="Engage Artificial Intelligence" id="zgu-Gv-WUr">
+                                <connections>
+                                    <action selector="performNaturalLanguageQuery:" target="-1" id="oJ4-at-Hbh"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="jHq-aL-J2z"/>
@@ -688,6 +682,12 @@ DQ
                                                             <action selector="toggleAlertOnNextMark:" target="-1" id="hTO-Iy-yuC"/>
                                                         </connections>
                                                     </menuItem>
+                                                    <menuItem title="Alert on Marks in Offscreen Sessions" identifier="Marks and Alerts.Alerts.Alert on Marks in Offscreen Sessions" id="qcQ-i5-i8s">
+                                                        <modifierMask key="keyEquivalentModifierMask"/>
+                                                        <connections>
+                                                            <action selector="toggleAlertOnMarksInOffscreenSessions:" target="201" id="WEg-8X-bzA"/>
+                                                        </connections>
+                                                    </menuItem>
                                                     <menuItem isSeparatorItem="YES" id="cY7-mh-hpz">
                                                         <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                                                     </menuItem>
@@ -709,6 +709,16 @@ DQ
                                     </items>
                                 </menu>
                             </menuItem>
+                            <menuItem title="Set Named Mark" keyEquivalent="M" identifier="Set Named Mark" id="8d7-qE-wpn">
+                                <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                <connections>
+                                    <action selector="addNamedMark:" target="-1" id="Zg2-RM-lft"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Named Marks" id="bWZ-Rb-J4D">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <menu key="submenu" title="Named Marks" id="ZSr-qC-BlG"/>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="1238">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                                 <menu key="submenu" id="1239">
@@ -728,6 +738,12 @@ DQ
                             <menuItem title="Clear Buffer" keyEquivalent="k" identifier="Clear Buffer" id="217">
                                 <connections>
                                     <action selector="clearBuffer:" target="-1" id="220"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Clear Instant Replay" keyEquivalent="k" identifier="Clear Instant Replay" id="dxF-XL-vIa">
+                                <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
+                                <connections>
+                                    <action selector="clearInstantReplay:" target="-1" id="r9X-aA-p10"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Clear Scrollback Buffer" keyEquivalent="K" identifier="Clear Scrollback Buffer" id="755">
@@ -835,6 +851,12 @@ Gw
                                     <action selector="toggleAutoCommandHistory:" target="-1" id="asy-Rr-9Eu"/>
                                 </connections>
                             </menuItem>
+                            <menuItem title="Auto Composer" keyEquivalent="." identifier="Auto Composer" id="TJi-5Q-RCM">
+                                <modifierMask key="keyEquivalentModifierMask" shift="YES" option="YES" command="YES"/>
+                                <connections>
+                                    <action selector="toggleAutoComposer:" target="-1" id="Oga-l4-yoN"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="gzL-UV-S2y">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
@@ -928,6 +950,12 @@ DQ
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="restartSession:" target="-1" id="zO6-It-s2w"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Duplicate Session" identifier="Duplicate Session" id="01D-vQ-sLv">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="duplicateSession:" target="-1" id="nzu-Ed-FXh"/>
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="ibp-nX-yTw">
@@ -1168,6 +1196,12 @@ DQ
                                                 <action selector="installPythonRuntime:" target="201" id="uxc-3n-hZc"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem title="Install Already-Downloaded Python Runtime" alternate="YES" identifier="Install Already-Downloaded Python Runtime" id="t3w-Wj-vG8">
+                                            <modifierMask key="keyEquivalentModifierMask" option="YES"/>
+                                            <connections>
+                                                <action selector="installAlreadyDownloadedPythonRuntime:" target="201" id="3fX-lc-mur"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem title="Reveal Scripts in Finder" identifier="Reveal in Finder" id="eeH-ly-45H">
                                             <modifierMask key="keyEquivalentModifierMask"/>
                                             <connections>
@@ -1352,6 +1386,9 @@ DQ
                                     <action selector="mergeAllWindows:" target="-1" id="Xzh-bw-9Mo"/>
                                 </connections>
                             </menuItem>
+                            <menuItem isSeparatorItem="YES" id="7sO-I5-Tdu">
+                                <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                            </menuItem>
                             <menuItem title="Arrange Windows Horizontally" identifier="Arrange Windows Horizontally" id="1178">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
@@ -1364,13 +1401,22 @@ DQ
                                     <action selector="arrangeSplitPanesEvenly:" target="201" id="eE4-2D-fTq"/>
                                 </connections>
                             </menuItem>
+                            <menuItem isSeparatorItem="YES" id="1466">
+                                <modifierMask key="keyEquivalentModifierMask" command="YES"/>
+                            </menuItem>
                             <menuItem title="Move Session to Window" identifier="Move Session to Window" id="Hlz-4M-IYw">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="moveSessionToWindow:" target="-1" id="wG5-71-6aQ"/>
                                 </connections>
                             </menuItem>
-                            <menuItem isSeparatorItem="YES" id="1466">
+                            <menuItem title="Move Session to Tab" identifier="Move Session to Tab" id="GfE-qn-Fur">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="moveSessionToTab:" target="-1" id="gBR-Yc-45o"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="wb3-aB-v5h">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
                             <menuItem title="Save Window Arrangement" keyEquivalent="S" identifier="Save Window Arrangement" id="1205">
@@ -1597,9 +1643,12 @@ DQ
         <customObject id="201" userLabel="iTermApplicationDelegate" customClass="iTermApplicationDelegate">
             <connections>
                 <outlet property="_buriedSessions" destination="PTu-aD-qbz" id="Fl9-Gn-jv2"/>
+                <outlet property="_captureGPUFrameMenuItem" destination="8KO-hG-xdC" id="boz-fC-4l8"/>
                 <outlet property="_composerMenuItem" destination="Bhs-45-5yR" id="Od6-HK-qOR"/>
                 <outlet property="_enterFullScreenMenuItem" destination="914" id="pbn-Hb-GK3"/>
                 <outlet property="_installPythonRuntime" destination="0D0-tt-wlA" id="nad-Fp-mh8"/>
+                <outlet property="_iterm2Menu" destination="57" id="xrG-8D-NNQ"/>
+                <outlet property="_namedMarksMenuItem" destination="bWZ-Rb-J4D" id="M8H-RD-WYb"/>
                 <outlet property="_scriptsMenu" destination="CZD-7u-bch" id="2Q5-aI-74T"/>
                 <outlet property="_showTipOfTheDay" destination="ft3-BP-igZ" id="WZt-qp-iuC"/>
                 <outlet property="_splitHorizontally" destination="1289" id="Arv-ON-Put"/>
@@ -1631,11 +1680,5 @@ DQ
                 <outlet property="_menu" destination="8Ja-GB-Waf" id="a0G-8e-2dj"/>
             </connections>
         </customObject>
-        <menuItem title="Disconnect" identifier="ssh.Disconnect" id="lV3-vx-saW">
-            <modifierMask key="keyEquivalentModifierMask"/>
-            <connections>
-                <action selector="sshDisconnect:" target="-1" id="Dok-Az-6De"/>
-            </connections>
-        </menuItem>
     </objects>
 </document>

@@ -9,6 +9,7 @@
 
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
+#import "iTermPreferences.h"
 #import "NSArray+iTerm.h"
 #import "NSStringITerm.h"
 #import "ProfileModel.h"
@@ -27,6 +28,7 @@ NSString *const kTurnOffBracketedPasteOnHostChangeUserDefaultsKey = @"NoSyncTurn
 static NSString *const iTermNaggingControllerAskAboutChangingProfileIdentifier = @"AskAboutChangingProfile";
 static NSString *const iTermNaggingControllerTmuxWindowsShouldCloseAfterDetach = @"TmuxWindowsShouldCloseAfterDetach";
 static NSString *const kTurnOffSlowTriggersOfferUserDefaultsKey = @"kTurnOffSlowTriggersOfferUserDefaultsKey";
+static NSString *const iTermNaggingControllerOfferToSyncTmuxClipboard = @"NoSyncOfferToSyncTmuxClipboard";
 
 static NSString *const iTermNaggingControllerUserDefaultNeverAskAboutSettingAlternateMouseScroll = @"NoSyncNeverAskAboutSettingAlternateMouseScroll";
 
@@ -441,6 +443,41 @@ static NSString *const iTermNaggingControllerDidChangeTmuxWindowsShouldCloseAfte
     }];
 }
 
+- (void)tmuxDidUpdatePasteBuffer {
+    if (![self.delegate naggingControllerCanShowMessageWithIdentifier:iTermNaggingControllerOfferToSyncTmuxClipboard]) {
+        DLog(@"Don't show warning");
+        return;
+    }
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:kPreferenceKeyTmuxSyncClipboard]) {
+        DLog(@"Nag disabled");
+        return;
+    }
+    if ([iTermPreferences boolForKey:kPreferenceKeyTmuxSyncClipboard]) {
+        return;
+    }
+    [self.delegate naggingControllerShowMessage:@"The tmux paste buffer was updated. Would you like to mirror it to the local clipboard from now on?"
+                                     isQuestion:YES
+                                      important:NO
+                                     identifier:iTermNaggingControllerOfferToSyncTmuxClipboard
+                                        options:@[ @"_Always", @"_Never" ]
+                                     completion:^(int selection) {
+        switch (selection) {
+            case -2:  // Dismiss programatically
+                break;
+            case -1: // No
+                break;
+
+            case 0: // Always
+                [iTermPreferences setBool:YES forKey:kPreferenceKeyTmuxSyncClipboard];
+                break;
+
+            case 1:  // Never
+                [iTermPreferences setBool:NO forKey:kPreferenceKeyTmuxSyncClipboard];
+                break;
+        }
+    }];
+}
+
 - (BOOL)shouldAskAboutClearingScrollbackHistory {
     return iTermAdvancedSettingsModel.preventEscapeSequenceFromClearingHistory == nil;
 }
@@ -523,6 +560,48 @@ static NSString *const iTermNaggingControllerDidChangeTmuxWindowsShouldCloseAfte
     if ([notification.object boolValue]) {
         [self.delegate naggingControllerCloseSession];
     }
+}
+
+- (void)openURL:(NSURL *)url {
+    NSString *allowHostKey = [NSString stringWithFormat:@"NoSyncAllowOpenURL_host:%@", url.host];
+
+    if ([iTermAdvancedSettingsModel noSyncDisableOpenURL]) {
+        DLog(@"OpenUrl disabled");
+        return;
+    }
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:allowHostKey]) {
+        DLog(@"Always allow %@", url.host);
+        [[NSWorkspace sharedWorkspace] openURL:url];
+        return;
+    }
+
+    [_delegate naggingControllerShowMessage:[NSString stringWithFormat: @"Open this URL? %@", url.absoluteString]
+                                 isQuestion:YES
+                                  important:YES
+                                 identifier:allowHostKey
+                                    options:@[ @"Allow", @"Always allow for this host", @"Never allow" ]
+                                 completion:^(int selection) {
+        switch (selection) {
+            case -2:  // Dismiss programmatically
+                break;
+
+            case -1: // Closed
+                break;
+
+            case 0: // Allow
+                [[NSWorkspace sharedWorkspace] openURL:url];
+                break;
+
+            case 1:  // Allow for this host
+                [[NSUserDefaults standardUserDefaults] setBool:YES forKey:allowHostKey];
+                [[NSWorkspace sharedWorkspace] openURL:url];
+                break;
+
+            case 2:  // Never allow
+                [iTermAdvancedSettingsModel setNoSyncDisableOpenURL:YES];
+                break;
+        }
+    }];
 }
 
 #pragma mark - Variable Reporting

@@ -46,7 +46,7 @@ static NSString *const kDeleteKeyString = @"0x7f-0x0";
     IBOutlet iTermKeyMappingViewController *_keyMappingViewController;
     IBOutlet NSButton *_allowModifyOtherKeys;
     IBOutlet NSButton *_movementKeysScrollOutsideInteractiveApps;
-    IBOutlet NSTabView *_tabView;
+    IBOutlet NSTabView *_tabView;   
     iTermHotkeyPreferencesWindowController *_hotkeyPanel;
     NSInteger _posting;
 }
@@ -350,7 +350,8 @@ static NSString *const kDeleteKeyString = @"0x7f-0x0";
                                forKeystroke:[iTermKeystroke backspace]
                                      action:[iTermKeyBindingAction withAction:KEY_ACTION_SEND_C_H_BACKSPACE
                                                                     parameter:@""
-                                                                     escaping:iTermSendTextEscapingCommon]
+                                                                     escaping:iTermSendTextEscapingCommon
+                                                                    applyMode:iTermActionApplyModeCurrentSession]
                                   createNew:YES
                                   inProfile:mutableProfile];
     } else {

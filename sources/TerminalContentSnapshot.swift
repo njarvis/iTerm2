@@ -34,7 +34,7 @@ class TerminalContentSnapshot: NSObject, iTermTextDataSource {
     }
 
     func screenCharArray(forLine line: Int32) -> ScreenCharArray {
-        return lineBuffer.wrappedLine(at: line, width: _width).padded(toLength: _width, eligibleForDWC: false)
+        return lineBuffer.screenCharArray(forLine: line, width: _width, paddedTo: _width, eligibleForDWC: false)
     }
 
     func screenCharArray(atScreenIndex index: Int32) -> ScreenCharArray {
@@ -53,5 +53,13 @@ class TerminalContentSnapshot: NSObject, iTermTextDataSource {
     func fetchLine(_ line: Int32, block: (ScreenCharArray) -> Any?) -> Any? {
         let line = lineBuffer.wrappedLine(at: line, width: _width)
         return block(line)
+    }
+
+    func date(forLine line: Int32) -> Date? {
+        let timestamp = lineBuffer.metadata(forLineNumber: line, width: _width).timestamp
+        if timestamp == 0 {
+            return nil
+        }
+        return Date(timeIntervalSinceReferenceDate: timestamp)
     }
 }

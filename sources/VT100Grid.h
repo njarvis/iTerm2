@@ -120,11 +120,21 @@
 
 // Append the first numLines to the given line buffer. Returns the number of lines appended.
 - (int)appendLines:(int)numLines
+      toLineBuffer:(LineBuffer *)lineBuffer
+makeCursorLineSoft:(BOOL)makeCursorLineSoft;
+
+// Defaults makeCursorLineSoft=NO
+- (int)appendLines:(int)numLines
       toLineBuffer:(LineBuffer *)lineBuffer;
 
 // This is the sole mutation method. We need it to track which lines need to be redrawn and to reduce
 // the cost of syncing.
 - (void)markAllCharsDirty:(BOOL)dirty updateTimestamps:(BOOL)updateTimestamps;
+
+// How many used cells exist in the range of lines?
+- (NSInteger)numberOfCellsUsedInRange:(VT100GridRange)range;
+
+- (BOOL)lineIsEmpty:(int)n;
 
 @end
 
@@ -161,6 +171,7 @@
 @property(nonatomic, readonly) NSArray<VT100LineInfo *> *metadataArray;
 // Time of last update. Used for setting timestamps.
 @property(nonatomic) NSTimeInterval currentDate;
+@property(nonatomic) BOOL hasChanged;
 
 + (VT100GridSize)sizeInStateDictionary:(NSDictionary *)dict;
 
@@ -256,7 +267,7 @@
 - (void)setCharsInRun:(VT100GridRun)run toChar:(unichar)c externalAttributes:(iTermExternalAttribute *)ea;
 
 // Copy everything from another grid if needed.
-- (void)copyDirtyFromGrid:(VT100Grid *)otherGrid;
+- (void)copyDirtyFromGrid:(VT100Grid *)otherGrid didScroll:(BOOL)didScroll;
 
 // Append a string starting from the cursor's current position.
 // Returns number of scrollback lines dropped from lineBuffer.
@@ -284,6 +295,10 @@
 - (void)setContentsFromDVRFrame:(const screen_char_t*)s
                   metadataArray:(iTermMetadata *)sourceMetadataArray
                            info:(DVRFrameInfo)info;
+
+// Scroll backwards, pulling content from history back in to the grid. The lowest lines of the grid
+// will be lost.
+- (int)scrollWholeScreenDownByLines:(int)count poppingFromLineBuffer:(LineBuffer *)lineBuffer;
 
 // Returns a grid-owned empty line.
 - (NSMutableData *)defaultLineOfWidth:(int)width;
@@ -346,6 +361,7 @@
                                           iTermExternalAttribute **eaOut,
                                           VT100GridCoord coord,
                                           BOOL *stop))block;
+
 #pragma mark - Testing use only
 
 - (VT100LineInfo *)lineInfoAtLineNumber:(int)lineNumber;

@@ -7,6 +7,7 @@
 
 #import "iTermSnippetsEditingViewController.h"
 
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermCompetentTableRowView.h"
 #import "iTermEditSnippetWindowController.h"
 #import "iTermPreferencesBaseViewController.h"
@@ -19,7 +20,7 @@
 #import "NSTableView+iTerm.h"
 #import "NSTextField+iTerm.h"
 
-static NSString *const iTermSnippetsEditingPasteboardType = @"iTermSnippetsEditingPasteboardType";
+static NSString *const iTermSnippetsEditingPasteboardType = @"com.googlecode.iterm2.iTermSnippetsEditingPasteboardType";
 
 @interface iTermSnippetsEditingView: NSView
 @end
@@ -322,15 +323,54 @@ static NSString *const iTermSnippetsEditingPasteboardType = @"iTermSnippetsEditi
 }
 
 - (NSView *)viewForTitleColumnOnRow:(NSInteger)row {
+    NSFont *font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
+
     static NSString *const identifier = @"PrefsSnippetsTitle";
-    NSTextField *result = [_tableView makeViewWithIdentifier:identifier owner:self];
-    if (result == nil) {
-        result = [NSTextField it_textFieldForTableViewWithIdentifier:identifier];
-        result.font = [NSFont systemFontOfSize:[NSFont systemFontSize]];
-        result.lineBreakMode = NSLineBreakByTruncatingTail;
+    iTermTableCellView *cellView = [_tableView makeViewWithIdentifier:identifier owner:self];
+    NSTextField *textField;
+    if (cellView == nil) {
+        cellView = [[iTermTableCellView alloc] init];
+        textField = [NSTextField it_textFieldForTableViewWithIdentifier:identifier];
+        cellView.strongTextField = textField;
+        textField.font = font;
+        textField.lineBreakMode = NSLineBreakByTruncatingTail;
+        [cellView addSubview:textField];
+        textField.translatesAutoresizingMaskIntoConstraints = NO;
+        [NSLayoutConstraint activateConstraints:@[
+            [textField.leadingAnchor constraintEqualToAnchor:cellView.leadingAnchor],
+            [textField.trailingAnchor constraintEqualToAnchor:cellView.trailingAnchor],
+            [textField.topAnchor constraintEqualToAnchor:cellView.topAnchor],
+            [textField.bottomAnchor constraintEqualToAnchor:cellView.bottomAnchor],
+        ]];
+    } else {
+        textField = cellView.textField;
     }
-    result.stringValue = [_snippets[row] trimmedTitle:256];
-    return result;
+
+    NSString *trimmedTitle = [_snippets[row] trimmedTitle:256];
+    if (_snippets[row].tags.count) {
+        NSArray<NSAttributedString *> *substrings = [_snippets[row].tags flatMapWithBlock:^id _Nullable(NSString * _Nonnull tag) {
+            NSDictionary *attributes = @{
+                NSForegroundColorAttributeName: NSColor.whiteColor,
+                NSBackgroundColorAttributeName: [NSColor colorWithSRGBRed:0.97 green:0.47 blue:0.10 alpha:1.0],
+                NSFontAttributeName: font
+            };
+            NSAttributedString *tagString = [NSAttributedString attributedStringWithString:[NSString stringWithFormat:@" %@ ", tag]
+                                                                                attributes:attributes];
+            NSAttributedString *space = [NSAttributedString attributedStringWithString:@" "
+                                                                            attributes:@{ NSFontAttributeName: font }];
+            return @[tagString, space];
+        }];
+        NSDictionary *attributes = @{ NSFontAttributeName: font,
+                                      NSForegroundColorAttributeName: NSColor.textColor };
+        NSAttributedString *titleAttributedString =
+        [NSAttributedString attributedStringWithString:[@" " stringByAppendingString:trimmedTitle]
+                                            attributes:attributes];
+        substrings = [substrings arrayByAddingObject:titleAttributedString];
+        textField.attributedStringValue = [NSAttributedString attributedStringWithAttributedStrings:substrings];
+    } else {
+        textField.stringValue = trimmedTitle;
+    }
+    return cellView;
 }
 
 - (NSView *)viewForValueColumnOnRow:(NSInteger)row {
@@ -347,18 +387,10 @@ static NSString *const iTermSnippetsEditingPasteboardType = @"iTermSnippetsEditi
 
 #pragma mark Drag-Drop
 
-- (BOOL)tableView:(NSTableView *)tableView
-writeRowsWithIndexes:(NSIndexSet *)rowIndexes
-     toPasteboard:(NSPasteboard*)pboard {
-    [pboard declareTypes:@[ iTermSnippetsEditingPasteboardType ]
-                   owner:self];
-
-    NSArray<NSString *> *plist = [rowIndexes.it_array mapWithBlock:^id(NSNumber *anObject) {
-        return _snippets[anObject.integerValue].guid;
-    }];
-    [pboard setPropertyList:plist
-                    forType:iTermSnippetsEditingPasteboardType];
-    return YES;
+- (id<NSPasteboardWriting>)tableView:(NSTableView *)tableView pasteboardWriterForRow:(NSInteger)row {
+    NSPasteboardItem *pbItem = [[NSPasteboardItem alloc] init];
+    [pbItem setPropertyList:@[ _snippets[row].guid ] forType:iTermSnippetsEditingPasteboardType];
+    return pbItem;
 }
 
 - (NSDragOperation)tableView:(NSTableView *)aTableView
@@ -387,9 +419,13 @@ writeRowsWithIndexes:(NSIndexSet *)rowIndexes
               row:(NSInteger)row
     dropOperation:(NSTableViewDropOperation)operation {
     [self pushUndo];
-    NSPasteboard *pboard = [info draggingPasteboard];
-    NSArray<NSString *> *guids = [pboard propertyListForType:iTermSnippetsEditingPasteboardType];
-    [[iTermSnippetsModel sharedInstance] moveSnippetsWithGUIDs:guids
+    NSMutableArray<NSString *> *allGuids = [NSMutableArray array];
+    [info enumerateDraggingItemsWithOptions:0 forView:aTableView classes:@[[NSPasteboardItem class]] searchOptions:@{} usingBlock:^(NSDraggingItem * _Nonnull draggingItem, NSInteger idx, BOOL * _Nonnull stop) {
+        NSPasteboardItem *item = draggingItem.item;
+        NSArray<NSString *> *guids = [item propertyListForType:iTermSnippetsEditingPasteboardType];
+        [allGuids addObjectsFromArray:guids];
+    }];
+    [[iTermSnippetsModel sharedInstance] moveSnippetsWithGUIDs:allGuids
                                                        toIndex:row];
     return YES;
 }

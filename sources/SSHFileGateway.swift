@@ -12,7 +12,7 @@ import FileProviderService
 import OSLog
 
 @available(macOS 11.0, *)
-let logger = Logger(subsystem: "com.googlecode.iterm2.SSHFileGateway", category: "default")
+let logger = iTermLogger()
 
 protocol SSHFileGatewayDelegate {
     @available(macOS 11.0, *)
@@ -38,12 +38,11 @@ actor SSHFileGateway {
                                                queue: nil) { _ in
             Task {
                 log("Remove file provider requested")
-                NSFileProviderManager.remove(Self.domain) { removeError in
-                    if let removeError = removeError {
-                        log("Failed to remove file provider per request: \(removeError.localizedDescription)")
-                    } else {
-                        log("Succeeded in removing file provider")
-                    }
+                do {
+                    try await NSFileProviderManager.remove(Self.domain)
+                    log("Succeeded in removing file provider")
+                } catch {
+                    log("Failed to remove file provider per request: \(error.localizedDescription)")
                 }
             }
         }
@@ -52,68 +51,101 @@ actor SSHFileGateway {
                                                queue: nil) { _ in
             Task {
                 log("Add file provider requested")
-                NSFileProviderManager.add(Self.domain) { addError in
-                    if let addError = addError {
-                        log("Failed to add file provider per request: \(addError.localizedDescription)")
-                    } else {
-                        log("Succeeded in adding file provider")
-                    }
+                do {
+                    try await NSFileProviderManager.add(Self.domain)
+                    log("Succeeded in adding file provider")
+                } catch {
+                    log("Failed to add file provider per request: \(error.localizedDescription)")
                 }
             }
         }
     }
 
     func proxy() async throws -> iTermFileProviderServiceV1 {
+        log("proxy(): Trying to start proxy")
         guard let manager = manager else {
+            log("proxy(): Can't start proxy: no manager yet.")
             throw Exception.unavailable
         }
 
         let url = try await manager.getUserVisibleURL(for: .rootContainer)
-        log("root url is \(url)")
-        let services = try await FileManager().fileProviderServicesForItem(at: url)
-        guard let service = services.values.first else {
-            logger.error("No service for \(url, privacy: .public)")
-            throw Exception.unavailable
+        log("proxy(): root url is \(url)")
+
+        FileManager().getFileProviderServicesForItem(at: url) { services, error in
+
         }
-        let connection = try await service.fileProviderConnection()
-        connection.remoteObjectInterface = iTermFileProviderServiceInterface
-        connection.interruptionHandler = {
-            logger.error("service connection interrupted")
+
+        return try await withCheckedThrowingContinuation { checkedContinuation in
+            FileManager().getFileProviderServicesForItem(at: url) { services, error in
+                SSHFileGateway.handleServices(services,
+                                              error: error,
+                                              checkedContinuation: checkedContinuation)
+            }
         }
-        connection.resume()
-        guard let proxy = connection.remoteObjectProxy as? iTermFileProviderServiceV1 else {
-            throw NSFileProviderError(.serverUnreachable)
-         }
-        return proxy
      }
+
+    private static func handleServices(_ services: [NSFileProviderServiceName: NSFileProviderService]?,
+                                       error: Error?,
+                                       checkedContinuation: CheckedContinuation<iTermFileProviderServiceV1, Error>) {
+        if let error {
+            checkedContinuation.resume(with: .failure(error))
+            return
+        }
+        guard let service = services?.values.first else {
+            log("proxy(): No service found")
+            checkedContinuation.resume(with: .failure(Exception.unavailable))
+            return
+        }
+
+        service.getFileProviderConnection { xpcConnection, xpcError in
+            guard let connection = xpcConnection else {
+                checkedContinuation.resume(with: .failure(xpcError!))
+                return
+            }
+            connection.remoteObjectInterface = iTermFileProviderServiceInterface
+            connection.interruptionHandler = {
+                log("proxy(): service connection interrupted")
+            }
+            connection.resume()
+            guard let proxy = connection.remoteObjectProxy as? iTermFileProviderServiceV1 else {
+                log("proxy(): throw serverUnreachable with ROP \(String(describing: connection.remoteObjectProxy))")
+                checkedContinuation.resume(with: .failure(NSFileProviderError(.serverUnreachable)))
+                return
+            }
+            log("proxy(): success")
+            checkedContinuation.resume(with: .success(proxy))
+        }
+    }
 
     func start(delegate: SSHFileGatewayDelegate) {
         if started {
             return
         }
         started = true
+        log("start(): Set manager to nil and will remove it prior to adding")
         manager = nil
         NSFileProviderManager.remove(Self.domain) { removeError in
-            log("Remove domain: \(String(describing: removeError))")
+            log("start(): Remove domain: \(String(describing: removeError))")
 
             NSFileProviderManager.add(Self.domain) { error in
                 if let error = error {
-                    logger.error("NSFileProviderManager callback with error: \(error.localizedDescription, privacy: .public)")
+                    log("start(): NSFileProviderManager callback with error: \(error.localizedDescription)")
                     return
                 }
-                log("Domain added")
+                log("start(): Domain added")
                 self.manager = NSFileProviderManager(for: Self.domain)!
+                log("start(): manager is now \(String(describing: self.manager))")
             }
         }
         Task {
             while true {
                 do {
-                    logger.error("creating proxy…")
+                    log("creating proxy…")
                     let proxy = try await self.proxy()
-                    logger.error("have proxy! call run on it.")
+                    log("have proxy! call run on it.")
                     try await run(proxy, delegate)
                 } catch {
-                    logger.error("Failed to start proxy: \(String(describing: error), privacy: .public)")
+                    log("Failed to start proxy: \(String(describing: error))")
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                 }
             }
@@ -126,9 +158,9 @@ actor SSHFileGateway {
         while true {
             let messages = self.messages
             self.messages.removeAll()
-            logger.debug("Send to extension: \(messages.map { $0.debugDescription }.joined(separator: " | "), privacy: .public)")
+            log("Send to extension: \(messages.map { $0.debugDescription }.joined(separator: " | "))")
             let e2m = try await proxy.poll(MainAppToExtension(events: messages)).value
-            logger.debug("Poll returned with \(e2m.debugDescription, privacy: .public)")
+            log("Poll returned with \(e2m.debugDescription)")
 
             for request in e2m.events {
                 let result = await delegate.handleSSHFileRequest(request.kind)

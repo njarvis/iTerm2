@@ -28,10 +28,15 @@
 #import "DebugLogging.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermAutoMasterParser.h"
+#import "iTermOpenDirectory.h"
+#import "iTermPreferences.h"
+#import "iTermSlowOperationGateway.h"
 #import "iTermWarning.h"
 #import "RegexKitLite.h"
 #include <sys/param.h>
 #include <sys/mount.h>
+
+NSNotificationName iTermScriptsFolderDidChange = @"iTermScriptsFolderDidChange";
 
 enum
 {
@@ -134,6 +139,12 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
     return result;
 }
 
+- (NSString *)applicationSupportDirectoryWithoutCreating {
+    NSString *base = [NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES) lastObject];
+    NSString *appname = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString *)kCFBundleNameKey];
+    return [base stringByAppendingPathComponent:appname];
+}
+
 - (NSString *)spacelessAppSupportWithoutCreatingLink {
     NSString *dotdir = [self homeDirectoryDotDir];
     NSString *nospaces = [dotdir stringByAppendingPathComponent:@"AppSupport"];
@@ -198,17 +209,36 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
     return [[self applicationSupportDirectory] stringByAppendingPathComponent:@"version.txt"];
 }
 
+- (BOOL)customScriptsFolderIsValid:(NSString *)unexpanded {
+    NSString *candidate = [unexpanded stringByExpandingTildeInPath];
+    BOOL dir = NO;
+    return (candidate &&
+            ![candidate containsString:@" "] &&
+            [self fileExistsAtPath:candidate isDirectory:&dir] && dir);
+}
+
+- (NSString *)customScriptsFolder {
+    if (![iTermPreferences boolForKey:kPreferenceKeyUseCustomScriptsFolder]) {
+        return nil;
+    }
+    NSString *candidate = [iTermPreferences stringForKey:kPreferenceKeyCustomScriptsFolder];
+    if (![self customScriptsFolderIsValid:candidate]) {
+        return nil;
+    }
+    return [candidate stringByExpandingTildeInPath];
+}
+
 - (NSString *)scriptsPath {
-    return [[self applicationSupportDirectory] stringByAppendingPathComponent:@"Scripts"];
+    return self.customScriptsFolder ?: [[self applicationSupportDirectory] stringByAppendingPathComponent:@"Scripts"];
 }
 
 - (NSString *)scriptsPathWithoutSpaces {
-    NSString *modernPath = [[self spacelessAppSupportWithoutCreatingLink] stringByAppendingPathComponent:@"Scripts"];
+    NSString *modernPath = self.customScriptsFolder ?: [[self spacelessAppSupportWithoutCreatingLink] stringByAppendingPathComponent:@"Scripts"];
     return modernPath;
 }
 
 - (NSString *)scriptsPathWithoutSpacesCreatingLink {
-    NSString *modernPath = [[self spacelessAppSupportCreatingLink] stringByAppendingPathComponent:@"Scripts"];
+    NSString *modernPath = self.customScriptsFolder ?: [[self spacelessAppSupportCreatingLink] stringByAppendingPathComponent:@"Scripts"];
     return modernPath;
 }
 
@@ -301,8 +331,40 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
 }
 
 - (NSString *)homeDirectoryDotDir {
+    static NSString *cached;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        cached = [self _homeDirectoryDotDir];
+    });
+    return cached;
+}
+
+- (NSString *)xdgConfigHome {
+    __block NSString *result = [NSHomeDirectory() stringByAppendingPathComponent:@".config"];
+    dispatch_group_t group = dispatch_group_create();
+    dispatch_group_enter(group);
+    [[iTermSlowOperationGateway sharedInstance] exfiltrateEnvironmentVariableNamed:@"XDG_CONFIG_HOME"
+                                                                             shell:[iTermOpenDirectory userShell]
+                                                                        completion:^(NSString * _Nonnull value) {
+        DLog(@"xdgConfigHome=%@", value);
+        if (value.length > 0 && [[NSFileManager defaultManager] directoryIsWritable:value]) {
+            DLog(@"Using %@", value);
+            result = [value copy];
+        }
+        dispatch_group_leave(group);
+    }];
+    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+    return result;
+}
+
+- (NSString *)_homeDirectoryDotDir {
     NSString *homedir = NSHomeDirectory();
-    NSString *dotConfigIterm2 = [[homedir stringByAppendingPathComponent:@".config"] stringByAppendingPathComponent:@"iterm2"];
+    __block NSString *xdgConfigHome = [homedir stringByAppendingPathComponent:@".config"];
+    if (![[NSFileManager defaultManager] directoryIsWritable:homedir]) {
+        DLog(@"Home directory is not writable. Try to get XDG_CONFIG_HOME.");
+        xdgConfigHome = [self xdgConfigHome];
+    }
+    NSString *dotConfigIterm2 = [xdgConfigHome stringByAppendingPathComponent:@"iterm2"];
     NSString *dotIterm2 = [homedir stringByAppendingPathComponent:@".iterm2"];
     NSArray<NSString *> *options = @[ dotConfigIterm2, dotIterm2, @".iterm2-1" ];
     NSString *preferred = [iTermAdvancedSettingsModel preferredBaseDir];
@@ -316,7 +378,7 @@ NSString * const DirectoryLocationDomain = @"DirectoryLocationDomain";
         static dispatch_once_t onceToken;
         dispatch_once(&onceToken, ^{
             DLog(@"Failed to create the config directory: %@", error);
-            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"There was a problem finding or creating the config directory. Some features will be disabled.\n%@", error.localizedDescription]
+            [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"There was a problem finding or creating the config directory. You can set “Prefs > Advanced > Folder for config files“ to set a custom location for this directory. Until this is fixed, some features will be disabled.\n%@", error.localizedDescription]
                                        actions:@[ @"OK" ]
                                      accessory:nil
                                     identifier:@"NoSyncErrorCreatingConfigFolder"

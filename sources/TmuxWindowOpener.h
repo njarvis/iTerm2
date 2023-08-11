@@ -25,9 +25,11 @@ extern NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen;
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, assign) NSSize size;
 @property (nonatomic, copy) NSString *layout;
+@property (nonatomic, copy) NSString *visibleLayout;
 @property (nonatomic, assign) int maxHistory;
 @property (nonatomic, retain) TmuxGateway *gateway;
 @property (nonatomic, retain) NSMutableDictionary *parseTree;
+@property (nonatomic, retain) NSMutableDictionary *visibleParseTree;
 @property (nonatomic, weak) TmuxController *controller;
 @property (nonatomic, retain) id target;
 // Selector is called even if the window is already open and nothing is done.
@@ -60,6 +62,7 @@ extern NSString *const kTmuxWindowOpenerWindowOptionStyleValueFullScreen;
 @property (nonatomic, copy) NSString *windowGUID;  // the expected window GUID, or nil if unknown.
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *perWindowSettings;
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *perTabSettings;
+@property (nonatomic) BOOL shouldWorkAroundTabBug;
 
 + (TmuxWindowOpener *)windowOpener;
 - (BOOL)openWindows:(BOOL)initial;

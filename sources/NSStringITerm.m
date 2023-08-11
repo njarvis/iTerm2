@@ -39,6 +39,7 @@
 #import "NSArray+iTerm.h"
 #import "NSAttributedString+PSM.h"
 #import "NSData+iTerm.h"
+#import "NSDictionary+iTerm.h"
 #import "NSLocale+iTerm.h"
 #import "NSMutableAttributedString+iTerm.h"
 #import "NSStringITerm.h"
@@ -49,6 +50,7 @@
 #import "ScreenChar.h"
 #import <apr-1/apr_base64.h>
 #import <Carbon/Carbon.h>
+#import <Foundation/Foundation.h>
 #import <wctype.h>
 
 @implementation NSString (iTerm)
@@ -59,7 +61,8 @@
 
 + (BOOL)isDoubleWidthCharacter:(int)unicode
         ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
-                unicodeVersion:(NSInteger)version {
+                unicodeVersion:(NSInteger)version
+                fullWidthFlags:(BOOL)fullWidthFlags {
     if (unicode <= 0xa0 ||
         (unicode > 0x452 && unicode < 0x1100)) {
         // Quickly cover the common cases.
@@ -71,6 +74,9 @@
     }
     if (ambiguousIsDoubleWidth &&
         [[NSCharacterSet ambiguousWidthCharacterSetForUnicodeVersion:version] longCharacterIsMember:unicode]) {
+        return YES;
+    }
+    if (fullWidthFlags && [[NSCharacterSet flagCharactersForUnicodeVersion:version] longCharacterIsMember:unicode]) {
         return YES;
     }
     return NO;
@@ -109,7 +115,24 @@
 
     NSString* info = nil;
     DLog(@"Getting pasteboard string...");
-    if ([bestType isEqualToString:NSPasteboardTypeFileURL]) {
+    const BOOL remote = ([board availableTypeFromArray:@[ (NSPasteboardType)@"com.apple.is-remote-clipboard" ]] != nil);
+    const BOOL isURL = [bestType isEqualToString:NSPasteboardTypeFileURL];
+    if (remote && isURL) {
+        DLog(@"Pasteboard has a string from a remote clipboard");
+        NSArray<NSURL *> *urls = [board readObjectsForClasses:@[ [NSURL class] ]
+                                                           options:nil];
+        NSArray<NSString *> *strings = [urls mapWithBlock:^id _Nullable(NSURL * _Nonnull url) {
+            DLog(@"Load %@", url);
+            NSAttributedString *attributedString = [[NSAttributedString alloc] initWithURL:url
+                                                                                   options:@{}
+                                                                        documentAttributes:nil
+                                                                                     error:nil];
+            DLog(@"Got string of length %@", @(attributedString.length));
+            return attributedString.string;
+        }];
+        DLog(@"Concatenate %@ strings", @(strings.count));
+        info = [strings componentsJoinedByString:@"\n"];
+    } else if (isURL) {
         NSArray<NSURL *> *urls = [board readObjectsForClasses:@[ [NSURL class] ]
                                                            options:nil];
         NSMutableArray *escapedFilenames = [NSMutableArray array];
@@ -267,11 +290,25 @@
     for (NSInteger i = 0; i < self.length; i++) {
         unichar c = [self characterAtIndex:i];
         if (escape) {
-            NSNumber *replacement = escapes[@(c)];
-            if (replacement) {
-                [result appendString:[self substringWithRange:NSMakeRange(start, i - start - 1)]];
-                [result appendCharacter:replacement.shortValue];
-                start = i + 1;
+            if (c == 'u' && i + 4 < self.length) {
+                NSString *substring = [self substringWithRange:NSMakeRange(i + 1, 4)];
+                NSScanner *scanner = [NSScanner scannerWithString:substring];
+                unsigned int hexValue = 0;
+
+                if ([scanner scanHexInt:&hexValue] && scanner.scanLocation == 4) {
+                    NSString *replacement = [NSString stringWithLongCharacter:hexValue];
+                    [result appendString:[self substringWithRange:NSMakeRange(start, i - start - 1)]];
+                    [result appendString:replacement];
+                    i += 4;
+                    start = i + 1;
+                }
+            } else {
+                NSNumber *replacement = escapes[@(c)];
+                if (replacement) {
+                    [result appendString:[self substringWithRange:NSMakeRange(start, i - start - 1)]];
+                    [result appendCharacter:replacement.shortValue];
+                    start = i + 1;
+                }
             }
             escape = NO;
         } else if (c == '\\') {
@@ -945,22 +982,52 @@ int decode_utf8_char(const unsigned char *datap,
 }
 
 - (NSFont *)fontValue {
-    float fontSize;
-    char utf8FontName[128];
-    NSFont *aFont;
-
     if ([self length] == 0) {
         return [NSFont userFixedPitchFontOfSize:0.0] ?: [NSFont systemFontOfSize:[NSFont systemFontSize]];
     }
 
-    sscanf([self UTF8String], "%127s %g", utf8FontName, &fontSize);
-    // The sscanf man page is unclear whether it will always null terminate when the length hits the
-    // maximum field width, so ensure it is null terminated.
-    utf8FontName[127] = '\0';
-
-    DLog(@"Looking for font with string rep %@", self);
-    NSString *fontName = [NSString stringWithFormat:@"%s", utf8FontName];
-    aFont = [NSFont fontWithName:fontName size:fontSize];
+    NSScanner *scanner = [NSScanner scannerWithString:self];
+    NSString *fontName = nil;
+    [scanner scanUpToString:@" " intoString:&fontName];
+    if (!fontName) {
+        DLog(@"Failed to scan font name from “%@” so using system standard font", self);
+        return [NSFont userFixedPitchFontOfSize:0.0] ?: [NSFont systemFontOfSize:[NSFont systemFontSize]];
+    }
+    scanner.charactersToBeSkipped = [NSCharacterSet characterSetWithCharactersInString:@" "];
+    float fontSize = 0;
+    if (![scanner scanFloat:&fontSize]) {
+        DLog(@"Failed to scan font size from “%@” so using system standard font", self);
+        return [NSFont userFixedPitchFontOfSize:0.0] ?: [NSFont systemFontOfSize:[NSFont systemFontSize]];
+    }
+    if (@available(macOS 12, *)) {
+        if ([fontName hasPrefix:@"."] && ![fontName hasPrefix:@".AppleSystemUIFont"]) {
+            // Well this is terrible
+            // Starting in, I guess, Ventura you can't round-trip font names for some mystery fonts.
+            // Somehow users have a font name of .SFNS-Regular in their prefs. This came from maybe
+            // an older OS version? Who the hell knows.
+            // Anyway when you try to create it now it gives you motherfucking times roman out of pure
+            // unadulterated spite.
+            // I reversed coretext and found that it fucks you for not names that start with a . except
+            // .AppleSystemUIFont. I guess I have to reverse this code every new OS version?
+            // 🖕to you too, CoreText.
+            // This will probably break something but fucked if I know what.
+            // Issue 10625
+            DLog(@"Translate font %@ to system font", fontName);
+            return [NSFont systemFontOfSize:fontSize];
+        }
+    }
+    NSString *suffix = [self substringFromIndex:scanner.scanLocation];
+    NSDictionary *dict = [NSDictionary castFrom:[NSJSONSerialization JSONObjectWithData:[suffix dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil]];
+    NSArray *featureSettings = [NSArray castFrom:dict[@"featureSettings"]];
+    NSMutableDictionary *attributes = [@{
+        NSFontNameAttribute: fontName,
+        NSFontSizeAttribute: @(fontSize),
+    } mutableCopy];
+    if (featureSettings) {
+        attributes[NSFontFeatureSettingsAttribute] = featureSettings;
+    }
+    NSFontDescriptor *descriptor = [[NSFontDescriptor alloc] initWithFontAttributes:attributes];
+    NSFont *aFont = [NSFont fontWithDescriptor:descriptor textTransform:nil];
     if (aFont == nil) {
         DLog(@"Failed to look up font named %@. Falling back to to user font", fontName);
         return [NSFont userFixedPitchFontOfSize:0.0] ?: [NSFont systemFontOfSize:[NSFont systemFontSize]];
@@ -1379,6 +1446,9 @@ static TECObjectRef CreateTECConverterForUTF8Variants(TextEncodingVariant varian
     }
     if (keyMods & NSEventModifierFlagCommand) {
         [theKeyString appendString:@"⌘"];
+    }
+    if (keyMods & NSEventModifierFlagFunction) {
+        [theKeyString appendString:@"fn"];
     }
     return theKeyString;
 }
@@ -2284,6 +2354,130 @@ static TECObjectRef CreateTECConverterForUTF8Variants(TextEncodingVariant varian
 
 - (NSString *)it_stringByAppendingCharacter:(unichar)theChar {
     return [self stringByAppendingString:[NSString stringWithCharacters:&theChar length:1]];
+}
+
+- (NSDictionary<NSString *, NSString *> *)it_keyValuePairsSeparatedBy:(NSString *)separator {
+    NSArray<iTermTuple<NSString *, NSString *> *> *parts = [[self componentsSeparatedByString:separator] mapWithBlock:^id _Nullable(NSString * _Nonnull string) {
+        return [string keyValuePair];
+    }];
+    NSDictionary<NSString *, iTermTuple<NSString *,NSString *> *> *tupleDict = [parts classifyUniquelyWithBlock:^id(iTermTuple<NSString *,NSString *> *tuple) {
+        return tuple.firstObject;
+    }];
+    NSDictionary<NSString *, NSString *> *dict = [tupleDict mapValuesWithBlock:^id(NSString *key, iTermTuple<NSString *, NSString *> *tuple) {
+        return tuple.secondObject;
+    }];
+    return dict;
+}
+
+- (UTF32Char)longCharacterAtIndex:(NSInteger)i {
+    if (self.length == 0) {
+        return 0;
+    }
+    const UniChar c1 = [self characterAtIndex:0];
+    if (!IsHighSurrogate(c1)) {
+        return c1;
+    }
+    if (self.length < 2) {
+        return 0;
+    }
+    const UniChar c2 = [self characterAtIndex:1];
+    if (!IsLowSurrogate(c2)) {
+        return 0;
+    }
+    return CFStringGetLongCharacterForSurrogatePair(c1, c2);
+}
+
+- (NSString *)stringByReplacingBaseCharacterWith:(UTF32Char)base {
+    NSString *baseString = [NSString stringWithLongCharacter:base];
+    const NSUInteger length = self.length;
+    if (length == 0) {
+        return baseString;
+    }
+    if (IsHighSurrogate([self characterAtIndex:0])) {
+        if (length == 1) {
+            return baseString;
+        }
+        if (IsLowSurrogate([self characterAtIndex:1])) {
+            return [baseString stringByAppendingString:[self substringFromIndex:2]];
+        }
+    }
+    return [baseString stringByAppendingString:[self substringFromIndex:1]];
+}
+
+- (BOOL)beginsWithWhitespace {
+    if (self.length == 0) {
+        return NO;
+    }
+    return [[NSCharacterSet whitespaceAndNewlineCharacterSet] longCharacterIsMember:[self longCharacterAtIndex:0]];
+}
+
+- (BOOL)endsWithWhitespace {
+    if (self.length == 0) {
+        return NO;
+    }
+    NSInteger i = self.length - 1;
+    return [[NSCharacterSet whitespaceAndNewlineCharacterSet] longCharacterIsMember:[self longCharacterAtIndex:i]];
+}
+
+- (NSRange)rangeOfLastWordFromIndex:(NSUInteger)index {
+    NSCharacterSet *whitespaceCharacterSet = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+    const NSRange searchRange = NSMakeRange(0, index);
+    const NSRange nonWhitespaceRange = [self rangeOfCharacterFromSet:whitespaceCharacterSet.invertedSet
+                                                             options:NSBackwardsSearch
+                                                               range:searchRange];
+    if (nonWhitespaceRange.location == NSNotFound) {
+        return NSMakeRange(NSNotFound, 0);
+    }
+
+    const NSRange whitespaceRange = [self rangeOfCharacterFromSet:whitespaceCharacterSet
+                                                           options:NSBackwardsSearch
+                                                             range:NSMakeRange(0, nonWhitespaceRange.location)];
+    const NSUInteger startIndex = whitespaceRange.location == NSNotFound ? 0 : NSMaxRange(whitespaceRange);
+    const NSUInteger endIndex = NSMaxRange(nonWhitespaceRange);
+    return NSMakeRange(startIndex, endIndex - startIndex);
+}
+
+- (NSArray<NSString *> *)lastWords:(NSUInteger)count {
+    NSMutableArray<NSString *> *words = [NSMutableArray arrayWithCapacity:count];
+    NSUInteger index = [self length];
+
+    while ([words count] < count && index > 0) {
+        const NSRange range = [self rangeOfLastWordFromIndex:index];
+        NSString *word = [self substringWithRange:range];
+        if (word.length > 0) {
+            [words insertObject:word atIndex:0];
+        }
+        index = range.location;
+    }
+
+    return words;
+}
+
+- (NSString *)firstNonEmptyLine {
+    NSCharacterSet *whitespace = [NSCharacterSet whitespaceAndNewlineCharacterSet];
+    const NSInteger indexOfFirstNonWhitespace = [self rangeOfCharacterFromSet:[whitespace invertedSet]].location;
+    if (indexOfFirstNonWhitespace == NSNotFound) {
+        return @"";
+    }
+
+    NSCharacterSet *newlines = [NSCharacterSet newlineCharacterSet];
+    const NSInteger indexOfSubsequentNewline =
+    [self rangeOfCharacterFromSet:newlines
+                          options:0
+                            range:NSMakeRange(indexOfFirstNonWhitespace,
+                                              self.length - indexOfFirstNonWhitespace)].location;
+    if (indexOfSubsequentNewline == NSNotFound) {
+        return [self substringFromIndex:indexOfFirstNonWhitespace];
+    }
+    return [self substringWithRange:NSMakeRange(indexOfFirstNonWhitespace,
+                                                indexOfSubsequentNewline - indexOfFirstNonWhitespace)];
+}
+
+- (NSString *)truncatedToLength:(NSInteger)maxLength ellipsis:(NSString *)ellipsis {
+    if (self.length <= maxLength) {
+        return self;
+    }
+    return [[self substringToIndex:maxLength - 1] stringByAppendingString:ellipsis];
 }
 
 @end

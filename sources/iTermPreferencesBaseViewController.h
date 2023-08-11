@@ -73,6 +73,16 @@ extern NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey;
                            update:(BOOL (^)(void))update
                        searchable:(BOOL)searchable;
 
+// This can be useful for synthetic values.
+- (PreferenceInfo *)unsafeDefineControl:(NSControl *)control
+                                    key:(NSString *)key
+                            relatedView:(NSView *)relatedView
+                            displayName:(NSString *)forceDisplayName
+                                   type:(PreferenceInfoType)type
+                         settingChanged:(void (^)(id))settingChanged
+                                 update:(BOOL (^)(void))update
+                             searchable:(BOOL)searchable;
+
 - (void)setControl:(NSControl *)control inPreference:(PreferenceInfo *)info;
 
 - (void)addViewToSearchIndex:(NSView *)control
@@ -148,11 +158,19 @@ extern NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey;
 // The prefs panel this view controller belongs to will close. This implementation does nothing.
 - (void)windowWillClose;
 
+// The prefs panel calls this before another tab gets selected.
+- (void)willDeselectTab;
+
 - (void)resizeWindowForCurrentTabAnimated:(BOOL)animated;
 
 // Override this if you have a tab view.
 - (NSTabView *)tabView;
 - (CGFloat)minimumWidth;
 - (void)saveDeferredUpdates;
+
+- (BOOL)keyHasSyntheticGetter:(NSString *)key;
+- (BOOL)keyHasSyntheticSetter:(NSString *)key;
+- (id)syntheticObjectForKey:(NSString *)key;
+- (void)setSyntheticValue:(id)value forKey:(NSString *)key;
 
 @end

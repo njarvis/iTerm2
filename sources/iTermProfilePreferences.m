@@ -134,6 +134,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                      [defaultValue intValue] == NO));
         case kPreferenceInfoTypeSlider:
             return [defaultValue isKindOfClass:[NSNumber class]];
+        case kPreferenceInfoTypeStringPopup:
         case kPreferenceInfoTypeStringTextField:
             return [defaultValue isKindOfClass:[NSString class]];
         case kPreferenceInfoTypeTokenField:
@@ -155,7 +156,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
     return @[ KEY_GUID, KEY_TRIGGERS, KEY_SMART_SELECTION_RULES, KEY_SEMANTIC_HISTORY, KEY_BOUND_HOSTS,
               KEY_ORIGINAL_GUID, KEY_AWDS_WIN_OPTION, KEY_AWDS_WIN_DIRECTORY, KEY_AWDS_TAB_OPTION,
               KEY_AWDS_TAB_DIRECTORY, KEY_AWDS_PANE_OPTION, KEY_AWDS_PANE_DIRECTORY,
-              KEY_NORMAL_FONT, KEY_NON_ASCII_FONT, KEY_BACKGROUND_IMAGE_LOCATION, KEY_KEYBOARD_MAP,
+              KEY_NORMAL_FONT, KEY_NON_ASCII_FONT, KEY_FONT_CONFIG, KEY_BACKGROUND_IMAGE_LOCATION, KEY_KEYBOARD_MAP,
               KEY_TOUCHBAR_MAP, KEY_DYNAMIC_PROFILE_PARENT_NAME, KEY_DYNAMIC_PROFILE_PARENT_GUID,
               KEY_DYNAMIC_PROFILE_FILENAME ];
 }
@@ -185,7 +186,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
     dispatch_once(&onceToken, ^{
         result = [NSMutableDictionary dictionary];
         NSArray *string = @[ KEY_NAME, KEY_BADGE_FORMAT, KEY_ANSWERBACK_STRING, KEY_NORMAL_FONT,
-                             KEY_NON_ASCII_FONT, KEY_AWDS_TAB_OPTION, KEY_AWDS_PANE_OPTION, KEY_AWDS_WIN_OPTION,
+                             KEY_NON_ASCII_FONT, KEY_FONT_CONFIG, KEY_AWDS_TAB_OPTION, KEY_AWDS_PANE_OPTION, KEY_AWDS_WIN_OPTION,
                              KEY_SHORTCUT, KEY_ICON_PATH, KEY_CUSTOM_COMMAND, KEY_COMMAND_LINE,
                              KEY_INITIAL_TEXT, KEY_CUSTOM_DIRECTORY, KEY_WORKING_DIRECTORY,
                              KEY_CUSTOM_WINDOW_TITLE, KEY_CUSTOM_TAB_TITLE,
@@ -196,7 +197,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_BACKGROUND_IMAGE_LOCATION, KEY_DYNAMIC_PROFILE_PARENT_NAME,
                              KEY_DYNAMIC_PROFILE_PARENT_GUID,
                              KEY_DYNAMIC_PROFILE_FILENAME, KEY_TMUX_PANE_TITLE,
-                             KEY_SUBTITLE];
+                             KEY_SUBTITLE, KEY_CUSTOM_LOCALE];
 
         NSArray *color = @[ KEY_FOREGROUND_COLOR, KEY_BACKGROUND_COLOR, KEY_BOLD_COLOR,
                             KEY_LINK_COLOR, KEY_SELECTION_COLOR, KEY_SELECTED_TEXT_COLOR,
@@ -221,6 +222,10 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_USE_TAB_COLOR COLORS_DARK_MODE_SUFFIX,
                              KEY_USE_TAB_COLOR,
 
+                             KEY_USE_SELECTED_TEXT_COLOR COLORS_LIGHT_MODE_SUFFIX,
+                             KEY_USE_SELECTED_TEXT_COLOR COLORS_DARK_MODE_SUFFIX,
+                             KEY_USE_SELECTED_TEXT_COLOR,
+
                              KEY_USE_UNDERLINE_COLOR COLORS_LIGHT_MODE_SUFFIX,
                              KEY_USE_UNDERLINE_COLOR COLORS_DARK_MODE_SUFFIX,
                              KEY_USE_UNDERLINE_COLOR,
@@ -232,6 +237,10 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_MINIMUM_CONTRAST COLORS_LIGHT_MODE_SUFFIX,
                              KEY_MINIMUM_CONTRAST COLORS_DARK_MODE_SUFFIX,
                              KEY_MINIMUM_CONTRAST,
+
+                             KEY_FAINT_TEXT_ALPHA COLORS_LIGHT_MODE_SUFFIX,
+                             KEY_FAINT_TEXT_ALPHA COLORS_DARK_MODE_SUFFIX,
+                             KEY_FAINT_TEXT_ALPHA,
 
                              KEY_CURSOR_BOOST COLORS_LIGHT_MODE_SUFFIX,
                              KEY_CURSOR_BOOST COLORS_DARK_MODE_SUFFIX,
@@ -270,7 +279,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_IDLE_CODE, KEY_IDLE_PERIOD, KEY_OPTION_KEY_SENDS,
                              KEY_RIGHT_OPTION_KEY_SENDS, KEY_APPLICATION_KEYPAD_ALLOWED, KEY_ALLOW_MODIFY_OTHER_KEYS,
                              KEY_LEFT_OPTION_KEY_CHANGEABLE, KEY_RIGHT_OPTION_KEY_CHANGEABLE,
-                             KEY_PLACE_PROMPT_AT_FIRST_COLUMN, KEY_SHOW_MARK_INDICATORS,
+                             KEY_PLACE_PROMPT_AT_FIRST_COLUMN, KEY_SHOW_MARK_INDICATORS, KEY_SHOW_OFFSCREEN_COMMANDLINE,
                              KEY_POWERLINE, KEY_TRIGGERS_USE_INTERPOLATED_STRINGS,
                              KEY_ENABLE_TRIGGERS_IN_INTERACTIVE_APPS,
                              KEY_SMART_SELECTION_ACTIONS_USE_INTERPOLATED_STRINGS,
@@ -286,7 +295,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                              KEY_OPEN_PASSWORD_MANAGER_AUTOMATICALLY, KEY_SHOW_TIMESTAMPS,
                              KEY_USE_SEPARATE_COLORS_FOR_LIGHT_AND_DARK_MODE,
                              KEY_LOAD_SHELL_INTEGRATION_AUTOMATICALLY];
-        NSArray *stringArrays = @[ KEY_TAGS, KEY_JOBS, KEY_BOUND_HOSTS ];
+        NSArray *stringArrays = @[ KEY_TAGS, KEY_JOBS, KEY_BOUND_HOSTS, KEY_SNIPPETS_FILTER ];
         NSArray *dictArrays = @[ KEY_HOTKEY_ALTERNATE_SHORTCUTS, KEY_TRIGGERS, KEY_SMART_SELECTION_RULES,
                                  ];
         NSArray *dict = @[ KEY_STATUS_BAR_LAYOUT, KEY_SESSION_HOTKEY, KEY_SEMANTIC_HISTORY,
@@ -461,6 +470,10 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_USE_TAB_COLOR COLORS_LIGHT_MODE_SUFFIX: @NO,
                   KEY_USE_TAB_COLOR COLORS_DARK_MODE_SUFFIX: @NO,
 
+                  KEY_USE_SELECTED_TEXT_COLOR: @YES,
+                  KEY_USE_SELECTED_TEXT_COLOR COLORS_LIGHT_MODE_SUFFIX: @YES,
+                  KEY_USE_SELECTED_TEXT_COLOR COLORS_DARK_MODE_SUFFIX: @YES,
+
                   KEY_UNDERLINE_COLOR: [NSNull null],
                   KEY_UNDERLINE_COLOR COLORS_LIGHT_MODE_SUFFIX: [NSNull null],
                   KEY_UNDERLINE_COLOR COLORS_DARK_MODE_SUFFIX: [NSNull null],
@@ -476,6 +489,10 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_MINIMUM_CONTRAST: @0.0,
                   KEY_MINIMUM_CONTRAST COLORS_LIGHT_MODE_SUFFIX: @0.0,
                   KEY_MINIMUM_CONTRAST COLORS_DARK_MODE_SUFFIX: @0.0,
+
+                  KEY_FAINT_TEXT_ALPHA: @0.5,
+                  KEY_FAINT_TEXT_ALPHA COLORS_LIGHT_MODE_SUFFIX: @0.5,
+                  KEY_FAINT_TEXT_ALPHA COLORS_DARK_MODE_SUFFIX: @0.5,
 
                   KEY_CURSOR_BOOST: @0.0,
                   KEY_CURSOR_BOOST COLORS_LIGHT_MODE_SUFFIX: @0.0,
@@ -553,7 +570,8 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_SEND_TERMINAL_GENERATED_ALERT: @YES,
                   KEY_FLASHING_BELL: @NO,
                   KEY_VISUAL_BELL: @NO,
-                  KEY_SET_LOCALE_VARS: @YES,
+                  KEY_SET_LOCALE_VARS: @(iTermSetLocalVarsModeSetAutomatically),
+                  KEY_CUSTOM_LOCALE: @"",
                   KEY_SESSION_END_ACTION: @(iTermSessionEndActionDefault),
                   KEY_PROMPT_CLOSE: @(PROMPT_NEVER),
                   KEY_UNDO_TIMEOUT: @(5),
@@ -576,6 +594,7 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_USE_LIBTICKIT_PROTOCOL: @NO,
                   KEY_PLACE_PROMPT_AT_FIRST_COLUMN: @YES,
                   KEY_SHOW_MARK_INDICATORS: @YES,
+                  KEY_SHOW_OFFSCREEN_COMMANDLINE: @YES,
                   KEY_HAS_HOTKEY: @NO,
                   KEY_HOTKEY_MODIFIER_FLAGS: @0,
                   KEY_HOTKEY_CHARACTERS: @"",
@@ -606,6 +625,8 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
                   KEY_OPEN_PASSWORD_MANAGER_AUTOMATICALLY: @NO,
                   KEY_SHOW_TIMESTAMPS: @([iTermAdvancedSettingsModel showTimestampsByDefault] ? iTermTimestampsModeOn : iTermTimestampsModeOff),
                   KEY_USE_SEPARATE_COLORS_FOR_LIGHT_AND_DARK_MODE: @NO,
+                  KEY_SNIPPETS_FILTER: @[],
+
                   // NOTES:
                   //   * Remove deprecated values from this list.
                   //   * Update validation blocks in preceding method.
@@ -635,6 +656,11 @@ NSString *const kProfilePreferenceInitialDirectoryAdvancedValue = @"Advanced";
 
 + (NSArray<NSString *> *)nonDeprecatedKeys {
     return [[iTermProfilePreferences validationBlocks] allKeys];
+}
+
++ (NSFont *)fontForKey:(NSString *)key
+             inProfile:(Profile *)profile {
+    return [ITAddressBookMgr fontWithDesc:[self objectForKey:key inProfile:profile]];
 }
 
 + (id)objectForColorKey:(NSString *)baseKey

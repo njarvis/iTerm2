@@ -30,7 +30,10 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
 + (void)unzipURL:(NSURL *)zipURL
    withArguments:(NSArray<NSString *> *)arguments
      destination:(NSString *)destination
+   callbackQueue:(dispatch_queue_t)callbackQueue
       completion:(void (^)(NSError *))completion {
+    DLog(@"zipURL=%@ arguments=%@ destination=%@", zipURL, arguments, destination);
+    
     NSArray<NSString *> *fullArgs = [arguments arrayByAddingObject:zipURL.path];
     iTermCommandRunner *runner = [[self alloc] initWithCommand:@"/usr/bin/unzip"
                                                  withArguments:fullArgs
@@ -38,6 +41,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
     NSMutableString *errorText = [NSMutableString string];
     runner.outputHandler = ^(NSData *data, void (^handled)(void)) {
         NSString *string = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        DLog(@"output: %@", string);
         if (string) {
             [errorText appendString:string];
         } else {
@@ -51,6 +55,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
         handled();
     };
     runner.completion = ^(int status) {
+        DLog(@"completed status=%@", @(status));
         if (!status) {
             completion(nil);
             return;
@@ -66,6 +71,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
       arguments:(NSArray<NSString *> *)arguments
        toZipURL:(NSURL *)zipURL
      relativeTo:(NSURL *)baseURL
+  callbackQueue:(dispatch_queue_t)callbackQueue
      completion:(void (^)(BOOL))completion {
     NSMutableArray<NSString *> *fullArgs = [arguments mutableCopy];
     [fullArgs addObject:zipURL.path];
@@ -75,6 +81,9 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
     iTermCommandRunner *runner = [[self alloc] initWithCommand:@"/usr/bin/zip"
                                                  withArguments:fullArgs
                                                           path:baseURL.path];
+    if (callbackQueue) {
+        runner.callbackQueue = callbackQueue;
+    }
     runner.completion = ^(int status) {
         completion(status == 0);
     };
@@ -95,6 +104,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
         _readingQueue = dispatch_queue_create("com.iterm2.crun-reading", DISPATCH_QUEUE_SERIAL);
         _writingQueue = dispatch_queue_create("com.iterm2.crun-writing", DISPATCH_QUEUE_SERIAL);
         _waitingQueue = dispatch_queue_create("com.iterm2.crun-waiting", DISPATCH_QUEUE_SERIAL);
+        _callbackQueue = dispatch_get_main_queue();
     }
     return self;
 }
@@ -107,6 +117,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
         self.command = command;
         self.arguments = arguments;
         self.currentDirectoryPath = currentDirectoryPath;
+        _callbackQueue = dispatch_get_main_queue();
     }
     return self;
 }
@@ -129,7 +140,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
     dispatch_async(_readingQueue, ^{
         [self readAndWait:task];
     });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)), _callbackQueue, ^{
         if (self.running) {
             [task terminate];
             self->_task = nil;
@@ -166,13 +177,14 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
     _task.arguments = self.arguments;
     DLog(@"runCommand: Launching %@", _task);
     @try {
+        DLog(@"In %@ run: %@ %@", _task.currentDirectoryURL.path, _task.launchPath, _task.arguments);
         [_task launch];
         DLog(@"Launched %@", self);
     } @catch (NSException *e) {
         NSLog(@"Task failed with %@. launchPath=%@, pwd=%@, args=%@", e, _task.launchPath, _task.currentDirectoryPath, _task.arguments);
         DLog(@"Task failed with %@. launchPath=%@, pwd=%@, args=%@", e, _task.launchPath, _task.currentDirectoryPath, _task.arguments);
         if (self.completion) {
-            dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_async(_callbackQueue, ^{
                 self.completion(-1);
             });
         }
@@ -257,7 +269,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
 
     self.running = NO;
     if (self.completion) {
-        dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_async(_callbackQueue, ^{
             self.completion(task.terminationStatus);
         });
     }
@@ -270,9 +282,10 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
     dispatch_data_t dispatchData = dispatch_data_create(data.bytes, data.length, _writingQueue, ^{
         [data length];  // just ensure data is retained
     });
+    dispatch_queue_t callbackQueue = _callbackQueue;
     dispatch_write(fd, dispatchData, _writingQueue, ^(dispatch_data_t  _Nullable data, int error) {
         if (completion) {
-            dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_async(callbackQueue, ^{
                 completion(data ? dispatch_data_get_size(data) : 0, error);
             });
         }
@@ -284,7 +297,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
         completion();
         return;
     }
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_async(_callbackQueue, ^{
         self.outputHandler(inData, completion);
     });
 }
@@ -296,7 +309,7 @@ static NSString *const iTermCommandRunnerErrorDomain = @"com.iterm2.command-runn
 }
 
 - (void)didReadData:(NSData *)inData completion:(void (^)(void))completion {
-    dispatch_async(dispatch_get_main_queue(), ^{
+    dispatch_async(self.callbackQueue, ^{
         [self saveData:inData];
         if (!self.outputHandler) {
             completion();

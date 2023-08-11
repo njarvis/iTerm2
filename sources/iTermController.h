@@ -37,6 +37,8 @@ typedef NS_ENUM(NSUInteger, iTermHotkeyWindowType) {
     iTermHotkeyWindowTypeFloatingWindow  // has a higher level than a regular window.
 };
 
+extern NSString *const iTermSnippetsTagsDidChange;
+
 @protocol iTermWindowController;
 @class iTermRenegablePromise<T>;
 @class iTermRestorableSession;
@@ -165,6 +167,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
 - (void)pushCurrentRestorableSession:(iTermRestorableSession *)session;
 - (void)killRestorableSessions;
 
+- (NSArray<PTYSession *> *)allSessions;
 - (NSArray<PseudoTerminal *> *)terminals;
 - (void)addTerminalWindow:(PseudoTerminal *)terminalWindow;
 - (PTYSession *)sessionWithGUID:(NSString *)identifier;
@@ -207,6 +210,8 @@ typedef NS_OPTIONS(NSUInteger, iTermSingleUseWindowOptions) {
                         didMakeSession:(void (^)(PTYSession *session))didMakeSession
                             completion:(void (^)(void))completion;
 - (NSWindow *)openSingleUseLoginWindowAndWrite:(NSData *)data completion:(void (^)(PTYSession *session))completion;
+
+- (NSArray<NSString *> *)currentSnippetsFilter;
 
 @end
 

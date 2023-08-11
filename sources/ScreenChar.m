@@ -152,18 +152,6 @@ int ExpandScreenChar(const screen_char_t *sct, unichar* dest) {
     return [GetComplexCharRegistry() expandScreenChar:sct[0] to:dest];
 }
 
-UTF32Char CharToLongChar(unichar code, BOOL isComplex)
-{
-    NSString* aString = CharToStr(code, isComplex);
-    unichar firstChar = [aString characterAtIndex:0];
-    if (IsHighSurrogate(firstChar) && [aString length] >= 2) {
-        unichar secondChar = [aString characterAtIndex:0];
-        return DecodeSurrogatePair(firstChar, secondChar);
-    } else {
-        return firstChar;
-    }
-}
-
 screen_char_t ImageCharForNewImage(NSString *name,
                                    int width,
                                    int height,
@@ -339,7 +327,7 @@ NSString* ScreenCharArrayToString(const screen_char_t *screenChars,
     int o = 0;
     for (int i = start; i < end; ++i) {
         const unichar c = screenChars[i].code;
-        if (c >= ITERM2_PRIVATE_BEGIN && c <= ITERM2_PRIVATE_END) {
+        if (screenChars[i].image || (!screenChars[i].complexChar && c >= ITERM2_PRIVATE_BEGIN && c <= ITERM2_PRIVATE_END)) {
             // Skip private-use characters which signify things like double-width characters and
             // tab fillers.
             ++delta;
@@ -383,6 +371,11 @@ NSString* ScreenCharArrayToStringDebug(const screen_char_t *screenChars,
     }
     NSMutableString* result = [NSMutableString stringWithCapacity:lineLength];
     for (int i = 0; i < lineLength; ++i) {
+        if (screenChars[i].image) {
+            VT100GridCoord coord = GetPositionOfImageInChar(screenChars[i]);
+            [result appendFormat:@"[img %d %d,%d]", screenChars[i].code, coord.x, coord.y];
+            continue;
+        }
         const unichar c = screenChars[i].code;
         if (c != 0 && !ScreenCharIsDWC_RIGHT(screenChars[i])) {
             [result appendString:ScreenCharToStr(&screenChars[i]) ?: @"😮"];
@@ -446,6 +439,7 @@ void StringToScreenChars(NSString *s,
     NSCharacterSet *ignorableCharacters = [NSCharacterSet ignorableCharactersForUnicodeVersion:unicodeVersion];
     NSCharacterSet *spacingCombiningMarks = [NSCharacterSet spacingCombiningMarksForUnicodeVersion:12];
     const BOOL shouldSupportVS16 = [iTermAdvancedSettingsModel vs16Supported] || (!softAlternateScreenMode && [iTermAdvancedSettingsModel vs16SupportedInPrimaryScreen]);
+    const BOOL fullWidthFlags = [iTermAdvancedSettingsModel fullWidthFlags];
 
     [s enumerateComposedCharacters:^(NSRange range,
                                      unichar baseBmpChar,
@@ -491,7 +485,8 @@ void StringToScreenChars(NSString *s,
 
                 isDoubleWidth = [NSString isDoubleWidthCharacter:baseBmpChar
                                           ambiguousIsDoubleWidth:ambiguousIsDoubleWidth
-                                                  unicodeVersion:unicodeVersion];
+                                                  unicodeVersion:unicodeVersion
+                                                  fullWidthFlags:fullWidthFlags];
             }
         }
         if (composedOrNonBmpChar) {
@@ -517,7 +512,8 @@ void StringToScreenChars(NSString *s,
             }
             isDoubleWidth = [NSString isDoubleWidthCharacter:baseChar
                                       ambiguousIsDoubleWidth:ambiguousIsDoubleWidth
-                                              unicodeVersion:unicodeVersion];
+                                              unicodeVersion:unicodeVersion
+                                              fullWidthFlags:fullWidthFlags];
             if (!isDoubleWidth && composedLength > next) {
                 const unichar peek = [composedOrNonBmpChar characterAtIndex:next];
                 if (peek == 0xfe0f) {

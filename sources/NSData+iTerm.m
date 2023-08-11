@@ -68,7 +68,39 @@
     return string;
 }
 
-+ (NSData *)dataWithTGZContainingFiles:(NSArray<NSString *> *)files relativeToPath:(NSString *)basePath error:(NSError **)error {
++ (int)untarFromArchive:(NSURL *)tarfile to:(NSURL *)destinationFolder {
+    NSArray<NSString *> *args = @[
+        @"-x",
+        @"-z",
+        @"-C",
+        destinationFolder.path,
+        @"-f",
+        tarfile.path ];
+    
+    NSTask *task = [[NSTask alloc] init];
+    NSMutableDictionary<NSString *, NSString *> *environment = [[[NSProcessInfo processInfo] environment] mutableCopy];
+    environment[@"COPYFILE_DISABLE"] = @"1";
+    [task setEnvironment:environment];
+    [task setLaunchPath:@"/usr/bin/tar"];
+    [task setArguments:args];
+    [task setStandardInput:[NSPipe pipe]];
+    [task setStandardOutput:[NSPipe pipe]];
+    [task setStandardError:[NSPipe pipe]];
+    [task launch];
+    NSData *data = [[[task standardOutput] fileHandleForReading] readDataToEndOfFile];
+    DLog(@"%@", data);
+    NSData *errorMessage = [[[task standardError] fileHandleForReading] readDataToEndOfFile];
+    if (errorMessage.length) {
+        DLog(@"%@ %@: %@", task.launchPath, [task.arguments componentsJoinedByString:@" "], [errorMessage stringWithEncoding:NSUTF8StringEncoding]);
+    }
+    [task waitUntilExit];
+    return task.terminationStatus;
+}
+
++ (NSData *)dataWithTGZContainingFiles:(NSArray<NSString *> *)files
+                        relativeToPath:(NSString *)basePath
+                  includeExtendedAttrs:(BOOL)includeExtendedAttrs
+                                 error:(NSError **)error {
     NSArray<NSString *> *args = @[ @"-c",  // Create
                                    @"-z",  // gzip
                                    @"-b",
@@ -76,6 +108,9 @@
                                    @"-f",
                                    @"-",  // write to stdout
                                    [NSString stringWithFormat:@"-C%@", basePath] ];  // Base path
+    if (!includeExtendedAttrs) {
+        args = [@[@"--no-xattrs"] arrayByAddingObjectsFromArray:args];
+    }
     args = [args arrayByAddingObjectsFromArray:files];  // Files to zip
 
     NSTask *task = [[NSTask alloc] init];

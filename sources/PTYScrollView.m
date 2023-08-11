@@ -190,6 +190,12 @@
     return [self scrollerStyle] == NSScrollerStyleLegacy;
 }
 
+- (void)viewDidChangeEffectiveAppearance {
+    DLog(@"Appearance of %@ is now %@ from %@",
+         self, self.effectiveAppearance, [NSThread callStackSymbols]);
+    [super viewDidChangeEffectiveAppearance];
+}
+
 @end
 
 @implementation PTYScrollView {
@@ -240,9 +246,9 @@
 - (CGFloat)accumulateVerticalScrollFromEvent:(NSEvent *)theEvent {
     const CGFloat lineHeight = self.verticalLineScroll;
     if ([iTermAdvancedSettingsModel useModernScrollWheelAccumulator]) {
-        return [self.ptyVerticalScroller.accumulator deltaYForEvent:theEvent lineHeight:lineHeight];
+        return [self.ptyVerticalScroller.accumulator deltaForEvent:theEvent increment:lineHeight];
     } else {
-        return [self.ptyVerticalScroller.accumulator legacyDeltaYForEvent:theEvent lineHeight:lineHeight];
+        return [self.ptyVerticalScroller.accumulator legacyDeltaForEvent:theEvent increment:lineHeight];
     }
 }
 

@@ -63,6 +63,11 @@
         case iTermParsedExpressionTypeFunctionCall:
             value = self.functionCall.description;
             break;
+        case iTermParsedExpressionTypeFunctionCalls:
+            value = [[self.functionCalls mapWithBlock:^id _Nullable(iTermScriptFunctionCall * _Nonnull anObject) {
+                return [anObject description];
+            }] componentsJoinedByString:@"; "];
+            break;
         case iTermParsedExpressionTypeNil:
             value = @"nil";
             break;
@@ -70,6 +75,7 @@
             value = self.error.description;
             break;
         case iTermParsedExpressionTypeNumber:
+        case iTermParsedExpressionTypeBoolean:
             value = [self.number stringValue];
             break;
         case iTermParsedExpressionTypeString:
@@ -126,6 +132,15 @@
     if (self) {
         _expressionType = iTermParsedExpressionTypeFunctionCall;
         _object = functionCall;
+    }
+    return self;
+}
+
+- (instancetype)initWithFunctionCalls:(NSArray<iTermScriptFunctionCall *> *)functionCalls {
+    self = [super init];
+    if (self) {
+        _expressionType = iTermParsedExpressionTypeFunctionCalls;
+        _object = functionCalls;
     }
     return self;
 }
@@ -195,6 +210,15 @@
     return self;
 }
 
+- (instancetype)initWithBoolean:(BOOL)value {
+    self = [super init];
+    if (self) {
+        _expressionType = iTermParsedExpressionTypeBoolean;
+        _object = @(value);
+    }
+    return self;
+}
+
 - (instancetype)initWithError:(NSError *)error {
     self = [super init];
     if (self) {
@@ -254,6 +278,14 @@
     return _object;
 }
 
+- (NSArray<iTermScriptFunctionCall *> *)functionCalls {
+    assert([_object isKindOfClass:[NSArray class]]);
+    for (id child in _object) {
+        assert([child isKindOfClass:[iTermScriptFunctionCall class]]);
+    }
+    return _object;
+}
+
 - (NSArray *)interpolatedStringParts {
     assert([_object isKindOfClass:[NSArray class]]);
     return _object;
@@ -267,10 +299,12 @@
 - (BOOL)containsAnyFunctionCall {
     switch (self.expressionType) {
         case iTermParsedExpressionTypeFunctionCall:
+        case iTermParsedExpressionTypeFunctionCalls:
             return YES;
         case iTermParsedExpressionTypeNil:
         case iTermParsedExpressionTypeError:
         case iTermParsedExpressionTypeNumber:
+        case iTermParsedExpressionTypeBoolean:
         case iTermParsedExpressionTypeString:
         case iTermParsedExpressionTypeArrayOfValues:
         case iTermParsedExpressionTypeVariableReference:

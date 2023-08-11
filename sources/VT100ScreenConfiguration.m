@@ -7,6 +7,7 @@
 
 #import "VT100ScreenConfiguration.h"
 #import "NSArray+iTerm.h"
+#import "NSDictionary+iTerm.h"
 
 @interface VT100ScreenConfiguration()
 @property (nonatomic, readwrite) BOOL shouldPlacePromptAtFirstColumn;
@@ -34,6 +35,7 @@
 @property (nonatomic, readwrite) BOOL darkMode;
 @property (nonatomic, readwrite) BOOL useSeparateColorsForLightAndDarkMode;
 @property (nonatomic, readwrite) float minimumContrast;
+@property (nonatomic, readwrite) float faintTextAlpha;
 @property (nonatomic, readwrite) double mutingAmount;
 @property (nonatomic, readwrite) iTermUnicodeNormalization normalization;
 @property (nonatomic, readwrite) BOOL appendToScrollbackWithStatusBar;
@@ -47,6 +49,9 @@
 @property (nonatomic, readwrite) double dimmingAmount;
 @property (nonatomic, readwrite) BOOL publishing;
 @property (nonatomic, readwrite) BOOL terminalCanChangeBlink;
+@property (nonatomic, strong, readwrite, nullable) NSNumber *desiredComposerRows;
+@property (nonatomic, readwrite) BOOL autoComposerEnabled;
+@property (nonatomic, readwrite) BOOL useLineStyleMarks;
 @end
 
 @implementation VT100ScreenConfiguration
@@ -75,6 +80,7 @@
 @synthesize darkMode = _darkMode;
 @synthesize useSeparateColorsForLightAndDarkMode = _useSeparateColorsForLightAndDarkMode;
 @synthesize minimumContrast = _minimumContrast;
+@synthesize faintTextAlpha = _faintTextAlpha;
 @synthesize mutingAmount = _mutingAmount;
 @synthesize normalization = _normalization;
 @synthesize appendToScrollbackWithStatusBar = _appendToScrollbackWithStatusBar;
@@ -87,6 +93,9 @@
 @synthesize dimmingAmount = _dimmingAmount;
 @synthesize publishing = _publishing;
 @synthesize terminalCanChangeBlink = _terminalCanChangeBlink;
+@synthesize desiredComposerRows = _desiredComposerRows;
+@synthesize autoComposerEnabled = _autoComposerEnabled;
+@synthesize useLineStyleMarks = _useLineStyleMarks;
 
 @synthesize isDirty = _isDirty;
 @synthesize stringForKeypress = _stringForKeypress;
@@ -118,6 +127,7 @@
         _darkMode = other.darkMode;
         _useSeparateColorsForLightAndDarkMode = other.useSeparateColorsForLightAndDarkMode;
         _minimumContrast = other.minimumContrast;
+        _faintTextAlpha = other.faintTextAlpha;
         _mutingAmount = other.mutingAmount;
         _normalization = other.normalization;
         _appendToScrollbackWithStatusBar = other.appendToScrollbackWithStatusBar;
@@ -131,6 +141,9 @@
         _dimmingAmount = other.dimmingAmount;
         _publishing = other.publishing;
         _terminalCanChangeBlink = other.terminalCanChangeBlink;
+        _desiredComposerRows = other.desiredComposerRows;
+        _autoComposerEnabled = other.autoComposerEnabled;
+        _useLineStyleMarks = other.useLineStyleMarks;
 
         _isDirty = other.isDirty;
     }
@@ -170,6 +183,7 @@
                             @"darkMode": @(_darkMode),
                             @"useSeparateColorsForLightAndDarkMode": @(_useSeparateColorsForLightAndDarkMode),
                             @"minimumContrast": @(_minimumContrast),
+                            @"faintTextAlpha": @(_faintTextAlpha),
                             @"mutingAmount": @(_mutingAmount),
                             @"normalization": @(_normalization),
                             @"appendToScrollbackWithStatusBar": @(_appendToScrollbackWithStatusBar),
@@ -183,9 +197,14 @@
                             @"dimmingAmount": @(_dimmingAmount),
                             @"publishing": @(_publishing),
                             @"terminalCanChangeBlink": @(_terminalCanChangeBlink),
+                            @"desiredComposerRows": _desiredComposerRows ?: [NSNull null],
+                            @"autoComposerEnabled": @(_autoComposerEnabled),
+                            @"useLineStyleMarks": @(_useLineStyleMarks),
 
                             @"isDirty": @(_isDirty),
     };
+    dict = [dict dictionaryByRemovingNullValues];
+
     NSArray<NSString *> *keys = [dict.allKeys sortedArrayUsingSelector:@selector(compare:)];
     NSArray<NSString *> *kvps = [keys mapWithBlock:^id(NSString *key) {
         return [NSString stringWithFormat:@"    %@=%@", key, dict[key]];
@@ -223,6 +242,7 @@
 @dynamic darkMode;
 @dynamic useSeparateColorsForLightAndDarkMode;
 @dynamic minimumContrast;
+@dynamic faintTextAlpha;
 @dynamic mutingAmount;
 @dynamic normalization;
 @dynamic appendToScrollbackWithStatusBar;
@@ -236,6 +256,9 @@
 @dynamic dimmingAmount;
 @dynamic publishing;
 @dynamic terminalCanChangeBlink;
+@dynamic desiredComposerRows;
+@dynamic autoComposerEnabled;
+@dynamic useLineStyleMarks;
 
 @dynamic isDirty;
 

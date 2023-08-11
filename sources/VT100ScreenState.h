@@ -21,6 +21,7 @@
 #import "iTermIntervalTreeObserver.h"
 #import "iTermMark.h"
 #import "iTermTemporaryDoubleBufferedGridController.h"
+#import "iTermAtomicMutableArrayOfWeakObjects.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -44,6 +45,7 @@ extern NSString *const kScreenStateLastCommandMarkKey;
 extern NSString *const kScreenStatePrimaryGridStateKey;
 extern NSString *const kScreenStateAlternateGridStateKey;
 extern NSString *const kScreenStateCursorCoord;
+extern NSString *const kScreenStatePromptStateKey;
 extern NSString *const kScreenStateProtectedMode;
 extern NSString *const kScreenStateExfiltratedEnvironmentKey;
 
@@ -186,6 +188,8 @@ extern NSString *const kScreenStateExfiltratedEnvironmentKey;
 @property (nonatomic, readonly) NSDictionary *terminalState;
 @property (nonatomic, copy, readonly) id<VT100ScreenConfiguration> config;
 @property (nullable, nonatomic, strong, readonly) NSArray<iTermTuple<NSString *, NSString *> *> *exfiltratedEnvironment;
+@property (nonatomic, readonly) NSDictionary *promptStateDictionary;
+@property (nonatomic, readonly) iTermAtomicMutableArrayOfWeakObjects<id<VT100ScreenMarkReading>> *namedMarks;
 
 @end
 
@@ -356,6 +360,11 @@ extern NSString *const kScreenStateExfiltratedEnvironmentKey;
 #pragma mark - Development
 
 - (NSString *)compactLineDumpWithHistoryAndContinuationMarksAndLineNumbers;
+- (NSString *)compactLineDumpWithHistoryAndContinuationMarksAndLineNumbersAndIntervalTreeObjects;
+
+#pragma mark - SSH State
+
+- (NSDictionary *)savedState;
 
 @end
 

@@ -12,22 +12,30 @@
 #import "NSDictionary+iTerm.h"
 #import "NSObject+iTerm.h"
 #import "NSStringITerm.h"
+#import "ScreenCharArray.h"
+#import "iTermPromise.h"
 
 static NSString *const kScreenMarkIsPrompt = @"Is Prompt";
 static NSString *const kMarkGuidKey = @"Guid";
 static NSString *const kMarkCapturedOutputKey = @"Captured Output";
 static NSString *const kMarkCommandKey = @"Command";
 static NSString *const kMarkCodeKey = @"Code";
+static NSString *const kMarkPromptDetectedByTrigger = @"Prompt Detected by Trigger";
+static NSString *const kMarkLineStyleKey = @"Line Style";
 static NSString *const kMarkHasCode = @"Has Code";
 static NSString *const kMarkStartDateKey = @"Start Date";
 static NSString *const kMarkEndDateKey = @"End Date";
+static NSString *const kMarkNameKey = @"Name";
 static NSString *const kMarkSessionGuidKey = @"Session Guid";
 static NSString *const kMarkPromptRange = @"Prompt Range";
+static NSString *const kMarkPromptText = @"Prompt Text";
 static NSString *const kMarkCommandRange = @"Command Range";
 static NSString *const kMarkOutputStart = @"Output Start";
 
 @implementation VT100ScreenMark {
     NSMutableArray<CapturedOutput *> *_capturedOutput;
+    iTermPromise<NSNumber *> *_returnCodePromise;
+    id<iTermPromiseSeal> _codeSeal;
 }
 
 @synthesize isPrompt = _isPrompt;
@@ -35,12 +43,16 @@ static NSString *const kMarkOutputStart = @"Output Start";
 @synthesize clearCount = _clearCount;
 @synthesize capturedOutput = _capturedOutput;
 @synthesize code = _code;
+@synthesize promptDetectedByTrigger = _promptDetectedByTrigger;
+@synthesize lineStyle = _lineStyle;
 @synthesize hasCode = _hasCode;
 @synthesize command = _command;
 @synthesize startDate = _startDate;
+@synthesize name = _name;
 @synthesize endDate = _endDate;
 @synthesize sessionGuid = _sessionGuid;
 @synthesize promptRange = _promptRange;
+@synthesize promptText = _promptText;
 @synthesize commandRange = _commandRange;
 @synthesize outputStart = _outputStart;
 
@@ -93,6 +105,8 @@ static NSString *const kMarkOutputStart = @"Output Start";
     self = [super initWithDictionary:dict];
     if (self) {
         _code = [dict[kMarkCodeKey] intValue];
+        _promptDetectedByTrigger = [dict[kMarkPromptDetectedByTrigger] boolValue];
+        _lineStyle = [dict[kMarkLineStyleKey] boolValue];
         _hasCode = [dict[kMarkHasCode] boolValue];
         if (_code && !_hasCode) {
             // Not so great way of migrating old marks. Misses those with a value of 0 :(
@@ -113,6 +127,7 @@ static NSString *const kMarkOutputStart = @"Output Start";
         if (end > 0) {
             _endDate = [NSDate dateWithTimeIntervalSinceReferenceDate:end];
         }
+        _name = [dict[kMarkNameKey] copy];
         NSMutableArray *array = [NSMutableArray array];
         _capturedOutput = array;
         for (NSDictionary *capturedOutputDict in dict[kMarkCapturedOutputKey]) {
@@ -125,6 +140,14 @@ static NSString *const kMarkOutputStart = @"Output Start";
             _promptRange = [dict[kMarkPromptRange] gridAbsCoordRange];
         } else {
             _promptRange = VT100GridAbsCoordRangeMake(-1, -1, -1, -1);
+        }
+        if (dict[kMarkPromptText]) {
+            NSArray<NSDictionary *> *dicts = dict[kMarkPromptText];
+            _promptText = [dicts mapWithBlock:^id _Nullable(NSDictionary * _Nonnull dict) {
+                return [[ScreenCharArray alloc] initWithDictionary:dict];
+            }];
+        } else {
+            _promptText = nil;
         }
         if (dict[kMarkCommandRange]) {
             _commandRange = [dict[kMarkCommandRange] gridAbsCoordRange];
@@ -153,17 +176,21 @@ static NSString *const kMarkOutputStart = @"Output Start";
     VT100ScreenMark *mark = [[VT100ScreenMark alloc] initRegistered:NO];
 
     mark->_code = _code;
+    mark->_promptDetectedByTrigger = _promptDetectedByTrigger;
+    mark->_lineStyle = _lineStyle;
     mark->_hasCode = _hasCode;
     mark->_isPrompt = _isPrompt;
     mark->_guid = [_guid copy];
     mark->_sessionGuid = [_sessionGuid copy];
     mark->_startDate = _startDate;
+    mark->_name = [_name copy];
     mark->_endDate = _endDate;
     mark->_capturedOutput = [[_capturedOutput mapWithBlock:^id(CapturedOutput *capturedOutput) {
         return [capturedOutput doppelganger];
     }] mutableCopy];
     mark->_command = [_command copy];
     mark->_promptRange = _promptRange;
+    mark->_promptText = [_promptText copy];
     mark->_commandRange = _commandRange;
     mark->_outputStart = _outputStart;
 
@@ -179,10 +206,11 @@ static NSString *const kMarkOutputStart = @"Output Start";
 }
 
 - (NSString *)description {
-    return [NSString stringWithFormat:@"<%@: %p guid=%@ command=%@ %@>",
+    return [NSString stringWithFormat:@"<%@: %p guid=%@ name=%@ command=%@ %@>",
             NSStringFromClass([self class]),
             self,
             _guid,
+            _name,
             _command,
             self.isDoppelganger ? @"IsDop" : @"NotDop"];
 }
@@ -209,11 +237,19 @@ static NSString *const kMarkOutputStart = @"Output Start";
     dict[kMarkCapturedOutputKey] = [self capturedOutputDictionaries];
     dict[kMarkHasCode] = @(_hasCode);
     dict[kMarkCodeKey] = @(_code);
+    dict[kMarkPromptDetectedByTrigger] = @(_promptDetectedByTrigger);
+    dict[kMarkLineStyleKey] = @(_lineStyle);
     dict[kMarkCommandKey] = _command ?: [NSNull null];
     dict[kMarkStartDateKey] = @([self.startDate timeIntervalSinceReferenceDate]);
+    if (_name) {
+        dict[kMarkNameKey] = _name;
+    }
     dict[kMarkEndDateKey] = @([self.endDate timeIntervalSinceReferenceDate]);
     dict[kMarkSessionGuidKey] = self.sessionGuid ?: [NSNull null];
     dict[kMarkPromptRange] = [NSDictionary dictionaryWithGridAbsCoordRange:_promptRange];
+    dict[kMarkPromptText] = [_promptText mapWithBlock:^id _Nullable(ScreenCharArray *sca) {
+        return sca.dictionaryValue;
+    }];
     dict[kMarkCommandRange] = [NSDictionary dictionaryWithGridAbsCoordRange:_commandRange];
     dict[kMarkOutputStart] = [NSDictionary dictionaryWithGridAbsCoord:_outputStart];
 
@@ -249,6 +285,8 @@ static NSString *const kMarkOutputStart = @"Output Start";
 - (void)setCode:(int)code {
     _code = code;
     _hasCode = YES;
+    [_codeSeal fulfill:@(code)];
+    _codeSeal = nil;
 }
 
 - (void)incrementClearCount {
@@ -259,5 +297,19 @@ static NSString *const kMarkOutputStart = @"Output Start";
     return (id<VT100ScreenMarkReading>)[super doppelganger];
 }
 
-@end
+- (NSString *)shortDebugDescription {
+    return [NSString stringWithFormat:@"[ScreenMark prompt=%@ code=%@ cmd=%@]",
+            @(_isPrompt), @(_code), _command];
+}
 
+
+- (iTermPromise<NSNumber *> *)returnCodePromise {
+    if (!_returnCodePromise) {
+        _returnCodePromise = [iTermPromise promise:^(id<iTermPromiseSeal>  _Nonnull seal) {
+            _codeSeal = seal;
+        }];
+    }
+    return _returnCodePromise;
+}
+
+@end

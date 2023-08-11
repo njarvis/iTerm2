@@ -117,6 +117,11 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
     [self launchAppWithBundleIdentifier:bundleIdentifier args:@[ path ]];
 }
 
+- (void)openAppWithBundleIdentifier:(NSString *)bundleIdentifier args:(NSArray *)args {
+    args = [@[ @"-nb", bundleIdentifier, @"--args" ] arrayByAddingObjectsFromArray: args];
+    [self launchTaskWithPath:@"/usr/bin/open" arguments:args completion:nil];
+}
+
 - (NSBundle *)applicationBundleWithIdentifier:(NSString *)bundleIdentifier {
     NSString *bundlePath =
         [[NSWorkspace sharedWorkspace] absolutePathForAppBundleWithIdentifier:bundleIdentifier];
@@ -246,8 +251,16 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
         // I don't expect this to ever happen.
         return;
     }
-    NSString *identifier = codium ? kVSCodiumIdentifier : kVSCodeIdentifier;
-    NSString *bundlePath = [self absolutePathForAppBundleWithIdentifier:identifier];
+    NSArray<NSString *> *possibleIdentifiers = codium ? @[ kVSCodiumIdentifier1, kVSCodiumIdentifier2 ] : @[kVSCodeIdentifier];
+    NSString *identifier;
+    NSString *bundlePath = nil;
+    for (NSString *candidate in possibleIdentifiers) {
+        identifier = candidate;
+        bundlePath = [self absolutePathForAppBundleWithIdentifier:identifier];
+        if (bundlePath) {
+            break;
+        }
+    }
     if (bundlePath) {
         NSString *codeExecutable =
         [bundlePath stringByAppendingPathComponent:@"Contents/Resources/app/bin/code"];
@@ -318,27 +331,6 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
     [self launchTaskWithPath:novaUtil arguments:args completion:nil];
 }
 
-- (void)launchIntelliJIDEAWithArguments:(NSArray<NSString *> *)args path:(NSString *)path {
-    NSBundle *bundle = [self applicationBundleWithIdentifier:kIntelliJIDEAIdentifier];
-    if (!bundle) {
-        DLog(@"Failed to find IDEA bundle");
-        return;
-    }
-    NSString *launcher = [self intelliJIDEALauncherInApplicationBundle:bundle];
-    if (!launcher) {
-        DLog(@"Failed to find launcher in %@", bundle);
-        if (path) {
-            DLog(@"Launch idea with path %@", path);
-            [self launchAppWithBundleIdentifier:kIntelliJIDEAIdentifier
-                                           path:path];
-        }
-        return;
-    }
-    [self launchTaskWithPath:launcher
-                   arguments:args
-                  completion:nil];
-}
-
 - (NSString *)absolutePathForAppBundleWithIdentifier:(NSString *)bundleId {
     return [[NSWorkspace sharedWorkspace] absolutePathForAppBundleWithIdentifier:bundleId];
 }
@@ -368,7 +360,8 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
 + (NSArray *)bundleIdsThatSupportOpeningToLineNumber {
     return @[ kAtomIdentifier,
               kVSCodeIdentifier,
-              kVSCodiumIdentifier,
+              kVSCodiumIdentifier1,
+              kVSCodiumIdentifier2,
               kSublimeText2Identifier,
               kSublimeText3Identifier,
               kSublimeText4Identifier,
@@ -378,6 +371,8 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
               kBBEditIdentifier,
               kEmacsAppIdentifier,
               kIntelliJIDEAIdentifier,
+              kWebStormIdentifier,
+              kRiderIdentifier,
               kNovaAppIdentifier ];
 }
 
@@ -400,7 +395,8 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
         return;
     }
     if ([identifier isEqualToString:kVSCodeIdentifier] ||
-        [identifier isEqualToString:kVSCodiumIdentifier]) {
+        [identifier isEqualToString:kVSCodiumIdentifier1] ||
+        [identifier isEqualToString:kVSCodiumIdentifier2]) {
         if (lineNumber != nil) {
             path = [NSString stringWithFormat:@"%@:%@", path, lineNumber];
         }
@@ -408,7 +404,7 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
             path = [path stringByAppendingFormat:@":%@", columnNumber];
         }
         [self launchVSCodeWithPath:path
-                            codium:[identifier isEqualToString:kVSCodiumIdentifier]];
+                            codium:([identifier isEqualToString:kVSCodiumIdentifier1] || [identifier isEqualToString:kVSCodiumIdentifier2])];
         return;
     }
     if ([identifier isEqualToString:kSublimeText2Identifier] ||
@@ -451,7 +447,13 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
         [self openDocumentInNova:path line:lineNumber column:columnNumber];
         return;
     }
-    if ([identifier isEqualToString:kIntelliJIDEAIdentifier]) {
+    // WebStorm doesn't actually support --line, but it's harmless to try.
+    NSArray *jetbrains = @[
+        kIntelliJIDEAIdentifier,
+        kWebStormIdentifier,
+        kRiderIdentifier
+    ];
+    if ([jetbrains containsObject:identifier]) {
         NSArray<NSString *> *args = @[];
         if (path) {
             if (lineNumber) {
@@ -460,7 +462,7 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
                 args = @[ path ];
             }
         }
-        [self launchIntelliJIDEAWithArguments:args path:path];
+        [self openAppWithBundleIdentifier:identifier args:args];
         return;
     }
 

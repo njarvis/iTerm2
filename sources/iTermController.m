@@ -74,6 +74,8 @@
 
 @import Sparkle;
 
+NSString *const iTermSnippetsTagsDidChange = @"iTermSnippetsTagsDidChange";
+
 @interface NSApplication (Undocumented)
 - (void)_cycleWindowsReversed:(BOOL)back;
 @end
@@ -326,6 +328,15 @@ static iTermController *gSharedInstance;
 - (void)newSessionWithSameProfile:(id)sender newWindow:(BOOL)newWindow {
     Profile *bookmark = nil;
     if (_frontTerminalWindowController) {
+        const BOOL tmux = [[_frontTerminalWindowController currentSession] isTmuxClient];
+        if (tmux) {
+            if (newWindow) {
+                [_frontTerminalWindowController newTmuxWindow:sender];
+            } else {
+                [_frontTerminalWindowController newTmuxTabAtIndex:nil];
+            }
+            return;
+        }
         bookmark = [[_frontTerminalWindowController currentSession] profile];
     }
     BOOL divorced = ([[ProfileModel sessionsInstance] bookmarkWithGuid:bookmark[KEY_GUID]] != nil);
@@ -369,6 +380,12 @@ static iTermController *gSharedInstance;
                               didMakeSession:nil
                                   completion:nil];
     }
+}
+
+- (NSArray<PTYSession *> *)allSessions {
+    return [_terminalWindows flatMapWithBlock:^NSArray *(PseudoTerminal *anObject) {
+        return anObject.allSessions;
+    }];
 }
 
 - (NSArray<PseudoTerminal *> *)terminalsSortedByNumber {
@@ -715,6 +732,10 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     for (PseudoTerminal *t in _terminalWindows) {
         [[t window] orderFront:nil];
     }
+}
+
+- (NSArray<NSString *> *)currentSnippetsFilter {
+    return self.currentTerminal.currentSnippetTags ?: @[];
 }
 
 - (PseudoTerminal *)currentTerminal {
@@ -1470,7 +1491,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
             session.shortLivedSingleUse = YES;
             session.isSingleUseSession = YES;
             if (data) {
-                [session writeLatin1EncodedData:data broadcastAllowed:NO];
+                [session writeLatin1EncodedData:data broadcastAllowed:NO reporting:NO];
             }
             makeSessionCompletion(session);
         }
@@ -1641,6 +1662,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
     [[NSNotificationCenter defaultCenter] postNotificationName:@"iTermWindowBecameKey"
                                                         object:thePseudoTerminal
                                                       userInfo:nil];
+    [[NSNotificationCenter defaultCenter] postNotificationName:iTermSnippetsTagsDidChange object:nil];
 }
 
 #pragma mark - iTermPresentationControllerDelegate

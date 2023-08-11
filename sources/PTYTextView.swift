@@ -40,10 +40,11 @@ extension PTYTextView: ExternalSearchResultsController {
         portholeWithSelection?.copy(as: .controlSequences)
     }
 
-    @objc(renderRange:type:filename:)
+    @objc(renderRange:type:filename:forceWide:)
     func render(range originalRange: VT100GridAbsCoordRange,
                 type: String?,
-                filename: String?) {
+                filename: String?,
+                forceWide: Bool) {
         DLog("render(range:\(VT100GridAbsCoordRangeDescription(originalRange)), type:\(String(describing: type)), filename:\(String(describing: filename)))")
         guard let dataSource = dataSource else {
             DLog("nil datasource")
@@ -64,7 +65,8 @@ extension PTYTextView: ExternalSearchResultsController {
                             text: text,
                             baseDirectory: baseDirectory,
                             type: type,
-                            filename: filename)
+                            filename: filename,
+                            forceWide: forceWide)
     }
 
     func text(inRange range: VT100GridCoordRange) -> String {
@@ -85,12 +87,13 @@ extension PTYTextView: ExternalSearchResultsController {
         return text
     }
 
-    @objc(replaceWithPortholeInRange:havingText:baseDirectory:type:filename:)
+    @objc(replaceWithPortholeInRange:havingText:baseDirectory:type:filename:forceWide:)
     func replaceWithPorthole(inRange absRange: VT100GridAbsCoordRange,
                              text: String,
                              baseDirectory: URL?,
                              type: String?,
-                             filename: String?) {
+                             filename: String?,
+                             forceWide: Bool) {
         DLog("replaceWithPorthole(inRange:\(VT100GridAbsCoordRangeDescription(absRange)), text:\(String(describing: text)), baseDirectory:\(String(describing: baseDirectory)), type:\(String(describing: type)), filename:\(String(describing: filename))")
 
         guard dataSource != nil else {
@@ -100,9 +103,11 @@ extension PTYTextView: ExternalSearchResultsController {
         let config = PortholeConfig(text: text,
                                     colorMap: colorMap,
                                     baseDirectory: baseDirectory,
-                                    font: font,
+                                    font: self.fontTable.asciiFont.font,
                                     type: type,
-                                    filename: filename)
+                                    filename: filename,
+                                    useSelectedTextColor: delegate?.textViewShouldUseSelectedTextColor() ?? true,
+                                    forceWide: iTermAdvancedSettingsModel.defaultWideMode() || forceWide)
         let porthole = makePorthole(for: config)
         replace(range: absRange, withPorthole: porthole)
     }
@@ -159,7 +164,8 @@ extension PTYTextView: ExternalSearchResultsController {
         DLog("hydratePorthole(\(mark))")
         guard let porthole = PortholeRegistry.instance.get(mark.uniqueIdentifier,
                                                            colorMap: colorMap,
-                                                           font: font) as? Porthole else {
+                                                           useSelectedTextColor: delegate?.textViewShouldUseSelectedTextColor() ?? true,
+                                                           font: self.fontTable.asciiFont.font) as? Porthole else {
             return nil
         }
         return configuredPorthole(porthole)
@@ -310,10 +316,10 @@ extension PTYTextView: ExternalSearchResultsController {
     }
 
     @objc
-    func updatePortholeColors() {
-        DLog("updatePortholeColors")
+    func updatePortholeColors(useSelectedTextColor: Bool) {
+        DLog("updatePortholeColors(useSelectedTextColor: \(useSelectedTextColor))")
         for porthole in typedPortholes {
-            porthole.updateColors()
+            porthole.updateColors(useSelectedTextColor: useSelectedTextColor)
         }
     }
 

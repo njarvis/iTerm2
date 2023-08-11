@@ -114,6 +114,14 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
     return info.syntheticSetter(value);
 }
 
+- (BOOL)keyHasSyntheticGetter:(NSString *)key {
+    return [_keysWithSyntheticGetters containsObject:key];
+}
+
+- (BOOL)keyHasSyntheticSetter:(NSString *)key {
+    return [_keysWithSyntheticSetters containsObject:key];
+}
+
 - (BOOL)boolForKey:(NSString *)key {
     if ([_keysWithSyntheticGetters containsObject:key]) {
         return [[self syntheticObjectForKey:key] boolValue];
@@ -315,6 +323,10 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
                 [self setInt:[sender selectedTag] forKey:info.key];
                 break;
 
+            case kPreferenceInfoTypeStringPopup:
+                [self setObject:[[sender selectedItem] representedObject] forKey:info.key];
+                break;
+
             case kPreferenceInfoTypeUnsignedIntegerPopup:
                 assert([sender selectedTag]>=0);
                 [self setUnsignedInteger:[sender selectedTag] forKey:info.key];
@@ -455,9 +467,29 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
         assert(type != kPreferenceInfoTypeMatrix);  // Matrix type requires both.
         assert(type != kPreferenceInfoTypeRadioButton);  // This is just a modernized matrix
     }
+
+    return [self unsafeDefineControl:control
+                                 key:key
+                         relatedView:relatedView
+                         displayName:forceDisplayName
+                                type:type
+                      settingChanged:settingChanged
+                              update:update
+                          searchable:searchable];
+}
+
+- (PreferenceInfo *)unsafeDefineControl:(NSControl *)control
+                                    key:(NSString *)key
+                            relatedView:(NSView *)relatedView
+                            displayName:(NSString *)forceDisplayName
+                                   type:(PreferenceInfoType)type
+                         settingChanged:(void (^)(id))settingChanged
+                                 update:(BOOL (^)(void))update
+                             searchable:(BOOL)searchable {
     PreferenceInfo *info = [PreferenceInfo infoForPreferenceWithKey:key
                                                                type:type
                                                             control:control];
+    info.relatedView = relatedView;
     info.customSettingChangedHandler = settingChanged;
     info.onUpdate = update;
     [_keyMap setObject:info forKey:control];
@@ -541,6 +573,7 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
     }
     switch (type) {
         case kPreferenceInfoTypePopup:
+        case kPreferenceInfoTypeStringPopup:
         case kPreferenceInfoTypeMatrix:
         case kPreferenceInfoTypeSlider:
         case kPreferenceInfoTypeInvertedCheckbox:
@@ -650,6 +683,19 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
             break;
         }
 
+        case kPreferenceInfoTypeStringPopup: {
+            assert([info.control isKindOfClass:[NSPopUpButton class]]);
+            NSPopUpButton *popup = (NSPopUpButton *)info.control;
+            id obj = [self objectForKey:info.key];
+            if (obj) {
+                const NSInteger i = [popup indexOfItemWithRepresentedObject:[self objectForKey:info.key]];
+                if (i != NSNotFound) {
+                    [popup selectItemAtIndex:i];
+                }
+            }
+            break;
+        }
+
         case kPreferenceInfoTypeUnsignedIntegerPopup: {
             assert([info.control isKindOfClass:[NSPopUpButton class]]);
             NSPopUpButton *popup = (NSPopUpButton *)info.control;
@@ -728,6 +774,10 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
     // Documented as doing nothing.
 }
 
+- (void)willDeselectTab {
+    // Documented as doing nothing.
+}
+
 - (void)commitControls {
     for (id control in _keyMap) {
         PreferenceInfo *info = [_keyMap objectForKey:control];
@@ -761,6 +811,7 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
                 case kPreferenceInfoTypeDoubleTextField:
                 case kPreferenceInfoTypeStringTextField:
                 case kPreferenceInfoTypePopup:
+                case kPreferenceInfoTypeStringPopup:
                 case kPreferenceInfoTypeUnsignedIntegerPopup:
                 case kPreferenceInfoTypeSlider:
                 case kPreferenceInfoTypeTokenField:
@@ -846,6 +897,7 @@ NSString *const kPreferenceDidChangeFromOtherPanelKeyUserInfoKey = @"key";
             case kPreferenceInfoTypeMatrix:
             case kPreferenceInfoTypeRadioButton:
             case kPreferenceInfoTypePopup:
+            case kPreferenceInfoTypeStringPopup:
             case kPreferenceInfoTypeSlider:
             case kPreferenceInfoTypeStringTextField:
             case kPreferenceInfoTypeTokenField:

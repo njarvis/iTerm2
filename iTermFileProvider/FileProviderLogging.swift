@@ -9,21 +9,53 @@ import Foundation
 import OSLog
 
 @available(macOS 11.0, *)
-let logger = Logger(subsystem: "com.themcnachmans.FileProvider", category: "main")
+struct iTermLogger {
+    private static let logger = Logger(subsystem: "com.iterm2.logger", category: "main")
+    public func info(_ messageBlock: @autoclosure () -> String,
+                     file: String = #file,
+                     line: Int = #line,
+                     function: String = #function) {
+        if !gDebugLogging.boolValue {
+            return
+        }
+        let message = messageBlock()
+        Self.logger.info("\(message, privacy: .public)")
+        DebugLogImpl(file, Int32(line), function, message)
+    }
 
-@available(macOS 11.0, *)
+    public func debug(_ messageBlock: @autoclosure () -> String,
+                     file: String = #file,
+                     line: Int = #line,
+                     function: String = #function) {
+        if !gDebugLogging.boolValue {
+            return
+        }
+        let message = messageBlock()
+        Self.logger.debug("\(message, privacy: .public)")
+        DebugLogImpl(file, Int32(line), function, message)
+    }
+}
+
+@objc(FileProviderLogging) class FileProviderLogging: NSObject {
+    @objc static var callback: ((String) -> ())? = nil
+
+    @available(macOS 11.0, *)
+    static let logger = iTermLogger()
+}
+
 class LogContext {
     @TaskLocal
     static var logContexts = ["FileProvider"]
 }
 
-@available(macOS 11.0, *)
 public func log(_ message: String) {
-    let prefix = LogContext.logContexts.joined(separator: " > ")
-    logger.error("FileProviderLog: \(prefix, privacy: .public): \(message, privacy: .public)")
+    if #available(macOS 11.0, *) {
+        let prefix = LogContext.logContexts.joined(separator: " > ")
+        FileProviderLogging.logger.info("FileProviderLog: \(prefix): \(message)")
+    }
+    FileProviderLogging.callback?(message)
 }
 
-@available(macOS 11.0, *)
 public func logging<T>(_ prefix: String, closure: () throws -> T) rethrows -> T {
     return try LogContext.$logContexts.withValue(LogContext.logContexts + [prefix]) {
         log("begin")
@@ -38,20 +70,3 @@ public func logging<T>(_ prefix: String, closure: () throws -> T) rethrows -> T 
         }
     }
 }
-
-@available(macOS 11.0, *)
-public func logging<T>(_ prefix: String, closure: () async throws -> T) async rethrows -> T {
-    return try await LogContext.$logContexts.withValue(LogContext.logContexts + [prefix]) {
-        log("begin")
-        do {
-            defer {
-                log("end")
-            }
-            return try await closure()
-        } catch {
-            log("Exiting logging scope with uncaught error \(error)")
-            throw error
-        }
-    }
-}
-

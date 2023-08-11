@@ -271,8 +271,11 @@ typedef NS_ENUM(NSUInteger, VT100TerminalProtectedMode) {
 // Restores the window/icon (depending on isWindow) title from a stack.
 - (void)terminalPopCurrentTitleForWindow:(BOOL)isWindow;
 
-// Posts a message to Notification center. Returns YES if the message was posted.
+// Posts a message to Notification center.
 - (void)terminalPostUserNotification:(NSString *)message;
+
+// Posts a rich notification message to Notification center.
+- (void)terminalPostUserNotification:(NSString *)message rich:(BOOL)rich;
 
 // Enters Tmux mode.
 - (void)terminalStartTmuxModeWithDCSIdentifier:(NSString *)dcsID;
@@ -355,6 +358,7 @@ typedef NS_ENUM(NSUInteger, VT100TerminalProtectedMode) {
                        preserveAspectRatio:(BOOL)preserveAspectRatio
                                      inset:(NSEdgeInsets)inset
                                       type:(NSString *)type
+                                 forceWide:(BOOL)forceWide
                                 completion:(void (^)(BOOL ok))completion;
 
 // Download completed normally
@@ -409,7 +413,7 @@ typedef NS_ENUM(NSUInteger, VT100TerminalProtectedMode) {
 - (void)terminalSetHighlightCursorLine:(BOOL)highlight;
 
 // FinalTerm features
-- (void)terminalPromptDidStart;
+- (void)terminalPromptDidStart:(BOOL)wasInCommand;
 - (void)terminalCommandDidStart;
 - (void)terminalCommandDidEnd;
 - (void)terminalSemanticTextDidStartOfType:(VT100TerminalSemanticTextType)type;
@@ -521,10 +525,14 @@ typedef NS_ENUM(NSUInteger, VT100TerminalProtectedMode) {
                                      depth:(int)depth;
 - (void)terminalHandleSSHTerminatePID:(int)pid withCode:(int)code depth:(int)depth;
 - (void)terminalUpdateEnv:(NSString *)value;
+- (void)terminalBeginSSHIntegeration:(NSString *)args;
 - (void)terminalEndSSH:(NSString *)uniqueID;
-- (void)terminalBeginFramerRecovery;
 - (void)terminalBeginFramerRecoveryForChildOfConductorAtDepth:(int)parentDepth;
 - (void)terminalHandleFramerRecoveryString:(NSString *)string;
 - (void)terminalDidResynchronizeSSH;
+
+- (void)terminalDidExecuteToken:(VT100Token *)token;
+- (void)terminalWillExecuteToken:(VT100Token *)token;
+- (void)terminalOpenURL:(NSURL *)url;
 
 @end

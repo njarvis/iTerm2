@@ -26,14 +26,15 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @protocol IntervalTreeImmutableObject<NSObject>
-@property(nonatomic, readonly) IntervalTreeEntry *entry;
+@property(nullable, nonatomic, weak, readonly) IntervalTreeEntry *entry;
+@property(nonatomic, readonly) NSString *shortDebugDescription;
 
 // Serialized value.
 - (NSDictionary *)dictionaryValue;
 
 // A parallel object whose state will be eventually consistent with this one.
 - (id<IntervalTreeObject>)doppelganger;
-- (id<IntervalTreeObject>)progenitor;
+- (id<IntervalTreeObject> _Nullable)progenitor;
 @end
 
 @protocol IntervalTreeObject <IntervalTreeImmutableObject, NSObject>
@@ -93,6 +94,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Serialize, adding offset to interval locations (useful for taking the tail
 // of an interval tree).
 - (NSDictionary *)dictionaryValueWithOffset:(long long)offset;
+- (void)enumerateLimitsAfter:(long long)minimumLimit
+                       block:(void (^)(id<IntervalTreeObject> object, BOOL *stop))block;
+
 @end
 
 

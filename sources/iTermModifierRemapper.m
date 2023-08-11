@@ -51,7 +51,9 @@
 
 + (NSInteger)_cgMaskForMod:(int)mod {
     switch (mod) {
-        case kPreferencesModifierTagControl:
+        case kPreferencesModifierTagLegacyRightControl:
+        case kPreferencesModifierTagLeftControl:
+        case kPreferencesModifierTagRightControl:
             return kCGEventFlagMaskControl;
 
         case kPreferencesModifierTagLeftOption:
@@ -67,6 +69,9 @@
         case kPreferencesModifierTagCommandAndOption:
             return kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate;
 
+        case kPreferenceModifierTagFunction:
+            return kCGEventFlagMaskSecondaryFn;
+
         default:
             return 0;
     }
@@ -74,8 +79,14 @@
 
 + (NSInteger)_nxMaskForLeftMod:(int)mod {
     switch (mod) {
-        case kPreferencesModifierTagControl:
+        case kPreferencesModifierTagLegacyRightControl:
             return NX_DEVICELCTLKEYMASK;
+
+        case kPreferencesModifierTagLeftControl:
+            return NX_DEVICELCTLKEYMASK;
+
+        case kPreferencesModifierTagRightControl:
+            return NX_DEVICERCTLKEYMASK;
 
         case kPreferencesModifierTagLeftOption:
             return NX_DEVICELALTKEYMASK;
@@ -96,6 +107,9 @@
         case kPreferencesModifierTagCommandAndOption:
             return NX_DEVICELCMDKEYMASK | NX_DEVICELALTKEYMASK;
 
+        case kPreferenceModifierTagFunction:
+            return NX_SECONDARYFNMASK;
+
         default:
             return 0;
     }
@@ -103,7 +117,13 @@
 
 + (NSInteger)_nxMaskForRightMod:(int)mod {
     switch (mod) {
-        case kPreferencesModifierTagControl:
+        case kPreferencesModifierTagLegacyRightControl:
+            return NX_DEVICERCTLKEYMASK;
+
+        case kPreferencesModifierTagLeftControl:
+            return NX_DEVICELCTLKEYMASK;
+
+        case kPreferencesModifierTagRightControl:
             return NX_DEVICERCTLKEYMASK;
 
         case kPreferencesModifierTagLeftOption:
@@ -124,6 +144,9 @@
 
         case kPreferencesModifierTagCommandAndOption:
             return NX_DEVICERCMDKEYMASK | NX_DEVICERALTKEYMASK;
+
+        case kPreferenceModifierTagFunction:
+            return NX_SECONDARYFNMASK;
 
         default:
             return 0;
@@ -163,19 +186,27 @@
 }
 
 + (NSInteger)_cgMaskForLeftControlKey {
-    return [self _cgMaskForMod:[[iTermModifierRemapper sharedInstance] controlRemapping]];
+    return [self _cgMaskForMod:[[iTermModifierRemapper sharedInstance] leftControlRemapping]];
 }
 
 + (NSInteger)_cgMaskForRightControlKey {
-    return [self _cgMaskForMod:[[iTermModifierRemapper sharedInstance] controlRemapping]];
+    return [self _cgMaskForMod:[[iTermModifierRemapper sharedInstance] rightControlRemapping]];
 }
 
 + (NSInteger)_nxMaskForLeftControlKey {
-    return [self _nxMaskForLeftMod:[[iTermModifierRemapper sharedInstance] controlRemapping]];
+    return [self _nxMaskForLeftMod:[[iTermModifierRemapper sharedInstance] leftControlRemapping]];
 }
 
 + (NSInteger)_nxMaskForRightControlKey {
-    return [self _nxMaskForRightMod:[[iTermModifierRemapper sharedInstance] controlRemapping]];
+    return [self _nxMaskForRightMod:[[iTermModifierRemapper sharedInstance] rightControlRemapping]];
+}
+
++ (NSInteger)_cgMaskForFunctionKey {
+    return [self _cgMaskForMod:[[iTermModifierRemapper sharedInstance] functionRemapping]];
+}
+
++ (NSInteger) _nxMaskForFunctionKey {
+    return [self _nxMaskForLeftMod:[[iTermModifierRemapper sharedInstance] functionRemapping]];
 }
 
 + (CGEventRef)remapModifiersInCGEvent:(CGEventRef)cgEvent {
@@ -260,6 +291,11 @@
             }
         }
     }
+    if (flags & kCGEventFlagMaskSecondaryFn) {
+        andMask &= ~kCGEventFlagMaskSecondaryFn;
+        orMask |= [self _cgMaskForFunctionKey];
+        orMask |= [self _nxMaskForFunctionKey];
+    }
     DLog(@"On output CGEventFlags=%@", @((flags & andMask) | orMask));
 
     CGEventSetFlags(cgEvent, (flags & andMask) | orMask);
@@ -279,10 +315,28 @@
   return instance;
 }
 
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(applicationDidBecomeActive:)
+                                                     name:NSApplicationDidBecomeActiveNotification
+                                                   object:nil];
+    }
+    return self;
+}
+
 - (void)dealloc {
     [_keyDown release];
     [_keyUp release];
     [super dealloc];
+}
+
+#pragma mark - Notifications
+
+- (void)applicationDidBecomeActive:(NSNotification *)notification {
+    [_keyUp reinsertAtHead];
+    [_keyDown reinsertAtHead];
 }
 
 #pragma mark - APIs
@@ -299,8 +353,12 @@
   return [_keyDown isEnabled];
 }
 
-- (iTermPreferencesModifierTag)controlRemapping {
-  return [iTermPreferences intForKey:kPreferenceKeyControlRemapping];
+- (iTermPreferencesModifierTag)leftControlRemapping {
+    return [iTermPreferences intForKey:kPreferenceKeyLeftControlRemapping];
+}
+
+- (iTermPreferencesModifierTag)rightControlRemapping {
+    return [iTermPreferences intForKey:kPreferenceKeyRightControlRemapping];
 }
 
 - (iTermPreferencesModifierTag)leftOptionRemapping {
@@ -319,12 +377,18 @@
   return [iTermPreferences intForKey:kPreferenceKeyRightCommandRemapping];
 }
 
+- (iTermPreferencesModifierTag)functionRemapping {
+    return [iTermPreferences intForKey:kPreferenceKeyFunctionRemapping];
+}
+
 - (BOOL)isAnyModifierRemapped {
-  return ([self controlRemapping] != kPreferencesModifierTagControl ||
+  return ([self leftControlRemapping] != kPreferencesModifierTagLeftControl ||
+          [self rightControlRemapping] != kPreferencesModifierTagRightControl ||
           [self leftOptionRemapping] != kPreferencesModifierTagLeftOption ||
           [self rightOptionRemapping] != kPreferencesModifierTagRightOption ||
           [self leftCommandRemapping] != kPreferencesModifierTagLeftCommand ||
-          [self rightCommandRemapping] != kPreferencesModifierTagRightCommand);
+          [self rightCommandRemapping] != kPreferencesModifierTagRightCommand ||
+          [self functionRemapping] != kPreferenceModifierTagFunction);
 }
 
 
@@ -487,7 +551,8 @@
 }
 
 - (KEY_ACTION)boundActionForEvent:(NSEvent *)cocoaEvent {
-    if (cocoaEvent.type == NSEventTypeFlagsChanged) {
+    if (cocoaEvent.type != NSEventTypeKeyDown) {
+        DLog(@"Not keydown %@", cocoaEvent);
         return -1;
     }
     iTermKeystroke *keystroke = [iTermKeystroke withEvent:cocoaEvent];

@@ -21,6 +21,7 @@ NSInteger iTermGenerationAlwaysEncode = NSIntegerMax;
     NSString *_identifier;
     NSInteger _generation;
     NSString *_key;
+    // This is append-only, otherwise rolling back a transaction breaks.
     NSMutableArray<iTermEncoderGraphRecord *> *_children;
     iTermEncoderGraphRecord *_record;
 }
@@ -186,6 +187,29 @@ NSInteger iTermGenerationAlwaysEncode = NSIntegerMax;
     return YES;
 }
 
+- (void)encodeChildrenWithKey:(NSString *)key
+                  identifiers:(NSArray<NSString *> *)identifiers
+                   generation:(NSInteger)generation
+                        block:(BOOL (^)(NSString *identifier,
+                                        NSUInteger idx,
+                                        iTermGraphEncoder *subencoder,
+                                        BOOL *stop))block {
+    if (identifiers.count > 16 && _children.count == 0) {
+        _children = [[NSMutableArray alloc] initWithCapacity:identifiers.count];
+    }
+    [identifiers enumerateObjectsUsingBlock:^(NSString * _Nonnull identifier,
+                                              NSUInteger idx,
+                                              BOOL * _Nonnull stop) {
+        // transaction is slow because it makes a copy in case of rollback.
+        // Do I need a transactio nfor each identifier?
+        [self transaction:^BOOL{
+            return [self encodeChildWithKey:key identifier:identifier generation:generation block:^BOOL(iTermGraphEncoder * _Nonnull subencoder) {
+                return block(identifier, idx, subencoder, stop);
+            }];
+        }];
+    }];
+}
+
 - (void)encodeArrayWithKey:(NSString *)key
                 generation:(NSInteger)generation
                identifiers:(NSArray<NSString *> *)identifiers
@@ -202,18 +226,18 @@ NSInteger iTermGenerationAlwaysEncode = NSIntegerMax;
                   generation:generation
                        block:^BOOL(iTermGraphEncoder * _Nonnull subencoder) {
         NSMutableArray<NSString *> *savedIdentifiers = [NSMutableArray array];
-        [identifiers enumerateObjectsUsingBlock:^(NSString * _Nonnull identifier,
-                                                  NSUInteger idx,
-                                                  BOOL * _Nonnull stop) {
-            [subencoder transaction:^BOOL {
-                return [subencoder encodeChildWithKey:@"" identifier:identifier generation:iTermGenerationAlwaysEncode block:^BOOL(iTermGraphEncoder * _Nonnull subencoder) {
-                    const BOOL result = block(identifier, idx, subencoder, stop);
-                    if (result) {
-                        [savedIdentifiers addObject:identifier];
-                    }
-                    return result;
-                }];
-            }];
+        [subencoder encodeChildrenWithKey:@""
+                              identifiers:identifiers
+                               generation:iTermGenerationAlwaysEncode
+                                    block:^BOOL (NSString * _Nonnull identifier,
+                                                 NSUInteger idx,
+                                                 iTermGraphEncoder * _Nonnull subencoder,
+                                                 BOOL * _Nonnull stop) {
+            const BOOL result = block(identifier, idx, subencoder, stop);
+            if (result) {
+                [savedIdentifiers addObject:identifier];
+            }
+            return result;
         }];
         NSArray<NSString *> *orderedIdentifiers = savedIdentifiers;
         if (options & iTermGraphEncoderArrayOptionsReverse) {
@@ -245,22 +269,18 @@ NSInteger iTermGenerationAlwaysEncode = NSIntegerMax;
     }
 }
 
-- (void)rollback {
-    assert(_state == iTermGraphEncoderStateLive);
-    [_pod removeAllObjects];
-    [_children removeAllObjects];
-    _state = iTermGraphEncoderStateRolledBack;
-}
-
 - (void)transaction:(BOOL (^)(void))block {
     NSMutableDictionary<NSString *, id> *savedPOD = [_pod mutableCopy];
-    NSMutableArray<iTermEncoderGraphRecord *> *savedChildren = [_children mutableCopy];
+    const NSUInteger savedCount = _children.count;
     const BOOL commit = block();
     if (commit) {
         return;
     }
     _pod = savedPOD;
-    _children = savedChildren;
+    if (savedCount < _children.count) {
+        DLog(@"Roll back from %@ to %@", @(_children.count), @(savedCount));
+        [_children removeObjectsInRange:NSMakeRange(savedCount, _children.count - savedCount)];
+    }
 }
 
 @end

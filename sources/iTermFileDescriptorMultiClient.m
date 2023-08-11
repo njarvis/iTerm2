@@ -506,9 +506,35 @@ static unsigned long long MakeUniqueID(void) {
     }]];
 }
 
+static NSMutableArray *gCurrentMultiServerLogLineStorage;
+static void iTermMultiServerStringForMessageFromClientLogger(const char *file,
+                                                             int line,
+                                                             const char *func,
+                                                             const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *string = [[NSString alloc] initWithFormat:[NSString stringWithUTF8String:format]
+                                            arguments:args];
+    [gCurrentMultiServerLogLineStorage addObject:string];
+    va_end(args);
+};
+
+static NSString *iTermMultiServerStringForMessageFromClient(iTermMultiServerClientOriginatedMessage *message) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        gCurrentMultiServerLogLineStorage = [NSMutableArray array];
+    });
+    @synchronized(gCurrentMultiServerLogLineStorage) {
+        iTermMultiServerProtocolLogMessageFromClient2(message, iTermMultiServerStringForMessageFromClientLogger);
+        NSString *result = [gCurrentMultiServerLogLineStorage componentsJoinedByString:@"\n"];
+        [gCurrentMultiServerLogLineStorage removeAllObjects];
+        return result;
+    }
+}
+
 // Called on job manager's queue via [self launchChildWithExecutablePath:…]
 - (iTermMultiServerClientOriginatedMessage)copyLaunchRequest:(iTermMultiServerClientOriginatedMessage)original {
-    assert(original.type == iTermMultiServerRPCTypeLaunch);
+    ITAssertWithMessage(original.type == iTermMultiServerRPCTypeLaunch, @"Type is %@", @(original.type));
 
     // Encode and decode the message so we can have our own copy of it.
     iTermClientServerProtocolMessage temp;
@@ -516,13 +542,24 @@ static unsigned long long MakeUniqueID(void) {
 
     {
         const int status = iTermMultiServerProtocolEncodeMessageFromClient(&original, &temp);
-        assert(status == 0);
+        ITAssertWithMessage(status == 0, @"On encode: status is %@", @(status));
     }
 
     iTermMultiServerClientOriginatedMessage messageCopy;
     {
         const int status = iTermMultiServerProtocolParseMessageFromClient(&temp, &messageCopy);
-        assert(status == 0);
+        if (status) {
+            iTermClientServerProtocolMessage temp;
+            iTermClientServerProtocolMessageInitialize(&temp);
+            (void)iTermMultiServerProtocolEncodeMessageFromClient(&original, &temp);
+            NSData *data = [NSData dataWithBytes:temp.ioVectors[0].iov_base
+                                          length:temp.ioVectors[0].iov_len];
+            NSString *description = iTermMultiServerStringForMessageFromClient(&messageCopy);
+            ITAssertWithMessage(status == 0, @"On decode: status is %@ for %@ based on %@",
+                                @(status),
+                                [data debugDescription],
+                                description);
+        }
     }
 
     return messageCopy;
@@ -1196,21 +1233,20 @@ static unsigned long long MakeUniqueID(void) {
 
 #if BETA
 static void HexDump(NSData *data) {
-    char buffer[80];
+    NSMutableString *dest = [NSMutableString string];
     const unsigned char *bytes = (const unsigned char *)data.bytes;
     int addr = 0;
-    int offset = 0;
     DLog(@"- Begin hex dump of outbound message -");
     for (int i = 0; i < data.length; i++) {
         if (i % 16 == 0 && i > 0) {
-            DLog(@"%4d  %s", addr, buffer);
+            DLog(@"%4d  %@", addr, dest);
             addr = i;
-            offset = 0;
+            dest = [NSMutableString string];
         }
-        offset += sprintf(buffer + offset, "%02x ", bytes[i]);
+        [dest appendFormat:@"%02x ", bytes[i]];
     }
-    if (offset > 0) {
-        DLog(@"%04d  %s", addr, buffer);
+    if (dest.length) {
+        DLog(@"%04d  %@", addr, dest);
     }
     DLog(@"- End hex dump of outbound message -");
 }

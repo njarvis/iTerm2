@@ -55,7 +55,7 @@
                                     trigger:(Trigger * _Nonnull)trigger;
 - (void)triggerSideEffectSetValue:(id _Nullable)value
                  forVariableNamed:(NSString * _Nonnull)name;
-- (void)triggerSideEffectCurrentDirectoryDidChange;
+- (void)triggerSideEffectCurrentDirectoryDidChange:(NSString * _Nonnull)newPath;
 - (void)triggerSideEffectShowCapturedOutputTool;
 
 @end
@@ -92,6 +92,10 @@
 - (void)screenDidAppendAsciiDataToCurrentLine:(NSData * _Nonnull)asciiData
                                    foreground:(screen_char_t)fg
                                    background:(screen_char_t)bg;
+
+- (void)screenRevealComposerWithPrompt:(NSArray<ScreenCharArray *> * _Nonnull)prompt;
+- (void)screenDismissComposer;
+- (void)screenAppendStringToComposer:(NSString * _Nonnull)string;
 
 // Change the cursor's appearance.
 - (void)screenSetCursorBlinking:(BOOL)blink;
@@ -147,7 +151,8 @@
 - (BOOL)screenWindowIsMiniaturized;
 
 // Send input to the task.
-- (void)screenWriteDataToTask:(NSData * _Nonnull)data;
+- (void)screenSendReportData:(NSData * _Nonnull)data;
+- (void)screenDidSendAllPendingReports;
 
 // Returns the visible frame of the display the screen's window is in.
 - (NSRect)screenWindowScreenFrame;
@@ -281,7 +286,6 @@
 - (void)screenSetTabColorGreenComponentTo:(CGFloat)color;
 - (void)screenSetTabColorBlueComponentTo:(CGFloat)color;
 - (BOOL)screenSetColor:(NSColor * _Nullable)color
-                forKey:(int)key
             profileKey:(NSString * _Nullable)profileKey;
 - (NSDictionary<NSNumber *, id> * _Nonnull)screenResetColorWithColorMapKey:(int)key
                                                                 profileKey:(NSString * _Nonnull)profileKey
@@ -290,7 +294,8 @@
 - (void)screenSelectColorPresetNamed:(NSString * _Nonnull)name;
 
 - (void)screenCurrentHostDidChange:(id<VT100RemoteHostReading> _Nonnull)host
-                               pwd:(NSString * _Nullable)workingDirectory;
+                               pwd:(NSString * _Nullable)workingDirectory
+                               ssh:(BOOL)ssh;  // Due to ssh integration?
 - (void)screenCurrentDirectoryDidChangeTo:(NSString * _Nullable)newPath
                                remoteHost:(id<VT100RemoteHostReading> _Nullable)remoteHost;
 
@@ -372,7 +377,7 @@ typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
                               remoteHost:(id<VT100RemoteHostReading> _Nullable)remoteHost;
 - (void)screenCopyStringToPasteboard:(NSString * _Nonnull)string;
 - (void)screenReportPasteboard:(NSString * _Nonnull)pasteboard completion:(void (^ _Nonnull)(void))completion;
-- (void)screenPostUserNotification:(NSString * _Nonnull)string;
+- (void)screenPostUserNotification:(NSString * _Nonnull)string rich:(BOOL)rich;
 // Called while joined. Don't let `mutableState` escape.
 - (void)screenSync:(VT100ScreenMutableState * _Nonnull)mutableState;
 - (void)screenUpdateCommandUseWithGuid:(NSString * _Nonnull)screenmarkGuid
@@ -386,12 +391,14 @@ typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
 - (void)screenSyncExpect:(VT100ScreenMutableState * _Nonnull)mutableState;
 - (void)screenConvertAbsoluteRange:(VT100GridAbsCoordRange)range
               toTextDocumentOfType:(NSString * _Nullable)type
-                          filename:(NSString * _Nullable)filename;
+                          filename:(NSString * _Nullable)filename
+                         forceWide:(BOOL)forceWide;
 - (void)screenDidHookSSHConductorWithToken:(NSString * _Nonnull)token
                                   uniqueID:(NSString * _Nonnull)uniqueID
                                   boolArgs:(NSString * _Nonnull)boolArgs
                                    sshargs:(NSString * _Nonnull)sshargs
-                                     dcsID:(NSString * _Nonnull)dcsID;
+                                     dcsID:(NSString * _Nonnull)dcsID
+                                savedState:(NSDictionary * _Nonnull)savedState;
 - (void)screenDidReadSSHConductorLine:(NSString * _Nonnull)string depth:(int)depth;
 - (void)screenDidUnhookSSHConductor;
 - (void)screenDidBeginSSHConductorCommandWithIdentifier:(NSString * _Nonnull)identifier
@@ -407,7 +414,10 @@ typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
                                    depth:(int)depth;
 
 - (void)screenDidTerminateSSHProcess:(int)pid code:(int)code depth:(int)depth;
-
+- (void)screenBeginSSHIntegrationWithToken:(NSString * _Nonnull)token
+                                  uniqueID:(NSString * _Nonnull)uniqueID
+                                 encodedBA:(NSString * _Nonnull)encodedBA
+                                   sshArgs:(NSString * _Nonnull)sshArgs;
 - (NSInteger)screenEndSSH:(NSString * _Nonnull)uniqueID;
 - (NSString * _Nonnull)screenSSHLocation;
 - (void)screenBeginFramerRecovery:(int)parentDepth;
@@ -416,5 +426,8 @@ typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
 - (void)screenFramerRecoveryDidFinish;
 - (void)screenDidResynchronizeSSH;
 - (void)screenEnsureDefaultMode;
+- (void)screenWillSynchronize;
+- (void)screenDidSynchronize;
+- (void)screenOpenURL:(NSURL *)url completion:(void (^ _Nonnull)(void))completion;
 
 @end

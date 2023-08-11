@@ -14,6 +14,7 @@ extern NSString *const iTermKeyBindingDictionaryKeyParameter;
 extern NSString *const iTermKeyBindingDictionaryKeyLabel;
 extern NSString *const iTermKeyBindingDictionaryKeyVersion;
 extern NSString *const iTermKeyBindingDictionaryKeyEscaping;
+extern NSString *const iTermKeyBindingDictionaryKeyApplyMode;
 
 typedef NS_ENUM(NSUInteger, iTermSendTextEscaping) {
     iTermSendTextEscapingNone = 0,  // Send literal text
@@ -21,6 +22,15 @@ typedef NS_ENUM(NSUInteger, iTermSendTextEscaping) {
     iTermSendTextEscapingCommon = 2,  // Use stringByReplacingCommonlyEscapedCharactersWithControls
     iTermSendTextEscapingVim = 3,  // Use stringByExpandingVimSpecialCharacters;
     iTermSendTextEscapingVimAndCompatibility = 4,  // Use stringByExpandingVimSpecialCharacters FOLLOWED BY n, e, a, t. Bugward compatibility.
+};
+
+typedef NS_ENUM(NSUInteger, iTermActionApplyMode) {
+    iTermActionApplyModeCurrentSession = 0,
+    iTermActionApplyModeAllSessions = 1,
+    iTermActionApplyModeUnfocusedSessions = 2,
+    iTermActionApplyModeAllInWindow = 3,
+    iTermActionApplyModeAllInTab = 4,
+    iTermActionApplyModeBroadcasting = 5,
 };
 
 // Actions for key bindings
@@ -97,7 +107,8 @@ typedef NS_ENUM(int, KEY_ACTION) {
     KEY_ACTION_SWAP_WITH_NEXT_PANE = 67,
     KEY_ACTION_SWAP_WITH_PREVIOUS_PANE = 68,
     KEY_ACTION_COPY_OR_SEND = 69,
-    KEY_ACTION_PASTE_OR_SEND = 70
+    KEY_ACTION_PASTE_OR_SEND = 70,
+    KEY_ACTION_ALERT_ON_NEXT_MARK = 71,
 };
 
 @interface iTermKeyBindingAction : NSObject
@@ -111,17 +122,20 @@ typedef NS_ENUM(int, KEY_ACTION) {
 @property (nonatomic, readonly) BOOL isActionable;
 @property (nonatomic, readonly) iTermSendTextEscaping escaping;
 @property (nonatomic, readonly) iTermSendTextEscaping vimEscaping;
+@property (nonatomic, readonly) iTermActionApplyMode applyMode;
 
 + (instancetype)withDictionary:(NSDictionary *)dictionary;
 
 + (instancetype)withAction:(KEY_ACTION)action
                  parameter:(NSString *)parameter
-                  escaping:(iTermSendTextEscaping)escaping;
+                  escaping:(iTermSendTextEscaping)escaping
+                 applyMode:(iTermActionApplyMode)applyMode;
 
 + (instancetype)withAction:(KEY_ACTION)action
                  parameter:(NSString *)parameter
                      label:(NSString *)label
-                  escaping:(iTermSendTextEscaping)escaping;
+                  escaping:(iTermSendTextEscaping)escaping
+                 applyMode:(iTermActionApplyMode)applyMode;
 
 + (instancetype)fromString:(NSString *)string;
 

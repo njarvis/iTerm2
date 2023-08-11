@@ -90,7 +90,10 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
                              kPreferenceKeyAppVersion,
                              @"CGFontRenderingFontSmoothingDisabled",
                              @"PreventEscapeSequenceFromChangingProfile",
-                             @"PreventEscapeSequenceFromClearingHistory" ];
+                             @"PreventEscapeSequenceFromClearingHistory",
+                             @"Coprocess MRU",
+                             @"MetalCaptureEnabled",
+                             @"MetalCaptureEnabledDate"];
     return ![exemptKeys containsObject:key] &&
             ![key hasPrefix:@"NS"] &&
             ![key hasPrefix:@"SU"] &&
@@ -110,8 +113,10 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
     NSString *filename = [self remotePrefsLocation];
     NSDictionary *remotePrefs;
     if ([filename stringIsUrlLike]) {
+        DLog(@"Is URL");
         NSString *promptURL = [[NSUserDefaults standardUserDefaults] objectForKey:iTermRemotePreferencesPromptBeforeLoadingPrefsFromURL];
         if ([promptURL isEqual:filename]) {
+            DLog(@"Prompting");
             NSString *theTitle = [NSString stringWithFormat:
                                   @"Load settings from URL? Some changes were made to the local copy that will be lost."];
             const iTermWarningSelection selection =
@@ -124,13 +129,16 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
                                         window:nil];
             switch (selection) {
                 case kiTermWarningSelection0:
+                    DLog(@"Keep local changes");
                     return nil;
                 case kiTermWarningSelection1:
+                    DLog(@"Disable url");
                     [iTermPreferences setBool:NO forKey:kPreferenceKeyLoadPrefsFromCustomFolder];
                     [[NSUserDefaults standardUserDefaults] setObject:nil
                                                               forKey:iTermRemotePreferencesPromptBeforeLoadingPrefsFromURL];
                     return nil;
                 case kiTermWarningSelection2:
+                    DLog(@"Discard local");
                     [[NSUserDefaults standardUserDefaults] setObject:nil
                                                               forKey:iTermRemotePreferencesPromptBeforeLoadingPrefsFromURL];
                     break;
@@ -148,15 +156,20 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
         __block NSData *data = nil;
 
         dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+        DLog(@"Create task for %@", url);
         NSURLSessionDataTask *task = [[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable taskData,
                                                                                  NSURLResponse * _Nullable taskResponse,
                                                                                  NSError * _Nullable taskError) {
+            DLog(@"Task progressing with %@ bytes", @(taskData.length));
             data = taskData;
             error = taskError;
             dispatch_semaphore_signal(sema);
         }];
+        DLog(@"Resume task");
         [task resume];
+        DLog(@"Wait for completion");
         dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+        DLog(@"Download completed");
 
         if (!data || error) {
             NSAlert *alert = [[NSAlert alloc] init];
@@ -191,9 +204,12 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
         [fileManager removeItemAtPath:tempFile error:nil];
         [fileManager removeItemAtPath:tempDir error:nil];
     } else {
+        DLog(@"Will load dictionary from %@", filename);
         remotePrefs = [NSDictionary dictionaryWithContentsOfFile:filename];
+        DLog(@"Did load dictionary from %@", filename);
     }
     if (!remotePrefs.count) {
+        DLog(@"It's empty");
         if ([[self customFolderOrURL] length] == 0) {
             NSAlert *alert = [[NSAlert alloc] init];
             alert.messageText = @"Error Loading Settings";
@@ -211,15 +227,8 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
             [alert runModal];
         }
     }
+    DLog(@"Done");
     return remotePrefs;
-}
-
-- (NSString *)localPrefsFilename {
-    NSString *prefDir = [[NSHomeDirectory()
-                          stringByAppendingPathComponent:@"Library"]
-                         stringByAppendingPathComponent:@"Preferences"];
-    return [prefDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.plist",
-                                                    [[NSBundle mainBundle] bundleIdentifier]]];
 }
 
 - (BOOL)folderIsWritable:(NSString *)path {
@@ -269,7 +278,7 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
     }
 
     NSString *filename = [self prefsFilenameWithBaseDir:folder];
-    NSDictionary *myDict = iTermRemotePreferencesSave(filename, self.preservedKeys);
+    NSDictionary *myDict = iTermRemotePreferencesSave(iTermUserDefaultsDictionary(self.preservedKeys), filename);
     if (!myDict) {
         NSAlert *alert = [[NSAlert alloc] init];
         alert.messageText = @"Failed to copy preferences to custom directory.";
@@ -292,7 +301,7 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
     if (_needsSave) {
         return;
     }
-    DLog(@"setNeedsSave");
+    DLog(@"setNeedsSave\n%@", [NSThread callStackSymbols]);
     _needsSave = YES;
     __weak __typeof(self) weakSelf = self;
     // Introduce a delay to avoid building up a big queue.
@@ -301,18 +310,21 @@ static BOOL iTermRemotePreferencesKeyIsSyncable(NSString *key,
     });
 }
 
-// Runs either on a background queue or on the main thread. Synchronous. Returns the saved values.
-static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSString *> *preservedKeys) {
+static NSDictionary *iTermUserDefaultsDictionary(NSArray<NSString *> *preservedKeys) {
     NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
     NSDictionary *myDict =
         [userDefaults persistentDomainForName:[[NSBundle mainBundle] bundleIdentifier]];
-    myDict = [myDict filteredWithBlock:^BOOL(id key, id value) {
+    return [myDict filteredWithBlock:^BOOL(id key, id value) {
         NSString *stringKey = [NSString castFrom:key];
         if (!stringKey) {
             return YES;
         }
         return iTermRemotePreferencesKeyIsSyncable(key, preservedKeys);
     }];
+}
+
+// Runs either on a background queue or on the main thread. Synchronous. Returns the saved values.
+static NSDictionary *iTermRemotePreferencesSave(NSDictionary *myDict, NSString *filename) {
     NSData *data = [myDict it_xmlPropertyList];
     if (!data) {
         DLog(@"Failed to encode %@", myDict);
@@ -325,6 +337,10 @@ static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSSt
         return nil;
     }
     return myDict;
+}
+
+- (NSDictionary *)userDefaultsDictionary {
+    return iTermUserDefaultsDictionary([self preservedKeys]);
 }
 
 - (void)saveIfNeeded {
@@ -343,7 +359,7 @@ static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSSt
     _needsSave = NO;
     dispatch_async(_queue, ^{
         DLog(@"Save prefs to %@", filename);
-        NSDictionary *dict = iTermRemotePreferencesSave(filename, preservedKeys);
+        NSDictionary *dict = iTermRemotePreferencesSave(iTermUserDefaultsDictionary(preservedKeys), filename);
         DLog(@"Finished saving prefs to %@", filename);
         if (dict) {
             self.savedRemotePrefs = dict;
@@ -352,9 +368,13 @@ static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSSt
 }
 
 - (void)copyRemotePrefsToLocalUserDefaultsPreserving:(NSArray<NSString *> *)preservedKeys {
+    DLog(@"Begin");
     if (_haveTriedToLoadRemotePrefs) {
+        DLog(@"Return immediately");
         return;
     }
+
+    DLog(@"Add observers");
     _haveTriedToLoadRemotePrefs = YES;
     _userDefaultsObserver = [[iTermUserDefaultsObserver alloc] init];
     __weak __typeof(self) weakSelf = self;
@@ -364,6 +384,7 @@ static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSSt
         }
     }];
     if (!self.shouldLoadRemotePrefs) {
+        DLog(@"Disabled");
         return;
     }
     NSDictionary *remotePrefs = [self freshCopyOfRemotePreferences];
@@ -373,21 +394,26 @@ static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSSt
     if (![remotePrefs count]) {
         return;
     }
-    NSString *theFilename = [self localPrefsFilename];
-    NSDictionary *localPrefs = [NSDictionary dictionaryWithContentsOfFile:theFilename];
+    DLog(@"Load local prefs");
+    NSDictionary *localPrefs = [[NSUserDefaults standardUserDefaults] persistentDomainForName:[[NSBundle mainBundle] bundleIdentifier]];
     // Empty out the current prefs
+    DLog(@"Remove non-syncable values");
+    int count = 0;
     for (NSString *key in localPrefs) {
         if ([self preferenceKeyIsSyncable:key]) {
+            count += 1;
             [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
         }
     }
-
+    DLog(@"Removed %d keys", count);
+    DLog(@"Copy remote values to user defaults");
     for (NSString *key in remotePrefs) {
         if ([self preferenceKeyIsSyncable:key]) {
             [[NSUserDefaults standardUserDefaults] setObject:[remotePrefs objectForKey:key]
                                                       forKey:key];
         }
     }
+    DLog(@"Finished");
     return;
 }
 
@@ -440,7 +466,10 @@ static NSDictionary *iTermRemotePreferencesSave(NSString *filename, NSArray<NSSt
     if (self.remoteLocationIsURL) {
         return NO;
     }
-    return ![[self freshCopyOfRemotePreferences] isEqual:saved];
+    DLog(@"Begin equality comparison");
+    const BOOL result = ![[self freshCopyOfRemotePreferences] isEqual:saved];
+    DLog(@"result=%@", @(result));
+    return result;
 }
 
 - (void)applicationWillTerminate {

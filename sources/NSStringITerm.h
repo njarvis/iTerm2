@@ -66,7 +66,8 @@ int decode_utf8_char(const unsigned char * restrict datap,
 + (NSString *)stringWithInt:(int)num;
 + (BOOL)isDoubleWidthCharacter:(int)unicode
         ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
-                unicodeVersion:(NSInteger)version;
+                unicodeVersion:(NSInteger)version
+                fullWidthFlags:(BOOL)fullWidthFlags;
 + (NSString *)stringWithLongCharacter:(UTF32Char)longCharacter;
 
 // Returns the current string on the pasteboard (if any).
@@ -185,6 +186,7 @@ int decode_utf8_char(const unsigned char * restrict datap,
 
 // Expands a vim-style string's special characters
 - (NSString *)stringByExpandingVimSpecialCharacters;
+- (NSString *)stringByExpandingTildeInPathPreservingSlash;
 
 // How tall is this string when rendered within a fixed width?
 - (CGFloat)heightWithAttributes:(NSDictionary *)attributes constrainedToWidth:(CGFloat)maxWidth;
@@ -344,6 +346,17 @@ int decode_utf8_char(const unsigned char * restrict datap,
 - (BOOL)getHashColorRed:(unsigned int *)red green:(unsigned int *)green blue:(unsigned int *)blue;
 - (BOOL)interpolatedStringContainsNonliteral;
 - (NSString *)it_stringByAppendingCharacter:(unichar)theChar;
+- (NSDictionary<NSString *, NSString *> *)it_keyValuePairsSeparatedBy:(NSString *)separator;
+
+- (UTF32Char)longCharacterAtIndex:(NSInteger)i;
+- (NSString *)stringByReplacingBaseCharacterWith:(UTF32Char)base;
+
+@property (nonatomic, readonly) BOOL beginsWithWhitespace;
+@property (nonatomic, readonly) BOOL endsWithWhitespace;
+
+- (NSArray<NSString *> *)lastWords:(NSUInteger)count;
+@property (nonatomic, readonly) NSString *firstNonEmptyLine;
+- (NSString *)truncatedToLength:(NSInteger)maxLength ellipsis:(NSString *)ellipsis;
 
 @end
 

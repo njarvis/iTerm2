@@ -12,6 +12,7 @@
 #import "IntervalTree.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermEchoProbe.h"
+#import "iTermImageMark.h"
 #import "iTermOrderEnforcer.h"
 #import "iTermTextExtractor.h"
 #import "LineBuffer.h"
@@ -43,6 +44,14 @@ NSString *const kScreenStateAlternateGridStateKey = @"Alternate Grid State";
 NSString *const kScreenStateCursorCoord = @"Cursor Coord";
 NSString *const kScreenStateProtectedMode = @"Protected Mode";
 NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
+NSString *const kScreenStatePromptStateKey = @"Prompt State";
+
+NSString *VT100ScreenTerminalStateKeyVT100Terminal = @"VT100Terminal";
+NSString *VT100ScreenTerminalStateKeySavedColors = @"SavedColors";
+NSString *VT100ScreenTerminalStateKeyTabStops = @"TabStops";
+NSString *VT100ScreenTerminalStateKeyLineDrawingCharacterSets = @"LineDrawingCharacterSets";
+NSString *VT100ScreenTerminalStateKeyRemoteHost = @"RemoteHost";
+NSString *VT100ScreenTerminalStateKeyPath = @"Path";
 
 @implementation VT100ScreenState
 
@@ -121,6 +130,8 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
 @synthesize terminalState = _terminalState;
 @synthesize config = _config;
 @synthesize exfiltratedEnvironment = _exfiltratedEnvironment;
+@synthesize promptStateDictionary = _promptStateDictionary;
+@synthesize namedMarks = _namedMarks;
 
 - (instancetype)initForMutationOnQueue:(dispatch_queue_t)queue {
     self = [super init];
@@ -137,9 +148,14 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
         _linebuffer = [[LineBuffer alloc] init];
         _colorMap = [[iTermColorMap alloc] init];
         _temporaryDoubleBuffer = [[iTermTemporaryDoubleBufferedGridController alloc] initWithQueue:queue];
+        _namedMarks = [[iTermAtomicMutableArrayOfWeakObjects alloc] init];
         _fakePromptDetectedAbsLine = -1;
     }
     return self;
+}
+
+- (id<VT100ScreenMarkReading>)cachedLastCommandMark {
+    return _lastCommandMark;
 }
 
 - (void)copyFastStuffFrom:(VT100ScreenMutableState *)source {
@@ -177,7 +193,7 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     _fakePromptDetectedAbsLine = source.fakePromptDetectedAbsLine;
     _lastPromptLine = source.lastPromptLine;
     _intervalTreeObserver = source.intervalTreeObserver;
-    _lastCommandMark = [source.lastCommandMark doppelganger];
+    _lastCommandMark = [source.cachedLastCommandMark doppelganger];
     _shouldExpectPromptMarks = source.shouldExpectPromptMarks;
     _echoProbeIsActive = source.echoProbe.isActive;
     _terminalSoftAlternateScreenMode = source.terminalSoftAlternateScreenMode;
@@ -209,6 +225,12 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     _charsetUsesLineDrawingMode = [source.charsetUsesLineDrawingMode copy];
     _config = source.config;
     _exfiltratedEnvironment = [source.exfiltratedEnvironment copy];
+    _promptStateDictionary = [source.promptStateDictionary copy];
+    if (source.namedMarksDirty) {
+        _namedMarks = [source.namedMarks compactMap:^id _Nonnull(id<VT100ScreenMarkReading>  _Nonnull mark) {
+            return [mark doppelganger];
+        }];
+    }
 }
 
 - (void)copySlowStuffFrom:(VT100ScreenMutableState *)source {
@@ -231,8 +253,89 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     }
 }
 
+// Search for images in the mutable area of the old instance of VT100ScreenState and check in the
+// updated version if any cell of that image is still present. If not, it can be released.
+- (void)releaseOverwrittenImagesIn:(VT100ScreenMutableState *)updated {
+    DLog(@"Start");
+    if (self.width != updated.width || self.height != updated.height) {
+        // It's way too complicated to check if an image was overwritten when the grid resizes.
+        // These will stay in memory until they exit scrollback history.
+        DLog(@"Size changed %dx%d -> %dx%d", self.width, self.height, updated.width, updated.height);
+        return;
+    }
+    if (!updated.currentGrid.hasChanged) {
+        DLog(@"Don't scan for overwritten images because current grid remains unchanged");
+        return;
+    }
+    Interval *topOfScreen = [self intervalForGridCoordRange:VT100GridCoordRangeMake(0, self.numberOfScrollbackLines, 0, self.numberOfScrollbackLines)];
+    const int height = self.height;
+    NSMutableArray<iTermMark *> *marksToRemove = [NSMutableArray array];
+    [_intervalTree enumerateLimitsAfter:topOfScreen.location
+                                  block:^(id<IntervalTreeObject> object, BOOL *stop) {
+        DLog(@"Consider %@", object);
+        iTermImageMark *imageMark = [iTermImageMark castFrom:object];
+        if (!imageMark || !imageMark.imageCode) {
+            DLog(@"Not an image");
+            return;
+        }
+        VT100GridAbsCoordRange coordRange = [self absCoordRangeForInterval:imageMark.entry.interval];
+        iTermMark *progenitor = imageMark.progenitor;
+        if (progenitor != nil &&
+            ![updated imageInUse:imageMark above:coordRange.end.y searchHeight:height]) {
+            DLog(@"Not in use. Add to delete list.");
+            [marksToRemove addObject:progenitor];
+        }
+    }];
+    for (iTermMark *mark in marksToRemove) {
+        DLog(@"Remove %@", mark);
+        [[updated mutableIntervalTree] removeObject:mark];
+    }
+}
+
+// Search cells backwards from the image mark to see if any of it is still referenced.
+- (BOOL)imageInUse:(iTermImageMark *)mark above:(long long)aboveAbsY searchHeight:(int)searchHeight {
+    const int code = mark.imageCode.intValue;
+    iTermImageInfo *imageInfo = [[iTermImageRegistry sharedInstance] infoForCode:code];
+    if (!imageInfo) {
+        DLog(@"No image info with code %d", code);
+        return NO;
+    }
+    const long long aboveY = aboveAbsY - self.cumulativeScrollbackOverflow;
+    if (aboveY < 0) {
+        DLog(@"Image has scrolled off");
+        return NO;
+    }
+    const long long startY = MAX(0, aboveY - imageInfo.size.height);
+    __block BOOL found = NO;
+    [self enumerateLinesInRange:NSMakeRange(startY, aboveY - startY + 1)
+                          block:^(int line,
+                                  ScreenCharArray *sca,
+                                  iTermImmutableMetadata metadata,
+                                  BOOL *stop) {
+        DLog(@"Check line %d: %@", line, sca);
+        if ([self screenCharArray:sca containsImageCode:code]) {
+            found = YES;
+            *stop = YES;
+        }
+    }];
+    return found;
+}
+
+- (BOOL)screenCharArray:(ScreenCharArray *)sca containsImageCode:(int)code {
+    const int width = sca.length;
+    const screen_char_t *line = sca.line;
+    for (int i = 0; i < width; i++) {
+        if (line[i].image && line[i].code == code) {
+            DLog(@"Found code %d at column %d", code, i);
+            return YES;
+        }
+    }
+    return NO;
+}
+
 - (void)mergeFrom:(VT100ScreenMutableState *)source {
     [self copyFastStuffFrom:source];
+    [self releaseOverwrittenImagesIn:source];
 
     const BOOL lineBufferDirty = (!_linebuffer || source.linebuffer.dirty);
     if (lineBufferDirty) {
@@ -242,15 +345,15 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     } else {
         DLog(@"line buffer not dirty");
     }
-//  NSString *mine = [_linebuffer debugString];
-//  NSString *theirs = [source.linebuffer debugString];
-//  assert([mine isEqual:theirs]);
-    
-    [_primaryGrid copyDirtyFromGrid:source.primaryGrid];
+    //  NSString *mine = [_linebuffer debugString];
+    //  NSString *theirs = [source.linebuffer debugString];
+    //  assert([mine isEqual:theirs]);
+
+    [_primaryGrid copyDirtyFromGrid:source.primaryGrid didScroll:source.primaryGrid.haveScrolled];
     [source.primaryGrid markAllCharsDirty:NO updateTimestamps:NO];
 
     if (_altGrid && source.altGrid) {
-        [_altGrid copyDirtyFromGrid:source.altGrid];
+        [_altGrid copyDirtyFromGrid:source.altGrid didScroll:source.altGrid.haveScrolled];
     } else {
         _altGrid = [source.altGrid copy];
     }
@@ -636,7 +739,7 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
         return VT100GridCoordRangeMake(self.commandStartCoord.x,
                                        MAX(0, self.commandStartCoord.y - offset),
                                        self.currentGrid.cursorX,
-                                       self.currentGrid.cursorY + self.numberOfScrollbackLines);
+                                       self.currentGrid.cursorY + self.numberOfScrollbackLines - offset);
     }
 }
 
@@ -809,6 +912,25 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     return result;
 }
 
+#pragma mark - SSH State
+
+- (NSDictionary *)savedState {
+    NSSet *tabStops = self.tabStops ?: [NSSet set];
+    NSSet *lineDrawingCharacterSets = self.charsetUsesLineDrawingMode ?: [NSSet set];
+
+    return [@{ VT100ScreenTerminalStateKeyVT100Terminal: self.terminalState ?: @{},
+               VT100ScreenTerminalStateKeySavedColors: self.colorMap.savedColorsSlot.plist ?: @{},
+               VT100ScreenTerminalStateKeyTabStops: [tabStops allObjects],
+               VT100ScreenTerminalStateKeyLineDrawingCharacterSets: [lineDrawingCharacterSets allObjects],
+               VT100ScreenTerminalStateKeyRemoteHost: (self.lastRemoteHost ?: [VT100RemoteHost localhost]).dictionaryValue,
+               VT100ScreenTerminalStateKeyPath: [self currentWorkingDirectory] ?: [NSNull null],
+    } dictionaryByRemovingNullValues];
+}
+
+- (NSString *)currentWorkingDirectory {
+    return [self workingDirectoryOnLine:self.numberOfLines];
+}
+
 #pragma mark - Development
 
 - (NSString *)compactLineDumpWithHistoryAndContinuationMarksAndLineNumbers {
@@ -816,11 +938,11 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
         [NSMutableString stringWithString:[self.linebuffer compactLineDumpWithWidth:self.width andContinuationMarks:YES]];
     NSMutableArray *lines = [[string componentsSeparatedByString:@"\n"] mutableCopy];
     long long absoluteLineNumber = self.totalScrollbackOverflow;
-    for (int i = 0; i < lines.count; i++) {
-        lines[i] = [NSString stringWithFormat:@"%8lld:        %@", absoluteLineNumber++, lines[i]];
-    }
+    if (string.length) {
+        for (int i = 0; i < lines.count; i++) {
+            lines[i] = [NSString stringWithFormat:@"%8lld:        %@", absoluteLineNumber++, lines[i]];
+        }
 
-    if ([string length]) {
         [lines addObject:@"- end of history -"];
     }
     NSString *gridDump = [self.currentGrid compactLineDumpWithContinuationMarks];
@@ -831,6 +953,42 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     return [lines componentsJoinedByString:@"\n"];
 }
 
+- (NSString *)compactLineDumpWithHistoryAndContinuationMarksAndLineNumbersAndIntervalTreeObjects {
+    NSMutableString *string =
+        [NSMutableString stringWithString:[self.linebuffer compactLineDumpWithWidth:self.width andContinuationMarks:YES]];
+    NSMutableArray *lines = [[string componentsSeparatedByString:@"\n"] mutableCopy];
+    long long absoluteLineNumber = self.totalScrollbackOverflow;
+    if (string.length) {
+        for (int i = 0; i < lines.count; i++) {
+            NSString *ito = [self debugStringForIntervalTreeObjectsOnLine:i];
+            lines[i] = [NSString stringWithFormat:@"%8lld:        %@%@", absoluteLineNumber++, lines[i], ito];
+        }
+
+        [lines addObject:@"- end of history -"];
+    }
+    NSString *gridDump = [self.currentGrid compactLineDumpWithContinuationMarks];
+    NSArray *gridLines = [gridDump componentsSeparatedByString:@"\n"];
+    for (int i = 0; i < gridLines.count; i++) {
+        NSString *ito = [self debugStringForIntervalTreeObjectsOnLine:i + self.numberOfScrollbackLines];
+        [lines addObject:[NSString stringWithFormat:@"%8lld (%04d): %@%@", absoluteLineNumber++, i, gridLines[i], ito]];
+    }
+    return [lines componentsJoinedByString:@"\n"];
+}
+
+- (NSString *)debugStringForIntervalTreeObjectsOnLine:(int)line {
+    const long long offset = self.cumulativeScrollbackOverflow;
+    NSMutableArray<NSString *> *strings = [NSMutableArray array];
+    const VT100GridAbsCoordRange absRange = VT100GridAbsCoordRangeMake(0, line + offset, self.width, line + offset);
+    Interval *interval = [self intervalForGridAbsCoordRange:absRange];
+    for (id<IntervalTreeImmutableObject> object in [_intervalTree objectsInInterval:interval]) {
+        [strings addObject:[object shortDebugDescription]];
+    }
+    if (strings.count == 0) {
+        return @"";
+    }
+    return [NSString stringWithFormat:@"ITOs: %@", [strings componentsJoinedByString:@", "]];
+}
+
 #pragma mark - iTermTextDataSource
 
 - (ScreenCharArray *)screenCharArrayForLine:(int)line {
@@ -838,8 +996,7 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
     if (line < numLinesInLineBuffer) {
         const BOOL eligibleForDWC = (line == numLinesInLineBuffer - 1 &&
                                      ScreenCharIsDWC_RIGHT([self.currentGrid screenCharsAtLineNumber:0][1]));
-        return [[self.linebuffer wrappedLineAtIndex:line width:self.width continuation:NULL] paddedToLength:self.width
-                                                                                             eligibleForDWC:eligibleForDWC];
+        return [self.linebuffer screenCharArrayForLine:line width:self.width paddedTo:self.width eligibleForDWC:eligibleForDWC];
     }
     return [self screenCharArrayAtScreenIndex:line - numLinesInLineBuffer];
 }
@@ -865,6 +1022,22 @@ NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
 
 - (long long)totalScrollbackOverflow {
     return self.cumulativeScrollbackOverflow;
+}
+
+- (NSDate *)dateForLine:(int)line {
+    const NSInteger numLinesInLineBuffer = [self.linebuffer numLinesWithWidth:self.currentGrid.size.width];
+    if (line < numLinesInLineBuffer) {
+        const NSTimeInterval timestamp = [self.linebuffer metadataForLineNumber:line width:self.currentGrid.size.width].timestamp;
+        if (!timestamp) {
+            return nil;
+        }
+        return [NSDate dateWithTimeIntervalSinceReferenceDate:timestamp];
+    }
+    const NSTimeInterval timestamp = [self.currentGrid timestampForLine:line - numLinesInLineBuffer];
+    if (!timestamp) {
+        return nil;
+    }
+    return [NSDate dateWithTimeIntervalSinceReferenceDate:timestamp];
 }
 
 #pragma mark - VT100GridDelgate

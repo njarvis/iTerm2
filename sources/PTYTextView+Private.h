@@ -83,5 +83,8 @@ NSPopoverDelegate> {
 - (void)copySelection:(iTermSelection *)selection;
 - (void)scrollToCenterLine:(int)line;
 
+- (BOOL)showCommandInfoForEvent:(NSEvent *)event;
+- (IBAction)performFindPanelAction:(id)sender;
+
 @end
 

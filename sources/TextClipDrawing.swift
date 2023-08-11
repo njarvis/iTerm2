@@ -56,7 +56,7 @@ class TextClipDrawing: NSObject {
             hasBackgroundImage = helper.hasBackgroundImage
             cursorGuideColor = helper.cursorGuideColor
             cursorCoord = helper.cursorCoord
-            cursorVisible = helper.cursorVisible
+            cursorVisible = helper.isCursorVisible
             reverseVideo = helper.reverseVideo
             textViewIsActiveSession = helper.textViewIsActiveSession
             isInKeyWindow = helper.isInKeyWindow
@@ -80,7 +80,7 @@ class TextClipDrawing: NSObject {
             helper.hasBackgroundImage = hasBackgroundImage
             helper.cursorGuideColor = cursorGuideColor
             helper.cursorCoord = cursorCoord
-            helper.cursorVisible = cursorVisible
+            helper.isCursorVisible = cursorVisible
             helper.reverseVideo = reverseVideo
             helper.textViewIsActiveSession = textViewIsActiveSession
             helper.isInKeyWindow = isInKeyWindow
@@ -162,7 +162,7 @@ class TextClipDrawing: NSObject {
         drawingHelper.hasBackgroundImage = false
         drawingHelper.cursorGuideColor = nil
         drawingHelper.cursorCoord = VT100GridCoord(x: 0, y: 0)
-        drawingHelper.cursorVisible = false
+        drawingHelper.isCursorVisible = false
         drawingHelper.reverseVideo = false
         drawingHelper.textViewIsActiveSession = true
         drawingHelper.isInKeyWindow = true
@@ -286,10 +286,6 @@ extension TextClipDrawing: iTermTextDrawingHelperDelegate {
         return drawingHelperLine(at: line + numHistoryLines)
     }
 
-    func drawingHelperTextExtractor() -> iTermTextExtractor? {
-        return nil
-    }
-
     func drawingHelperCharactersWithNotes(onLine line: Int32) -> [Any]? {
         return nil
     }
@@ -314,11 +310,13 @@ extension TextClipDrawing: iTermTextDrawingHelperDelegate {
     func drawingHelperFont(forChar ch: UniChar,
                            isComplex: Bool,
                            renderBold: UnsafeMutablePointer<ObjCBool>,
-                           renderItalic: UnsafeMutablePointer<ObjCBool>) -> PTYFontInfo {
+                           renderItalic: UnsafeMutablePointer<ObjCBool>,
+                           remapped: UnsafeMutablePointer<UTF32Char>) -> PTYFontInfo {
         return originalDelegate.drawingHelperFont(forChar: ch,
                                                   isComplex: isComplex,
                                                   renderBold: renderBold,
-                                                  renderItalic: renderItalic)
+                                                  renderItalic: renderItalic,
+                                                  remapped: remapped)
     }
 
     func drawingHelperMatches(onLine line: Int32) -> Data? {

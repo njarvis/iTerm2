@@ -9,13 +9,26 @@
 import Foundation
 
 class Mutex {
-    private let sema = DispatchSemaphore(value: 1)
+    // See http://www.russbishop.net/the-law for why pointers are used here.
+    private var unfairLock: UnsafeMutablePointer<os_unfair_lock>
+
+    init() {
+        unfairLock = UnsafeMutablePointer<os_unfair_lock>.allocate(capacity: 1)
+        unfairLock.initialize(to: os_unfair_lock())
+    }
+
+    deinit {
+        unfairLock.deallocate()
+    }
+
     private func lock() {
-        sema.wait()
+        os_unfair_lock_lock(unfairLock)
     }
+
     private func unlock() {
-        sema.signal()
+        os_unfair_lock_unlock(unfairLock)
     }
+
     func sync<T>(_ closure: () throws -> T) rethrows -> T {
         lock()
         defer {
@@ -67,9 +80,17 @@ class MutableAtomicObject<T> {
         }
     }
 
-    func access(_ block: (T) -> Void) {
-        mutex.sync {
-            block(_value)
+    @discardableResult
+    func access<Result>(_ block: (T) -> Result) -> Result {
+        return mutex.sync {
+            return block(_value)
+        }
+    }
+
+    @discardableResult
+    func mutableAccess<Result>(_ block: (inout T) -> Result) -> Result {
+        return mutex.sync {
+            return block(&_value)
         }
     }
 }

@@ -149,6 +149,7 @@
 // The current mode for broadcasting of input.
 - (BroadcastMode)broadcastMode;
 - (void)setBroadcastMode:(BroadcastMode)mode;
+- (NSArray<PTYSession *> *)broadcastSessions;
 
 // Returns true if the window is in 10.7-style fullscreen.
 - (BOOL)lionFullScreen;
@@ -200,6 +201,11 @@
 - (void)decreaseHeight:(id)sender;
 - (void)increaseWidth:(id)sender;
 - (void)decreaseWidth:(id)sender;
+
+- (void)increaseHeightOfSession:(PTYSession *)session;
+- (void)decreaseHeightOfSession:(PTYSession *)session;
+- (void)increaseWidthOfSession:(PTYSession *)session;
+- (void)decreaseWidthOfSession:(PTYSession *)session;
 
 // If soft is true, don't kill tmux session. Otherwise is just like closeTab.
 - (void)closeTab:(PTYTab *)aTab soft:(BOOL)soft;
@@ -281,6 +287,11 @@
 - (void)selectPaneUp:(id)sender;
 - (void)selectPaneDown:(id)sender;
 
+- (void)swapPaneLeft;
+- (void)swapPaneRight;
+- (void)swapPaneUp;
+- (void)swapPaneDown;
+
 // Enable or disable transparency support for a window.
 - (void)toggleUseTransparency:(id)sender;
 
@@ -352,6 +363,7 @@
 // Opens a new tmux tab. window gives the tmux window id. name gives the new
 // window title.
 - (void)loadTmuxLayout:(NSMutableDictionary *)parseTree
+         visibleLayout:(NSMutableDictionary *)visibleParseTree
                 window:(int)window
         tmuxController:(TmuxController *)tmuxController
                   name:(NSString *)name;
@@ -407,5 +419,12 @@
 
 // Indicates if the ACH window is shown and visible for |session|.
 - (BOOL)autoCommandHistoryIsOpenForSession:(PTYSession *)session;
+- (BOOL)commandHistoryIsOpenForSession:(PTYSession *)session;
+- (void)closeCommandHistory;
+
+- (void)openCommandHistory:(id)sender;
+- (void)openCommandHistoryWithPrefix:(NSString *)prefix sortChronologically:(BOOL)sortChronologically;
+- (void)nextMark:(id)sender;
+- (void)previousMark:(id)sender;
 
 @end

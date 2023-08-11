@@ -63,6 +63,15 @@ iTermURLActionHelperDelegate>
 
 - (NSMenu *)menuForEvent:(NSEvent *)event;
 
+#pragma mark - Offscreen Command Line
+
+- (iTermOffscreenCommandLine *)offscreenCommandLineForClickAt:(NSPoint)windowPoint;
+- (void)presentCommandInfoForOffscreenCommandLine:(iTermOffscreenCommandLine *)offscreenCommandLine
+                                            event:(NSEvent *)event;
+- (void)presentCommandInfoForMark:(id<VT100ScreenMarkReading>)mark
+               absoluteLineNumber:(long long)absoluteLineNumber
+                             date:(NSDate *)date
+                            event:(NSEvent *)event;
 #pragma mark - Mouse Cursor
 
 // Returns whether any change was made.
@@ -77,7 +86,9 @@ iTermURLActionHelperDelegate>
 #pragma mark - Copy to Pasteboard
 
 // Returns a dictionary to pass to NSAttributedString.
-- (NSDictionary *)charAttributes:(screen_char_t)c externalAttributes:(iTermExternalAttribute *)ea;
+- (NSDictionary *)charAttributes:(screen_char_t)c
+              externalAttributes:(iTermExternalAttribute *)ea
+                       processed:(BOOL)processed;
 
 #pragma mark - Install Shell Integration
 
@@ -103,6 +114,7 @@ iTermURLActionHelperDelegate>
 - (id)selectedTextWithStyle:(iTermCopyTextStyle)style
                cappedAtSize:(int)maxBytes
           minimumLineNumber:(int)minimumLineNumber
+                 timestamps:(BOOL)timestamps
                   selection:(iTermSelection *)selection;
 
 - (NSAttributedString *)selectedAttributedTextWithPad:(BOOL)pad;

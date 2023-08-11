@@ -31,6 +31,7 @@ iTermEchoProbeDelegate,
 iTermEventuallyConsistentIntervalTreeSideEffectPerformer,
 iTermLineBufferDelegate,
 iTermMarkDelegate,
+iTermPromptStateMachineDelegate,
 iTermTemporaryDoubleBufferedGridControllerDelegate,
 iTermTokenExecutorDelegate,
 iTermTriggerCallbackScheduler,
@@ -41,6 +42,10 @@ iTermTriggerScopeProvider> {
     dispatch_queue_t _queue;
     PTYTriggerEvaluator *_triggerEvaluator;
     dispatch_group_t _tmuxGroup;
+    NSArray<NSString *> *_sshIntegrationFlags;
+    _Atomic int _pendingReportCount;
+    BOOL _compressionScheduled;
+    iTermPromptStateMachine *_promptStateMachine;
 }
 
 @property (atomic) BOOL hadCommand;
@@ -69,5 +74,12 @@ iTermTriggerScopeProvider> {
 
 // Runs even if there is no delegate yet.
 - (void)addNoDelegateSideEffect:(void (^)(void))sideEffect;
+
+- (void)willSendReport;
+- (void)didSendReport:(id<VT100ScreenDelegate>)delegate;
+
+- (void)executePostTriggerActions;
+- (void)performBlockWithoutTriggers:(void (^)(void))block;
+- (void)movePromptUnderComposerIfNeeded;
 
 @end

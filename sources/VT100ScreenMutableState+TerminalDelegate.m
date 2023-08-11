@@ -18,12 +18,23 @@
 
 @implementation VT100ScreenMutableState (TerminalDelegate)
 
+- (BOOL)enteringCommand {
+    // Are we after terminalCommandDidStart but before terminalCommandDidEnd?
+    return VT100GridAbsCoordRangeLength(self.currentPromptRange, self.width) > 0 && self.commandStartCoord.x != -1;
+}
+
+- (void)appendStringToComposer:(NSString *)string {
+    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
+        [delegate screenAppendStringToComposer:string];
+        [unpauser unpause];
+    }];
+}
+
 - (void)terminalAppendString:(NSString *)string {
     DLog(@"begin %@", string);
     if (self.collectInputForPrinting) {
         [self.printBuffer appendString:string];
     } else {
-        // else display string on screen
         [self appendStringAtCursor:string];
     }
     [self appendStringToTriggerLine:string];
@@ -43,9 +54,7 @@
 - (void)terminalAppendAsciiData:(AsciiData *)asciiData {
     DLog(@"begin");
     if (self.collectInputForPrinting) {
-        NSString *string = [[NSString alloc] initWithBytes:asciiData->buffer
-                                                    length:asciiData->length
-                                                  encoding:NSASCIIStringEncoding];
+        NSString *string = iTermCreateStringFromAsciiData(asciiData);
         [self terminalAppendString:string];
         return;
     }
@@ -116,7 +125,10 @@
         DLog(@"Ignore linefeed/formfeed/index because cursor outside left-right margin.");
         return;
     }
-
+    if (_promptStateMachine.isEchoingBackCommand && self.lastPromptMark.promptDetectedByTrigger) {
+        [_promptStateMachine triggerDetectedCommandDidBeginExecution];
+        [self commandDidEnd];
+    }
     if (self.collectInputForPrinting) {
         [self.printBuffer appendString:@"\n"];
     } else {
@@ -195,9 +207,12 @@
 
 - (void)terminalReportVariableNamed:(NSString *)variable {
     DLog(@"begin %@", variable);
+    [self willSendReport];
+    __weak __typeof(self) weakSelf = self;
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         DLog(@"begin side-effect");
         [delegate screenReportVariableNamed:variable];
+        [weakSelf didSendReport:delegate];
     }];
 }
 
@@ -205,9 +220,12 @@
     DLog(@"begin %@", report);
     if (!self.config.isTmuxClient && report) {
         DLog(@"report %@", [report stringWithEncoding:NSUTF8StringEncoding]);
+        [self willSendReport];
+        __weak __typeof(self) weakSelf = self;
         [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
             DLog(@"begin side-effect");
-            [delegate screenWriteDataToTask:report];
+            [delegate screenSendReportData:report];
+            [weakSelf didSendReport:delegate];
         }];
     }
 }
@@ -280,7 +298,9 @@
     if (self.currentGrid.cursor.x < self.currentGrid.size.width) {
         [self.currentGrid markCharDirty:YES at:self.currentGrid.cursor updateTimestamp:NO];
     }
-    [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
+    // Use a deferred side effect because the delegate doesn't do anything very important here and
+    // programs like changing the cursor type all the time.
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
         DLog(@"begin side-effect");
         [delegate screenSetCursorType:cursorType];
     }];
@@ -424,7 +444,9 @@
          VT100GridCoordDescription(newCursorCoord));;
     if (didResize && !preserveScreen) {
         DLog(@"erase screen");
-        [self eraseInDisplayBeforeCursor:YES afterCursor:YES decProtect:NO];  // erase the screen
+        [self performBlockWithoutTriggers:^{
+            [self eraseInDisplayBeforeCursor:YES afterCursor:YES decProtect:NO];  // erase the screen
+        }];
         self.currentGrid.cursorX = 0;
         self.currentGrid.cursorY = 0;
     }
@@ -602,11 +624,14 @@
 
 - (void)terminalReportPasteboard:(NSString *)pasteboard {
     DLog(@"begin");
+    [self willSendReport];
+    __weak __typeof(self) weakSelf = self;
     [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         DLog(@"running");
         [delegate screenReportPasteboard:pasteboard completion:^{
             DLog(@"unpausing");
             [unpauser unpause];
+            [weakSelf didSendReport:delegate];
         }];
     }];
 }
@@ -893,6 +918,10 @@
 }
 
 - (void)terminalPostUserNotification:(NSString *)message {
+    [self terminalPostUserNotification:message rich:NO];
+}
+
+- (void)terminalPostUserNotification:(NSString *)message rich:(BOOL)rich {
     DLog(@"begin %@", message);
     if (!self.postUserNotifications) {
         DLog(@"Declining to allow terminal to post user notification %@", message);
@@ -901,7 +930,7 @@
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         DLog(@"begin side-effect");
         DLog(@"Post %@", message);
-        [delegate screenPostUserNotification:message];
+        [delegate screenPostUserNotification:message rich:rich];
     }];
 }
 
@@ -1390,7 +1419,7 @@
     VT100ScreenState *state = self.mainThreadCopy;
     [self addUnmanagedPausedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate, iTermTokenExecutorUnpauser * _Nonnull unpauser) {
         NSString *profileKey = [state.colorMap profileKeyForColorMapKey:key];
-        [delegate screenSetColor:color forKey:key profileKey:profileKey];
+        [delegate screenSetColor:color profileKey:profileKey];
         [unpauser unpause];
     }];
 }
@@ -1408,7 +1437,7 @@
     [self addUnmanagedPausedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate,
                                          iTermTokenExecutorUnpauser * _Nonnull unpauser) {
         NSString *profileKey = [state.colorMap profileKeyForColorMapKey:key];
-        const BOOL assign = [delegate screenSetColor:color forKey:key profileKey:profileKey];
+        const BOOL assign = [delegate screenSetColor:color profileKey:profileKey];
         if (assign) {
             [weakSelf setColor:color forKey:key];
         }
@@ -1513,10 +1542,12 @@
     }];
 }
 
-- (void)terminalPromptDidStart {
+- (void)terminalPromptDidStart:(BOOL)wasInCommand {
     DLog(@"begin");
     [self promptDidStartAt:VT100GridAbsCoordMake(self.currentGrid.cursor.x,
-                                                 self.currentGrid.cursor.y + self.numberOfScrollbackLines + self.cumulativeScrollbackOverflow)];
+                                                 self.currentGrid.cursor.y + self.numberOfScrollbackLines + self.cumulativeScrollbackOverflow)
+              wasInCommand:wasInCommand
+         detectedByTrigger:NO];
 }
 
 - (NSArray<NSNumber *> *)terminalTabStops {
@@ -1621,12 +1652,16 @@
         shell = params[@"shell"];
     }
 
-    NSDictionary<NSString *, NSNumber *> *lastVersionByShell =
-        @{ @"tcsh": @2,
-           @"bash": @5,
-           @"zsh": @5,
-           @"fish": @5 };
-    NSInteger latestKnownVersion = [lastVersionByShell[shell ?: @""] integerValue];
+    NSDictionary<NSString *, NSNumber *> *latestVersionByShell;
+    if ([iTermPreferences boolForKey:kPreferenceKeyNotifyOnlyForCriticalShellIntegrationUpdates]) {
+        latestVersionByShell = @{ @"tcsh": @2,
+                                  @"bash": @5,
+                                  @"zsh": @5,
+                                  @"fish": @5 };
+    } else {
+#include "iTermLatestVersionByShell.h"
+    }
+    NSInteger latestKnownVersion = [latestVersionByShell[shell ?: @""] integerValue];
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         DLog(@"begin side-effect");
         if (shell) {
@@ -1759,6 +1794,7 @@
                        preserveAspectRatio:(BOOL)preserveAspectRatio
                                      inset:(NSEdgeInsets)inset
                                       type:(NSString *)type
+                                 forceWide:(BOOL)forceWide
                                 completion:(void (^)(BOOL ok))completion {
     DLog(@"begin name=%@ size=%@ width=%@ widthUnits=%@ height=%@ heightUnits=%@ preserveAR=%@ inset=%f,%f,%f,%f type=%@",
          name, @(size), @(width), @(widthUnits), @(height), @(heightUnits), @(preserveAspectRatio), inset.top, inset.bottom, inset.left, inset.right, type);
@@ -1782,6 +1818,7 @@
                                preserveAspectRatio:preserveAspectRatio
                                              inset:inset
                                               type:type
+                                         forceWide:forceWide
                                           delegate:delegate
                                              queue:queue
                                         completion:^(BOOL ok) {
@@ -1802,6 +1839,7 @@
                      preserveAspectRatio:(BOOL)preserveAspectRatio
                                    inset:(NSEdgeInsets)inset
                                     type:(NSString *)type
+                               forceWide:(BOOL)forceWide
                                 delegate:(id<VT100ScreenDelegate>)delegate
                                    queue:(dispatch_queue_t)queue
                               completion:(void (^)(BOOL ok))completion {
@@ -1832,7 +1870,8 @@
                                                                 preserveAspectRatio:preserveAspectRatio
                                                                               inset:inset
                                                                                type:type
-                                                                       preconfirmed:!promptIfBig];
+                                                                       preconfirmed:!promptIfBig
+                                                                          forceWide:forceWide];
         strongSelf.inlineImageHelper.delegate = self;
         completion(YES);
     });
@@ -1893,6 +1932,10 @@
 
 - (void)terminalSetUnicodeVersion:(NSInteger)unicodeVersion {
     DLog(@"begin %@", @(unicodeVersion));
+    if (unicodeVersion == self.config.unicodeVersion) {
+        DLog(@"Short-circuit unicode version update with no change");
+        return;
+    }
     // This will change the profile. Use unmanaged+paused to avoid reentrancy.
     [self addUnmanagedPausedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate,
                                          iTermTokenExecutorUnpauser * _Nonnull unpauser) {
@@ -2048,14 +2091,16 @@
                              @"br_cyan": @(kColorMapAnsiCyan + kColorMapAnsiBrightModifier),
                              @"br_white": @(kColorMapAnsiWhite + kColorMapAnsiBrightModifier) };
 
+    // These are profile keys but they have no corresponding value in the color map.
+    NSDictionary *names2 = @{ @"badge": KEY_BADGE_COLOR };
+
     NSNumber *keyNumber = names[name];
     DLog(@"name=%@", name);
-    if (!keyNumber) {
+    if (!keyNumber && !names2[name]) {
         DLog(@"fail");
         return;
     }
-    NSInteger key = [keyNumber integerValue];
-    DLog(@"key=%@", @(key));
+    DLog(@"key=%@", keyNumber);
     __weak __typeof(self) weakSelf = self;
     [self addUnmanagedPausedSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate,
                                          iTermTokenExecutorUnpauser * _Nonnull unpauser) {
@@ -2064,10 +2109,15 @@
             DLog(@"dealloced");
             return;
         }
-        DLog(@"set %@ aka %@=%@", @(key), [strongSelf.mainThreadCopy.colorMap profileKeyForColorMapKey:key], color);
+        NSString *profileKey;
+        if (keyNumber) {
+            profileKey = [strongSelf.mainThreadCopy.colorMap profileKeyForColorMapKey:keyNumber.integerValue];
+        } else {
+            profileKey = [strongSelf.mainThreadCopy.colorMap profileKeyForBaseKey:names2[name]];
+        }
+        DLog(@"set %@=%@", profileKey, color);
         [delegate screenSetColor:color
-                          forKey:key
-                      profileKey:[strongSelf.mainThreadCopy.colorMap profileKeyForColorMapKey:key]];
+                      profileKey:profileKey];
         [unpauser unpause];
     }];
 }
@@ -2212,14 +2262,7 @@
 
 - (VT100SavedColorsSlot *)terminalSavedColorsSlot {
     DLog(@"begin");
-    iTermColorMap *colorMap = self.colorMap;
-    return [[VT100SavedColorsSlot alloc] initWithTextColor:[colorMap colorForKey:kColorMapForeground]
-                                            backgroundColor:[colorMap colorForKey:kColorMapBackground]
-                                         selectionTextColor:[colorMap colorForKey:kColorMapSelectedText]
-                                   selectionBackgroundColor:[colorMap colorForKey:kColorMapSelection]
-                                       indexedColorProvider:^NSColor *(NSInteger index) {
-        return [colorMap colorForKey:kColorMap8bitBase + index] ?: [NSColor clearColor];
-    }];
+    return self.colorMap.savedColorsSlot;
 }
 
 - (void)terminalRestoreColorsFromSlot:(VT100SavedColorsSlot *)slot {
@@ -2421,9 +2464,12 @@
 
 - (void)terminalSendCapabilitiesReport {
     DLog(@"begin");
+    [self willSendReport];
+    __weak __typeof(self) weakSelf = self;
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         DLog(@"begin side-effect");
         [delegate screenReportCapabilities];
+        [weakSelf didSendReport:delegate];
     }];
 }
 
@@ -2479,13 +2525,16 @@
     }
     NSString *dcsID = values[4];
     [self appendBannerMessage:[NSString stringWithFormat:@"ssh %@", sshargs]];
+    NSDictionary *savedState = self.savedState;
     [self addSideEffect:^(id<VT100ScreenDelegate> _Nonnull delegate) {
         [delegate screenDidHookSSHConductorWithToken:token
                                             uniqueID:uniqueID
                                             boolArgs:boolArgs
                                              sshargs:sshargs
-                                               dcsID:dcsID];
+                                               dcsID:dcsID
+                                       savedState:savedState];
     }];
+    [self.terminal resetForSSH];
 }
 
 - (void)terminalDidReadSSHConductorLine:(NSString *)string depth:(int)depth {
@@ -2538,6 +2587,36 @@
     }];
 }
 
+- (void)terminalBeginSSHIntegeration:(NSString *)args {
+    DLog(@"begin %@", args);
+    if (args) {
+        // Save args
+        NSArray<NSString *> *parts = [args componentsSeparatedByString:@" "];
+        if (parts.count < 4) {
+            DLog(@"Not enough parts");
+            return;
+        }
+        _sshIntegrationFlags = parts;
+        return;
+    }
+    if (!_sshIntegrationFlags) {
+        return;
+    }
+    // Send conductor
+    NSString *token = _sshIntegrationFlags[0];
+    NSString *uniqueID = _sshIntegrationFlags[1];
+    NSString *encodedBA = _sshIntegrationFlags[2];
+    NSString *sshArgs = _sshIntegrationFlags[3];
+    _sshIntegrationFlags = nil;
+    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
+        [delegate screenBeginSSHIntegrationWithToken:token
+                                            uniqueID:uniqueID
+                                           encodedBA:encodedBA
+                                             sshArgs:sshArgs];
+        [unpauser unpause];
+    }];
+}
+
 - (void)terminalUpdateEnv:(NSString *)value {
     DLog(@"begin %@", value);
     const NSInteger colon = [value rangeOfString:@":"].location;
@@ -2565,6 +2644,7 @@
 }
 
 - (void)terminalEndSSH:(NSString *)uniqueID {
+    _sshIntegrationFlags = nil;
     __weak __typeof(self) weakSelf = self;
     dispatch_queue_t queue = _queue;
     [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
@@ -2618,6 +2698,22 @@
 - (void)terminalDidResynchronizeSSH {
     [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
         [delegate screenDidResynchronizeSSH];
+    }];
+}
+
+- (void)terminalDidExecuteToken:(VT100Token *)token {
+    [self executePostTriggerActions];
+}
+
+- (void)terminalWillExecuteToken:(VT100Token *)token {
+    [_promptStateMachine handleToken:token withEncoding:self.terminal.encoding];
+}
+
+- (void)terminalOpenURL:(NSURL *)url {
+    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
+        [delegate screenOpenURL:url completion:^{
+            [unpauser unpause];
+        }];
     }];
 }
 

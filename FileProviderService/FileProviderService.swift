@@ -158,17 +158,15 @@ public class ExtensionToMainApp: NSObject, NSSecureCoding {
 }
 
 public enum iTermFileProviderServiceError: Error, Codable, CustomDebugStringConvertible {
-    case todo
     case notFound(String)
     case unknown(String)
     case notAFile(String)
     case permissionDenied(String)
     case internalError(String)  // e.g., URL with contents not readable
+    case disconnected
     
     public var debugDescription: String {
         switch self {
-        case .todo:
-            return "<todo>"
         case .notFound(let item):
             return "<notFound \(item)>"
         case .unknown(let reason):
@@ -179,6 +177,8 @@ public enum iTermFileProviderServiceError: Error, Codable, CustomDebugStringConv
             return "<permissionDenied \(file)>"
         case .internalError(let reason):
             return "<internalError \(reason)>"
+        case .disconnected:
+            return "<disconnected>"
         }
     }
 
@@ -328,7 +328,7 @@ public class ExtensionToMainAppPayload: NSObject, Codable {
             case mv(file: RemoteFile, newParent: String, newName: String)
             case mkdir(file: RemoteFile)
             case create(file: RemoteFile, content: Data)
-            case replaceContents(file: RemoteFile, url: URL)
+            case replaceContents(file: RemoteFile, contents: Data)
             case setModificationDate(file: RemoteFile, date: Date)
             case chmod(file: RemoteFile, permissions: RemoteFile.Permissions)
 
@@ -352,8 +352,8 @@ public class ExtensionToMainAppPayload: NSObject, Codable {
                     return "<mkdir \(file)>"
                 case let .create(file: file, content: content):
                     return "<create \(file) content size=\(content.count)>"
-                case let .replaceContents(file: file, url: url):
-                    return "<replaceContents \(file) \(url)>"
+                case let .replaceContents(file: file, contents: contents):
+                    return "<replaceContents \(file) length=\(contents.count)>"
                 case let .setModificationDate(file: file, date: date):
                     return "<setModificationDate \(file) \(date)>"
                 case let .chmod(file: file, permissions: permissions):

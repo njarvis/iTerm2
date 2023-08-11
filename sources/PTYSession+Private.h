@@ -35,6 +35,9 @@
 #import "iTermUpdateCadenceController.h"
 #import "iTermWorkingDirectoryPoller.h"
 
+@class PTYSessionPublishRequest;
+@class iTermComposerManager;
+
 @interface PTYSession () <
 iTermAutomaticProfileSwitcherDelegate,
 iTermBackgroundDrawingHelperDelegate,
@@ -68,6 +71,10 @@ iTermWorkingDirectoryPollerDelegate,
 TriggerDelegate> {
     // Changes are made in the main thread to this and it periodically copied to the mutation thread.
     iTermExpect *_expect;
+
+    BOOL _havePendingPublish;
+    NSMutableArray<PTYSessionPublishRequest *> *_pendingPublishRequests;
+    iTermComposerManager *_composerManager;
 }
 
 @property(nonatomic, retain) Interval *currentMarkOrNotePosition;
@@ -102,10 +109,13 @@ TriggerDelegate> {
 @property(nonatomic, retain) id<VT100RemoteHostReading> currentHost;
 @property(nonatomic, retain) iTermExpectation *pasteBracketingOopsieExpectation;
 @property(nonatomic, copy) NSString *cookie;
+@property(nonatomic, strong) NSDate *lastNonFocusReportingWrite;
+@property(nonatomic, strong) NSDate *lastFocusReportDate;
 
 - (void)queueAnnouncement:(iTermAnnouncementViewController *)announcement
                identifier:(NSString *)identifier;
 - (void)removeAnnouncementWithIdentifier:(NSString *)identifier;
 - (void)dismissAnnouncementWithIdentifier:(NSString *)identifier;
+- (BOOL)haveAutoComposer;
 
 @end

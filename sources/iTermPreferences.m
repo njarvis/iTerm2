@@ -37,9 +37,11 @@ NSString *const kPreferenceKeyPromptOnQuitEvenIfThereAreNoWindows = @"PromptOnQu
 NSString *const kPreferenceKeyInstantReplayMemoryMegabytes = @"IRMemory";
 NSString *const kPreferenceKeySavePasteAndCommandHistory = @"SavePasteHistory";  // The key predates command history
 NSString *const kPreferenceKeyAddBonjourHostsToProfiles = @"EnableRendezvous";  // The key predates the name Bonjour
+NSString *const kPreferenceKeyNotifyOnlyForCriticalShellIntegrationUpdates = @"NotifyOnlyForCriticalShellIntegrationUpdates";  // BOOL
 NSString *const kPreferenceKeyCheckForUpdatesAutomatically = @"SUEnableAutomaticChecks";  // Key defined by Sparkle
 NSString *const kPreferenceKeyCheckForTestReleases = @"CheckTestRelease";
 NSString *const kPreferenceKeyLoadPrefsFromCustomFolder = @"LoadPrefsFromCustomFolder";
+NSString *const kPreferenceKeyUseCustomScriptsFolder = @"UseCustomScriptsFolder";
 
 // This pref was originally a suppressable warning plus a user default, which is why it's in two
 // parts.
@@ -51,8 +53,10 @@ NSString *const kPreferenceKeyNeverRemindPrefsChangesLostForFileSelection = @"No
 NSString *const kPreferenceKeyNeverRemindPrefsChangesLostForFileHaveSelection = @"NoSyncNeverRemindPrefsChangesLostForFile";
 
 NSString *const iTermMetalSettingsDidChangeNotification = @"iTermMetalSettingsDidChangeNotification";
+NSString *const iTermAutoComposerDidChangeNotification = @"iTermAutoComposerDidChangeNotification";
 
 NSString *const kPreferenceKeyCustomFolder = @"PrefsCustomFolder";
+NSString *const kPreferenceKeyCustomScriptsFolder = @"CustomScriptsFolder";  // String
 NSString *const kPreferenceKeySelectionCopiesText = @"CopySelection";
 NSString *const kPreferenceKeyCopyLastNewline = @"CopyLastNewline";
 NSString *const kPreferenceKeyAllowClipboardAccessFromTerminal = @"AllowClipboardAccess";
@@ -70,10 +74,12 @@ NSString *const kPreferenceKeyUseTmuxStatusBar = @"UseTmuxStatusBar";
 NSString *const kPreferenceKeyTmuxPauseModeAgeLimit = @"TmuxPauseModeAgeLimit";
 NSString *const kPreferenceKeyTmuxUnpauseAutomatically = @"TmuxUnpauseAutomatically";
 NSString *const kPreferenceKeyTmuxWarnBeforePausing = @"TmuxWarnBeforePausing";
+NSString *const kPreferenceKeyTmuxSyncClipboard = @"TmuxSyncClipboard";
 NSString *const kPreferenceKeyPhonyAllowSendingClipboardContents = @"PhonyAllowSendingClipboardContents";
 
 NSString *const kPreferenceKeyUseMetal = @"UseMetal";
 NSString *const kPreferenceKeyDisableMetalWhenUnplugged = @"disableMetalWhenUnplugged";
+NSString *const kPreferenceKeyDisableInLowPowerMode = @"disableMetalInLowPowerMode";
 NSString *const kPreferenceKeyPreferIntegratedGPU = @"preferIntegratedGPU";
 NSString *const kPreferenceKeyMetalMaximizeThroughput = @"metalMaximizeThroughput";
 NSString *const kPreferenceKeyEnableAPIServer = @"EnableAPIServer";
@@ -113,11 +119,14 @@ NSString *const kPreferenceKeyEnableProxyIcon = @"EnableProxyIcon";
 NSString *const kPreferenceKeyDimBackgroundWindows = @"DimBackgroundWindows";
 NSString *const kPreferenceKeySeparateStatusBarsPerPane = @"SeparateStatusBarsPerPane";
 
-NSString *const kPreferenceKeyControlRemapping = @"Control";
+NSString *const kPreferenceKeyControlRemapping_Deprecated = @"Control"; // deprecated
+NSString *const kPreferenceKeyLeftControlRemapping = @"LeftControl";
+NSString *const kPreferenceKeyRightControlRemapping = @"RightControl";
 NSString *const kPreferenceKeyLeftOptionRemapping = @"LeftOption";
 NSString *const kPreferenceKeyRightOptionRemapping = @"RightOption";
 NSString *const kPreferenceKeyLeftCommandRemapping = @"LeftCommand";
 NSString *const kPreferenceKeyRightCommandRemapping = @"RightCommand";
+NSString *const kPreferenceKeyFunctionRemapping = @"FunctionKey";
 NSString *const kPreferenceKeySwitchPaneModifier = @"SwitchPaneModifier";
 NSString *const kPreferenceKeySwitchTabModifier = @"SwitchTabModifier";
 NSString *const kPreferenceKeySwitchWindowModifier = @"SwitchWindowModifier";
@@ -130,6 +139,9 @@ NSString *const kPreferenceKeyHotkeyModifiers = @"HotkeyModifiers";
 NSString *const kPreferenceKeyEnableHapticFeedbackForEsc = @"HapticFeedbackForEsc";
 NSString *const kPreferenceKeyEnableSoundForEsc = @"SoundForEsc";
 NSString *const kPreferenceKeyVisualIndicatorForEsc = @"VisualIndicatorForEsc";
+NSString *const kPreferenceKeyLanguageAgnosticKeyBindings = @"LanguageAgnosticKeyBindings";
+NSString *const kPreferenceKeyForceKeyboard = @"ForceKeyboard";  // bool
+NSString *const kPreferenceKeyKeyboardLocale = @"KeyboardLocale";  // string
 
 NSString *const kPreferenceKeyHotKeyTogglesWindow_Deprecated = @"HotKeyTogglesWindow";  // deprecated
 NSString *const kPreferenceKeyHotkeyProfileGuid_Deprecated = @"HotKeyBookmark";  // deprecated
@@ -148,6 +160,7 @@ NSString *const kPreferenceKeyFocusOnRightOrMiddleClick = @"FocusOnRightOrMiddle
 NSString *const kPreferenceKeyAppVersion = @"iTerm Version";  // Excluded from syncing
 NSString *const kPreferenceKeyAllAppVersions = @"NoSyncAllAppVersions";  // Array of known iTerm2 versions this user has used on this machine.
 NSString *const kPreferenceAutoCommandHistory = @"AutoCommandHistory";
+NSString *const kPreferenceAutoComposer = @"AutoComposer";
 NSString *const kPreferenceKeyOSVersion = @"NoSyncLastOSVersion";
 
 NSString *const kPreferenceKeyPasteSpecialChunkSize = @"PasteSpecialChunkSize";
@@ -174,6 +187,16 @@ NSString *const kPreferenceKeyActions = @"Actions";
 NSString *const kPreferenceKeySnippets = @"Snippets";
 NSString *const kPreferenceKeyHTMLTabTitles = @"HTMLTabTitles";
 NSString *const kPreferenceKeyDisableTransparencyForKeyWindow = @"DisableTransparencyForKeyWindow";
+NSString *const kPreferenceKeyNeverBlockSystemShutdown = @"NeverBlockSystemShutdown";
+
+NSString *const kPreferenceKeyOpenAIAPIKey = @"NoSyncOpenAIAPIKey";
+NSString *const kPreferenceKeyAIPrompt = @"AI Prompt";
+NSString *const kPreferenceKeyAlertOnMarksInOffscreenSessions = @"Alert On Marks in Offscreen Sessions";
+
+NSString *const iTermDefaultAIPrompt =
+@"#!/usr/bin/\\(shell)\n"
+@"# Note this command runs on systems like this: \\(uname)\n"
+@"# The next line will do this: \\(ai.prompt)\n";
 
 // NOTE: If you update this list, also update preferences.py.
 
@@ -328,12 +351,15 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyInstantReplayMemoryMegabytes: @4,
                   kPreferenceKeySavePasteAndCommandHistory: @NO,
                   kPreferenceKeyAddBonjourHostsToProfiles: @NO,
+                  kPreferenceKeyNotifyOnlyForCriticalShellIntegrationUpdates: @YES,
                   kPreferenceKeyCheckForUpdatesAutomatically: @YES,
                   kPreferenceKeyCheckForTestReleases: @NO,
                   kPreferenceKeyLoadPrefsFromCustomFolder: @NO,
+                  kPreferenceKeyUseCustomScriptsFolder: @NO,
                   kPreferenceKeyNeverRemindPrefsChangesLostForFileHaveSelection: @NO,
                   kPreferenceKeyNeverRemindPrefsChangesLostForFileSelection: @0,
                   kPreferenceKeyCustomFolder: [NSNull null],
+                  kPreferenceKeyCustomScriptsFolder: [NSNull null],
                   kPreferenceKeySelectionCopiesText: @YES,
                   kPreferenceKeyCopyLastNewline: @NO,
                   kPreferenceKeyAllowClipboardAccessFromTerminal: @NO,
@@ -352,12 +378,17 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyTmuxUnpauseAutomatically: @NO,
                   kPreferenceKeyPhonyAllowSendingClipboardContents: @(iTermPasteboardReporterConfigurationAskEachTime),
                   kPreferenceKeyTmuxWarnBeforePausing: @YES,
+                  kPreferenceKeyTmuxSyncClipboard: @NO,
                   kPreferenceKeyUseMetal: @YES,
                   kPreferenceKeyDisableMetalWhenUnplugged: @YES,
+                  kPreferenceKeyDisableInLowPowerMode: @YES,
                   kPreferenceKeyPreferIntegratedGPU: @YES,
                   kPreferenceKeyMetalMaximizeThroughput: @YES,
                   kPreferenceKeyEnableAPIServer: @NO,
                   kPreferenceKeyAPIAuthentication: @0,  // ignored — synthetic value
+                  kPreferenceKeyOpenAIAPIKey: @"",
+                  kPreferenceKeyAIPrompt: iTermDefaultAIPrompt,
+                  kPreferenceKeyAlertOnMarksInOffscreenSessions: @NO,
 
                   kPreferenceKeyTabStyle_Deprecated: @(TAB_STYLE_LIGHT),
                   kPreferenceKeyTabStyle: @(TAB_STYLE_LIGHT),
@@ -395,16 +426,22 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyDimBackgroundWindows: @NO,
                   kPreferenceKeySeparateStatusBarsPerPane: @NO,
 
-                  kPreferenceKeyControlRemapping: @(kPreferencesModifierTagControl),
+                  kPreferenceKeyControlRemapping_Deprecated: @(kPreferencesModifierTagLegacyRightControl),
+                  kPreferenceKeyLeftControlRemapping: @(kPreferencesModifierTagLeftControl),
+                  kPreferenceKeyRightControlRemapping: @(kPreferencesModifierTagRightControl),
+                  kPreferenceKeyKeyboardLocale: [NSNull null],
+                  
                   kPreferenceKeyLeftOptionRemapping: @(kPreferencesModifierTagLeftOption),
                   kPreferenceKeyRightOptionRemapping: @(kPreferencesModifierTagRightOption),
                   kPreferenceKeyLeftCommandRemapping: @(kPreferencesModifierTagLeftCommand),
                   kPreferenceKeyRightCommandRemapping: @(kPreferencesModifierTagRightCommand),
+                  kPreferenceKeyFunctionRemapping: @(kPreferenceModifierTagFunction),
                   kPreferenceKeySwitchPaneModifier: @(kPreferenceModifierTagNone),
                   kPreferenceKeySwitchTabModifier: @(kPreferencesModifierTagEitherCommand),
                   kPreferenceKeySwitchWindowModifier: @(kPreferencesModifierTagCommandAndOption),
                   kPreferenceKeyEmulateUSKeyboard: @NO,
                   kPreferenceKeyHotkeyEnabled: @NO,
+                  kPreferenceKeyForceKeyboard: @NO,
                   kPreferenceKeyHotKeyCode: @0,
                   kPreferenceKeyHotkeyCharacter: @0,
                   kPreferenceKeyHotkeyModifiers: @0,
@@ -414,6 +451,7 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyEnableHapticFeedbackForEsc: @NO,
                   kPreferenceKeyEnableSoundForEsc: @NO,
                   kPreferenceKeyVisualIndicatorForEsc: @NO,
+                  kPreferenceKeyLanguageAgnosticKeyBindings: @NO,
 
                   kPreferenceKeyCmdClickOpensURLs: @YES,
                   kPreferenceKeyControlLeftClickBypassesContextMenu: @NO,
@@ -426,7 +464,8 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyEnterCopyModeAutomatically: @YES,
 
                   kPreferenceAutoCommandHistory: @NO,
-
+                  kPreferenceAutoComposer: @NO,
+                  
                   kPreferenceKeyPasteSpecialChunkSize: @1024,
                   kPreferenceKeyPasteSpecialChunkDelay: @0.01,
                   kPreferenceKeyPasteSpecialSpacesPerTab: @4,
@@ -448,7 +487,8 @@ static NSString *sPreviousVersion;
                   kPreferenceKeySizeChangesAffectProfile: @NO,
                   kPreferenceKeyHTMLTabTitles: @NO,
 
-                  kPreferenceKeyDisableTransparencyForKeyWindow: @NO
+                  kPreferenceKeyDisableTransparencyForKeyWindow: @NO,
+                  kPreferenceKeyNeverBlockSystemShutdown: @NO
               };
     }
     return dict;
@@ -484,6 +524,7 @@ static NSString *sPreviousVersion;
         case kPreferenceInfoTypeTokenField:
             return ([defaultValue isKindOfClass:[NSArray class]] ||
                     [defaultValue isKindOfClass:[NSNull class]]);
+        case kPreferenceInfoTypeStringPopup:
         case kPreferenceInfoTypeStringTextField:
             return ([defaultValue isKindOfClass:[NSString class]] ||
                     [defaultValue isKindOfClass:[NSNull class]]);
@@ -508,10 +549,13 @@ static NSString *sPreviousVersion;
     if (!dict) {
         dict = @{ kPreferenceKeyOpenArrangementAtStartup: BLOCK(computedOpenArrangementAtStartup),
                   kPreferenceKeyCustomFolder: BLOCK(computedCustomFolder),
+                  kPreferenceKeyCustomScriptsFolder: BLOCK(computedCustomScriptsFolder),
                   kPreferenceKeyCharactersConsideredPartOfAWordForSelection: BLOCK(computedWordChars),
                   kPreferenceKeyTabStyle: BLOCK(computedTabStyle),
                   kPreferenceKeyUseMetal: BLOCK(computedUseMetal),
-                  kPreferenceKeyTabsHaveCloseButton: BLOCK(computedTabsHaveCloseButton)
+                  kPreferenceKeyTabsHaveCloseButton: BLOCK(computedTabsHaveCloseButton),
+                  kPreferenceKeyLeftControlRemapping: BLOCK(computedLeftControlRemapping),
+                  kPreferenceKeyRightControlRemapping: BLOCK(computedRightControlRemapping),
                   };
     }
     return dict;
@@ -646,7 +690,7 @@ static NSString *sPreviousVersion;
 
 + (NSUInteger)maskForModifierTag:(iTermPreferencesModifierTag)tag {
     switch (tag) {
-        case kPreferencesModifierTagControl:
+        case kPreferencesModifierTagLegacyRightControl:
             return NSEventModifierFlagControl;
 
         case kPreferencesModifierTagEitherCommand:
@@ -660,6 +704,9 @@ static NSString *sPreviousVersion;
 
         case kPreferenceModifierTagNone:
             return NSUIntegerMax;
+
+        case kPreferenceModifierTagFunction:
+            return NSEventModifierFlagFunction;
 
         default:
             NSLog(@"Unexpected value for maskForModifierTag: %d", tag);
@@ -683,6 +730,11 @@ static NSString *sPreviousVersion;
     return prefsCustomFolder ?: @"";
 }
 
++ (NSString *)computedCustomScriptsFolder {
+    NSString *folder = [self uncomputedObjectForKey:kPreferenceKeyCustomScriptsFolder];
+    return folder ?: @"";
+}
+
 // Text fields don't like nil strings.
 + (NSString *)computedWordChars {
     NSString *wordChars =
@@ -699,6 +751,32 @@ static NSString *sPreviousVersion;
     }
     // New value is not set yet. This migrates all users to automatic.
     return @(TAB_STYLE_AUTOMATIC);
+}
+
++ (NSNumber *)computedLeftControlRemapping {
+    NSNumber *value;
+    value = [[NSUserDefaults standardUserDefaults] objectForKey:kPreferenceKeyLeftControlRemapping];
+    if (value) {
+        return value;
+    }
+    value = [[NSUserDefaults standardUserDefaults] objectForKey:kPreferenceKeyControlRemapping_Deprecated];
+    if (value) {
+        return @(value.intValue);
+    }
+    return [self defaultObjectForKey:kPreferenceKeyLeftControlRemapping];
+}
+
++ (NSNumber *)computedRightControlRemapping {
+    NSNumber *value;
+    value = [[NSUserDefaults standardUserDefaults] objectForKey:kPreferenceKeyRightControlRemapping];
+    if (value) {
+        return value;
+    }
+    value = [[NSUserDefaults standardUserDefaults] objectForKey:kPreferenceKeyControlRemapping_Deprecated];
+    if (value) {
+        return @(value.intValue);
+    }
+    return [self defaultObjectForKey:kPreferenceKeyRightControlRemapping];
 }
 
 + (NSNumber *)computedTabsHaveCloseButton {
@@ -733,6 +811,10 @@ static NSString *sPreviousVersion;
         instance = [[iTermUserDefaultsObserver alloc] init];
     });
     return instance;
+}
+
++ (NSString *)warningIdentifierForNeverWarnAboutShortLivedSessions:(NSString *)guid {
+    return [NSString stringWithFormat:@"NeverWarnAboutShortLivedSessions_%@", guid];
 }
 
 @end

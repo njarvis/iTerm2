@@ -124,9 +124,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)clearAndResetScreenSavingLines:(int)linesToSave;
 - (void)clearScrollbackBuffer;
 - (void)clearBufferSavingPrompt:(BOOL)savePrompt;
+- (void)clearBufferWithoutTriggersSavingPrompt:(BOOL)savePrompt;
 - (void)eraseCharactersAfterCursor:(int)j;
 - (void)eraseScreenAndRemoveSelection;
 - (void)clearFromAbsoluteLineToEnd:(long long)absLine;
+- (void)clearForComposer;
 - (void)removeLastLine;
 
 void VT100ScreenEraseCell(screen_char_t *sct,
@@ -172,6 +174,11 @@ void VT100ScreenEraseCell(screen_char_t *sct,
                                        oneLine:(BOOL)oneLine
                                        ofClass:(Class)markClass;
 
+- (id<iTermMark>)addMarkStartingAtAbsoluteLine:(long long)line
+                                       oneLine:(BOOL)oneLine
+                                       ofClass:(Class)markClass
+                                      modifier:(void (^ NS_NOESCAPE _Nullable)(id<iTermMark>))modifier;
+
 // Returns nil if it was not accepted, otherwise it returns `mark`.
 - (id<iTermMark>)addMark:(iTermMark *)mark
                   onLine:(long long)line
@@ -198,24 +205,30 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 
 #pragma mark Marks
 
+@property (nonatomic) BOOL namedMarksDirty;
+
 // This is like addMarkStartingAtAbsoluteLine:oneLine:ofClass: but it notifies the delegate of a new mark.
 - (id<iTermMark>)addMarkOnLine:(int)line ofClass:(Class)markClass;
 - (void)saveCursorLine;
 - (void)reloadMarkCache;
+- (void)removeNamedMark:(VT100ScreenMark *)mark;
 
 #pragma mark Prompt
 
 // This is like setPromptStartLine: but with lots of side effects that are desirable for the
 // regular shell integration flow.
-- (void)promptDidStartAt:(VT100GridAbsCoord)coord;
+- (VT100ScreenMark *)promptDidStartAt:(VT100GridAbsCoord)coord wasInCommand:(BOOL)wasInCommand detectedByTrigger:(BOOL)detectedByTrigger;
 
-- (void)setPromptStartLine:(int)line;
+- (VT100ScreenMark *)setPromptStartLine:(int)line detectedByTrigger:(BOOL)detectedByTrigger;
 - (void)didUpdatePromptLocation;
 - (void)incrementClearCountForCommandMark:(id<VT100ScreenMarkReading>)screenMarkDoppelganger;
 
 #pragma mark Command
 
 - (void)commandDidStart;
+// This is used when sending a command when the previous prompt was detected by a trigger since
+// we won't get any indication of the start/end of a running command.
+- (void)didSendCommand;
 - (void)setCoordinateOfCommandStart:(VT100GridAbsCoord)coord;
 - (void)setCommandStartCoordWithoutSideEffects:(VT100GridAbsCoord)coord;
 - (void)commandDidStartAtScreenCoord:(VT100GridCoord)coord;
@@ -232,6 +245,8 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 - (void)commandWasAborted;
 - (void)assignCurrentCommandEndDate;
 - (void)didInferEndOfCommand;
+// Anything we read from here until FinalTerm C can be assumed to be the shell echoing back the command.
+- (void)composerWillSendCommand;
 
 #pragma mark Working Directory
 
@@ -312,6 +327,9 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 - (void)scheduleTokenExecution;
 - (void)injectData:(NSData *)data;
 
+// This will be true while there's a request for a report that hasn't been responded to yet.
+@property (atomic, readonly) BOOL sendingIsBlocked;
+
 #pragma mark - Triggers
 
 - (void)performPeriodicTriggerCheck;
@@ -364,6 +382,9 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 
 // Sets the alt grid's contents. `lines` is NSData with screen_char_t's.
 - (void)setAltScreen:(NSArray<NSData *> *)lines;
+
+// This is for ssh-related state only.
+- (void)restoreFromSavedState:(NSDictionary *)savedState;
 
 #pragma mark - Inline Images
 

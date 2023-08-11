@@ -87,14 +87,17 @@ preview:
 
 x86libsixel: force
 	cd submodules/libsixel && make clean
-	cd submodules/libsixel && CFLAGS="-target x86_64-apple-macos10.14" ./configure --prefix=${PWD}/ThirdParty/libsixel --without-libcurl --without-jpeg --without-png --disable-python && make && make install
+	cd submodules/libsixel && CC="/usr/bin/clang -target x86_64-apple-macos10.14" LDFLAGS="-target x86_64-apple-macos10.14" CFLAGS="-target x86_64-apple-macos10.14" ./configure -host=x86_64-apple-darwin --prefix=${PWD}/ThirdParty/libsixel --without-libcurl --without-jpeg --without-png --disable-python
+	cd submodules/libsixel && CC="/usr/bin/clang -target x86_64-apple-macos10.14" LDFLAGS="-target x86_64-apple-macos10.14" CFLAGS="-target x86_64-apple-macos10.14" make
+	cd submodules/libsixel && make install
+
 	rm ThirdParty/libsixel/lib/*dylib* ThirdParty/libsixel/bin/*
 	mv ThirdParty/libsixel/lib/libsixel.a ThirdParty/libsixel/lib/libsixel-x86.a
 
 armsixel: force
 	cd submodules/libsixel && ./configure
 	cd submodules/libsixel && make clean
-	cd submodules/libsixel && CFLAGS="-target arm64-apple-macos10.14" ./configure --host=aarch64-apple-darwin --prefix=${PWD}/ThirdParty/libsixel-arm --without-libcurl --without-jpeg --without-png --disable-python --disable-shared && CFLAGS="-target arm64-apple-macos10.14" make && make install
+	cd submodules/libsixel && LDFLAGS="-target arm64-apple-macos10.14" CFLAGS="-target arm64-apple-macos10.14" LIBTOOLFLAGS="-target arm64-apple-macos10.14" ./configure --host=aarch64-apple-darwin --prefix=${PWD}/ThirdParty/libsixel-arm --without-libcurl --without-jpeg --without-png --disable-python --disable-shared && CFLAGS="-target arm64-apple-macos10.14" make && make install
 	rm ThirdParty/libsixel-arm/bin/*
 
 # Usage: go to an intel mac and run make x86libsixel and commit it. Go to an arm mac and run make armsixel && make libsixel.
@@ -117,11 +120,11 @@ fatopenssl: force
 
 x86libssh2: force
 	mkdir -p submodules/libssh2/build_x86_64
-	cd submodules/libssh2/build_x86_64 && /usr/local/bin/cmake -DOPENSSL_ROOT_DIR=${PWD}/submodules/openssl -DBUILD_EXAMPLES=NO -DBUILD_TESTING=NO -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCRYPTO_BACKEND=OpenSSL .. && make libssh2 -j4
+	cd submodules/libssh2/build_x86_64 && /usr/local/bin/cmake -DOPENSSL_ROOT_DIR=${PWD}/submodules/openssl -DBUILD_EXAMPLES=NO -DBUILD_TESTING=NO -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCRYPTO_BACKEND=OpenSSL -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 .. && make libssh2 -j4
 
 armlibssh2: force
 	mkdir -p submodules/libssh2/build_arm64
-	cd submodules/libssh2/build_arm64 && /usr/local/bin/cmake -DOPENSSL_ROOT_DIR=${PWD}/submodules/openssl -DBUILD_EXAMPLES=NO -DBUILD_TESTING=NO -DCMAKE_OSX_ARCHITECTURES=arm64 -DCRYPTO_BACKEND=OpenSSL .. && make libssh2 -j4
+	cd submodules/libssh2/build_arm64 && /usr/local/bin/cmake -DOPENSSL_ROOT_DIR=${PWD}/submodules/openssl -DBUILD_EXAMPLES=NO -DBUILD_TESTING=NO -DCMAKE_OSX_ARCHITECTURES=arm64 -DCRYPTO_BACKEND=OpenSSL  -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15 .. && make libssh2 -j4
 
 fatlibssh2: force fatopenssl
 	make x86libssh2
@@ -141,7 +144,9 @@ NMSSH: force fatlibssh2
 
 libgit2: force
 	mkdir -p submodules/libgit2/build
-	MAKE=/usr/local/bin/cmake PATH=/usr/local/bin:${PATH} cd submodules/libgit2/build && ${CMAKE} -DBUILD_SHARED_LIBS=OFF -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="10.14" -DCMAKE_INSTALL_PREFIX=../../../ThirdParty/libgit2 .. && ${CMAKE} -j22 --build . && ${CMAKE} --build . -j22 --target install
+	MAKE=/usr/local/bin/cmake PATH=/usr/local/bin:${PATH} cd submodules/libgit2/build && ${CMAKE} -DBUILD_SHARED_LIBS=OFF -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET="10.14" -DCMAKE_INSTALL_PREFIX=../../../ThirdParty/libgit2 ..
+	MAKE=/usr/local/bin/cmake PATH=/usr/local/bin:${PATH} cd submodules/libgit2/build && ${CMAKE} -j22 --build . && ${CMAKE} --build . -j22 --target install
+	MAKE=/usr/local/bin/cmake PATH=/usr/local/bin:${PATH} cd submodules/libgit2/build && ${CMAKE} --build . -j22 --target install
 
 deps: force
 	make fatlibsixel
@@ -149,5 +154,28 @@ deps: force
 	make fatlibssh2
 	make CoreParse
 	make NMSSH
+	make bindeps
+	make libgit2
        
+DepsIfNeeded: force
+	tools/rebuild-deps-if-needed
+
+powerline-extra-symbols: force
+	cp submodules/powerline-extra-symbols/src/*eps ThirdParty/PowerlineExtraSymbols/
+
+bindeps: SwiftyMarkdown Highlightr
+	cd BetterFontPicker && make
+	cd ColorPicker && make
+	cd SearchableComboListView && make
+
+SwiftyMarkdown: force
+	cd submodules/SwiftyMarkdown && xcodebuild
+	rm -rf ThirdParty/SwiftyMarkdown.framework
+	mv submodules/SwiftyMarkdown/build/Release/SwiftyMarkdown.framework ThirdParty/SwiftyMarkdown.framework
+
+Highlightr: force
+	cd submodules/Highlightr && xcodebuild -project Highlightr.xcodeproj -target Highlightr-macOS
+	rm -rf ThirdParty/Highlightr.framework
+	mv submodules/Highlightr/build/Release/Highlightr.framework ThirdParty/Highlightr.framework
+
 force:

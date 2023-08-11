@@ -13,6 +13,7 @@
 #import "iTerm2SharedARC-Swift.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermAnnouncementViewController.h"
+#import "iTermComposerManager.h"
 #import "iTermExpect.h"
 #import "iTermExpressionEvaluator.h"
 #import "iTermMultiServerJobManager.h"
@@ -219,18 +220,24 @@ extern NSString *const SESSION_ARRANGEMENT_SERVER_DICT;
     [self.textview scrollEnd];
 }
 
+- (id<iTermPopupWindowHosting>)popupHost {
+    NSResponder *responder = [self.view.window firstResponder];
+    while (responder) {
+        if ([responder conformsToProtocol:@protocol(iTermPopupWindowHosting)]) {
+            id<iTermPopupWindowHosting> host = (id<iTermPopupWindowHosting>)responder;
+            return host;
+        }
+        responder = responder.nextResponder;
+    }
+    return nil;
+}
+
 - (NSRect)popupWindowOriginRectInScreenCoords {
-    const int cx = [self.screen cursorX] - 1;
-    const int cy = [self.screen cursorY];
-    const CGFloat charWidth = [self.textview charWidth];
-    const CGFloat lineHeight = [self.textview lineHeight];
-    NSPoint p = NSMakePoint([iTermPreferences doubleForKey:kPreferenceKeySideMargins] + cx * charWidth,
-                            ([self.screen numberOfLines] - [self.screen height] + cy) * lineHeight);
-    const NSPoint origin = [self.textview.window pointToScreenCoords:[self.textview convertPoint:p toView:nil]];
-    return NSMakeRect(origin.x,
-                      origin.y,
-                      charWidth,
-                      lineHeight);
+    id<iTermPopupWindowHosting> host = [self popupHost];
+    if (!host) {
+        return [self textViewCursorFrameInScreenCoords];
+    }
+    return [host popupWindowHostingInsertionPointFrameInScreenCoordinates];
 }
 
 #pragma mark - Content Subscriptions
@@ -246,13 +253,10 @@ extern NSString *const SESSION_ARRANGEMENT_SERVER_DICT;
         screen_char_t continuation = { 0 };
         continuation.code = EOL_HARD;
         empty = [[ScreenCharArray alloc] initWithLine:&placeholder length:0 continuation:continuation];
+        [empty makeSafe];
     });
     // Dispatch because side-effects can't join the mutation queue.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        for (id<iTermContentSubscriber> subscriber in self.contentSubscribers) {
-            [subscriber deliver:empty metadata:iTermMetadataMakeImmutable(iTermMetadataDefault())];
-        }
-    });
+    [self publishScreenCharArray:empty metadata:iTermMetadataMakeImmutable(iTermMetadataDefault())];
 }
 
 - (void)publishScreenCharArray:(ScreenCharArray *)array
@@ -260,12 +264,51 @@ extern NSString *const SESSION_ARRANGEMENT_SERVER_DICT;
     if (self.contentSubscribers.count == 0) {
         return;
     }
+    [self publish:[PTYSessionPublishRequest requestWithArray:array metadata:metadata]];
+}
+
+- (void)publish:(PTYSessionPublishRequest *)request {
+    [_pendingPublishRequests addObject:request];
+    if (_havePendingPublish) {
+        return;
+    }
+    _havePendingPublish = YES;
     // Side-effects are not allowed to join the mutation thread so publish not as a side-effect.
     dispatch_async(dispatch_get_main_queue(), ^{
-        for (id<iTermContentSubscriber> subscriber in self.contentSubscribers) {
-            [subscriber deliver:array metadata:metadata];
-        }
+        [self sendPendingPublishRequests];
     });
+}
+
+- (void)sendPendingPublishRequests {
+    _havePendingPublish = NO;
+    DLog(@"Begin sending pending publish requests. Queue size is %@", @(_pendingPublishRequests.count));
+    iTermDeadlineMonitor *deadline = [[iTermDeadlineMonitor alloc] initWithDuration:0.1];
+    while (_pendingPublishRequests.count && deadline.pending) {
+        PTYSessionPublishRequest *request = _pendingPublishRequests.firstObject;
+        [_pendingPublishRequests removeObjectAtIndex:0];
+        for (id<iTermContentSubscriber> subscriber in self.contentSubscribers) {
+            [subscriber deliver:request.array metadata:request.metadata];
+        }
+    }
+    DLog(@"Done sending pending publish requests. Queue size is %@", @(_pendingPublishRequests.count));
+}
+
+@end
+
+
+@implementation PTYSessionPublishRequest
+
++ (instancetype)requestWithArray:(ScreenCharArray *)sca metadata:(iTermImmutableMetadata)metadata {
+    PTYSessionPublishRequest *request = [[PTYSessionPublishRequest alloc] init];
+    [sca makeSafe];
+    request->_array = sca;
+    iTermImmutableMetadataRetain(metadata);
+    request->_metadata = metadata;
+    return request;
+}
+
+- (void)dealloc {
+    iTermImmutableMetadataRelease(_metadata);
 }
 
 @end

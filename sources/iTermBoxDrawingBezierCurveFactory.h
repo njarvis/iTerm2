@@ -14,10 +14,12 @@
 + (void)drawCodeInCurrentContext:(unichar)code
                         cellSize:(NSSize)cellSize
                            scale:(CGFloat)scale
+                        isPoints:(BOOL)isPoints
                           offset:(CGPoint)offset
                            color:(CGColorRef)color
         useNativePowerlineGlyphs:(BOOL)useNativePowerlineGlyphs;
 
 + (BOOL)isPowerlineGlyph:(unichar)code;
++ (BOOL)isDoubleWidthPowerlineGlyph:(unichar)code;
 
 @end

@@ -247,6 +247,7 @@ static dispatch_queue_t iTermPathFinderQueue(void) {
 
 #pragma mark - Line Numbers
 
+// Note that this can only see stuff *after* the filename.
 - (NSString *)columnAndLineNumberFromChunks:(NSArray<NSString *> *)afterChunks {
     NSString *suffix = [afterChunks componentsJoinedByString:@""];
     NSArray<NSString *> *regexes = @[ @"^(:\\d+:\\d+)",
@@ -254,7 +255,9 @@ static dispatch_queue_t iTermPathFinderQueue(void) {
                                       @"^(\\[\\d+, ?\\d+])",
                                       @"^(\", line \\d+, column \\d+)",
                                       @"^(\", line \\d+, in)",
-                                      @"^(\\(\\d+, ?\\d+\\))"];
+                                      @"^(\\(\\d+, ?\\d+\\))",
+                                      @"^(\\(\\d+\\))",
+                                      @"^( line \\d+:$)"];
     // NOTE: If you change this also update regexes in iTermPathCleaner.
     for (NSString *regex in regexes) {
         NSString *value = [suffix stringByMatching:regex capture:1];

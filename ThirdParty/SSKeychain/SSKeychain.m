@@ -17,12 +17,8 @@ NSString *const kSSKeychainLabelKey = @"labl";
 NSString *const kSSKeychainLastModifiedKey = @"mdat";
 NSString *const kSSKeychainWhereKey = @"svce";
 
-#if __IPHONE_4_0 && TARGET_OS_IPHONE
-    static CFTypeRef SSKeychainAccessibilityType = NULL;
-#endif
-
+static CFTypeRef SSKeychainAccessibilityType = NULL;
 static BOOL SSKeychainSynchronized = NO;
-static NSString *SSKeychainPathToKeychain = nil;
 
 @implementation SSKeychain
 
@@ -34,16 +30,18 @@ static NSString *SSKeychainPathToKeychain = nil;
     return SSKeychainSynchronized;
 }
 
-+ (void)setPathToKeychain:(NSString *)pathToKeychain {
-    SSKeychainPathToKeychain = [pathToKeychain copy];
-}
-
-+ (NSString *)pathToKeychain {
-    return SSKeychainPathToKeychain;
-}
-
 + (NSString *)passwordForService:(NSString *)serviceName account:(NSString *)account error:(NSError *__autoreleasing *)error {
+    return [self passwordForService:serviceName account:account label:nil error:error];
+}
+
++ (NSString *)passwordForService:(NSString *)serviceName
+                         account:(NSString *)account
+                           label:(NSString *)label
+                           error:(NSError *__autoreleasing *)error {
     SSKeychainQuery *query = [[SSKeychainQuery alloc] init];
+    if (label) {
+        query.label = label;
+    }
     query.service = serviceName;
     query.account = account;
     [self updateQuery:query];
@@ -58,7 +56,14 @@ static NSString *SSKeychainPathToKeychain = nil;
 
 
 + (BOOL)deletePasswordForService:(NSString *)serviceName account:(NSString *)account error:(NSError *__autoreleasing *)error {
+    return [self deletePasswordForService:serviceName account:account label:nil error:error];
+}
+
++ (BOOL)deletePasswordForService:(NSString *)serviceName account:(NSString *)account label:(NSString *)label error:(NSError *__autoreleasing *)error {
     SSKeychainQuery *query = [[SSKeychainQuery alloc] init];
+    if (label) {
+        query.label = label;
+    }
     query.service = serviceName;
     query.account = account;
     [self updateQuery:query];
@@ -72,7 +77,14 @@ static NSString *SSKeychainPathToKeychain = nil;
 
 
 + (BOOL)setPassword:(NSString *)password forService:(NSString *)serviceName account:(NSString *)account error:(NSError *__autoreleasing *)error {
+    return [self setPassword:password forService:serviceName account:account label:nil error:error];
+}
+
++ (BOOL)setPassword:(NSString *)password forService:(NSString *)serviceName account:(NSString *)account label:(NSString *)label error:(NSError *__autoreleasing *)error {
     SSKeychainQuery *query = [[SSKeychainQuery alloc] init];
+    if (label) {
+        query.label = label;
+    }
     query.service = serviceName;
     query.account = account;
     query.password = password;
@@ -94,7 +106,6 @@ static NSString *SSKeychainPathToKeychain = nil;
 }
 
 
-#if __IPHONE_4_0 && TARGET_OS_IPHONE
 + (CFTypeRef)accessibilityType {
     return SSKeychainAccessibilityType;
 }
@@ -107,15 +118,11 @@ static NSString *SSKeychainPathToKeychain = nil;
     }
     SSKeychainAccessibilityType = accessibilityType;
 }
-#endif
 
 + (void)updateQuery:(SSKeychainQuery *)query {
     if (self.synchronized) {
         query.synchronizationMode = SSKeychainQuerySynchronizationModeYes;
         return;
-    }
-    if (self.pathToKeychain) {
-        query.pathToKeychain = self.pathToKeychain;
     }
 }
 

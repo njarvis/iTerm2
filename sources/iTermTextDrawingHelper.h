@@ -17,14 +17,25 @@
 
 @class iTermColorMap;
 @class iTermExternalAttributeIndex;
+@class iTermFontTable;
 @protocol iTermExternalAttributeIndexReading;
 @class iTermFindOnPageHelper;
+@class iTermOffscreenCommandLine;
 @class iTermSelection;
 @class iTermTextExtractor;
+@protocol FontProviderProtocol;
 @class PTYFontInfo;
+@class ScreenCharArray;
 @protocol VT100ScreenMarkReading;
 
+typedef NS_ENUM(NSUInteger, iTermMarkIndicatorType) {
+    iTermMarkIndicatorTypeSuccess,
+    iTermMarkIndicatorTypeError,
+    iTermMarkIndicatorTypeOther
+};
+
 BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
+extern const CGFloat iTermOffscreenCommandLineVerticalPadding;
 
 @interface iTermTextDrawingHelper : NSObject
 
@@ -132,7 +143,7 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 @property(nonatomic, assign) double transparencyAlpha;
 
 // Is the cursor visible?
-@property(nonatomic, assign) BOOL cursorVisible;
+@property(nonatomic, assign) BOOL isCursorVisible;
 
 // What kind of cursor to draw.
 @property(nonatomic, assign) ITermCursorType cursorType;
@@ -229,6 +240,8 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 // Is bold text allowed? If so, then double struck text may be used when a bold version of the font
 // is not available.
 @property(nonatomic, assign) BOOL boldAllowed;
+@property(nonatomic, assign) BOOL italicAllowed;
+@property(nonatomic, strong) id<FontProviderProtocol> fontProvider;
 
 // Version of unicode. Determines character widths.
 @property(nonatomic, assign) NSInteger unicodeVersion;
@@ -259,6 +272,20 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 
 @property (nonatomic, readonly) NSColor *blockCursorFillColorRespectingSmartSelection;
 @property (nonatomic) BOOL softAlternateScreenMode;
+@property (nonatomic, strong) iTermOffscreenCommandLine *offscreenCommandLine;
+@property (nonatomic, readonly) NSRect offscreenCommandLineFrame;
+@property (nonatomic, readonly) NSColor *offscreenCommandLineBackgroundColor;
+@property (nonatomic, readonly) NSColor *offscreenCommandLineOutlineColor;
+@property (nonatomic) BOOL useSelectedTextColor;
+@property (nonatomic, strong) iTermFontTable *fontTable;
+@property (nonatomic) VT100GridRange linesToSuppress;
+
++ (NSColor *)colorForMarkType:(iTermMarkIndicatorType)type;
++ (NSColor *)colorForLineStyleMark:(iTermMarkIndicatorType)type backgroundColor:(NSColor *)bgColor;
+
++ (NSRect)offscreenCommandLineFrameForVisibleRect:(NSRect)visibleRect
+                                         cellSize:(NSSize)cellSize
+                                         gridSize:(VT100GridSize)gridSize;
 
 // imageSize: size of image to draw
 // destinationRect: rect bounding the region of a scrollview's content view (i.e., very tall view) that's being drawn
@@ -300,6 +327,7 @@ BOOL CheckFindMatchAtIndex(NSData *findMatches, int index);
 
 // Draw timestamps.
 - (void)drawTimestampsWithVirtualOffset:(CGFloat)virtualOffset;
+- (void)drawOffscreenCommandLineWithVirtualOffset:(CGFloat)virtualOffset;
 
 - (VT100GridCoordRange)coordRangeForRect:(NSRect)rect;
 

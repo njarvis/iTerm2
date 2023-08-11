@@ -103,6 +103,56 @@ extension String {
     var pathExtension: String {
         return (self as NSString).pathExtension
     }
+
+    func substituting(_ substitutions: [String: String]) -> String {
+        var temp = self
+        for (key, value) in substitutions {
+            temp = temp.replacingOccurrences(of: key, with: value)
+        }
+        return temp
+    }
+
+    var base64Decoded: String? {
+        guard let data = Data(base64Encoded: self) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    var base64Encoded: String {
+        return Data(self.utf8).base64EncodedString()
+    }
+}
+
+@objc
+extension NSString {
+    @objc(stringWithHumanReadableSize:)
+    static func stringWithHumanReadableSize(_ value: UInt64) -> String {
+        if value < 1024 {
+            return String(value) + " bytes"
+        }
+        var num = value
+        var pow = 0
+        var exact = true
+        while num >= 1024 * 1024 {
+            pow += 1
+            if num % 1024 != 0 {
+                exact = false
+            }
+            num /= 1024
+        }
+        // Show 2 fraction digits, always rounding downwards. Printf rounds floats to the nearest
+        // representable value, so do the calculation with integers until we get 100-fold the desired
+        // value, and then switch to float.
+        if 100 * num % 1024 != 0 {
+            exact = false
+        }
+        num = 100 * num / 1024
+        let iecPrefixes = [ "Ki", "Mi", "Gi", "Ti", "Pi", "Ei" ]
+        let formatted = String(format: "%.2f", Double(num) / 100.0)
+        return "\(exact ? "" : "≈")\(formatted) \(iecPrefixes[pow])"
+    }
+
 }
 
 extension Substring {
@@ -113,5 +163,6 @@ extension Substring {
         return (self[..<range.lowerBound], self[range.upperBound...])
     }
 }
+
 
 

@@ -11,6 +11,7 @@
 #import "iTermKeyboardHandler.h"
 #import "iTermLogicalMovementHelper.h"
 #import "iTermObject.h"
+#import "iTermPopupWindowController.h"
 #import "iTermSemanticHistoryController.h"
 #import "iTermTextDrawingHelper.h"
 #import "LineBuffer.h"
@@ -29,6 +30,7 @@
 @class iTermExpect;
 @class iTermFindCursorView;
 @class iTermFindOnPageHelper;
+@class iTermFontTable;
 @class iTermImageWrapper;
 @class iTermQuickLookController;
 @class iTermSelection;
@@ -58,7 +60,10 @@ typedef NS_ENUM(NSInteger, PTYCharType) {
     CHARTYPE_OTHER,       // Symbols, etc. Anything that doesn't fall into the other categories.
 };
 
+extern NSTimeInterval PTYTextViewHighlightLineAnimationDuration;
+
 extern NSNotificationName iTermPortholesDidChange;
+extern NSNotificationName PTYTextViewWillChangeFontNotification;
 
 @protocol PTYTextViewDelegate <NSObject, iTermBadgeLabelDelegate, iTermObject>
 
@@ -132,6 +137,7 @@ extern NSNotificationName iTermPortholesDidChange;
                                        title:(NSString *)title;
 - (void)textViewPasteSpecialWithStringConfiguration:(NSString *)configuration
                                       fromSelection:(BOOL)fromSelection;
+- (void)textViewInvokeScriptFunction:(NSString *)function;
 - (void)textViewEditSession;
 - (void)textViewToggleBroadcastingInput;
 - (void)textViewCloseWithConfirmation;
@@ -162,7 +168,7 @@ extern NSNotificationName iTermPortholesDidChange;
                           button:(MouseButtonNumber)button
                       coordinate:(VT100GridCoord)coord
                            point:(NSPoint)point
-                          deltaY:(CGFloat)deltaY
+                           delta:(CGSize)delta
         allowDragBeforeMouseDown:(BOOL)allowDragBeforeMouseDown
                         testOnly:(BOOL)testOnly;
 
@@ -198,6 +204,7 @@ extern NSNotificationName iTermPortholesDidChange;
 // The background color in the color map changed.
 - (void)textViewBackgroundColorDidChangeFrom:(NSColor *)before to:(NSColor *)after;
 - (void)textViewForegroundColorDidChangeFrom:(NSColor *)before to:(NSColor *)after;
+- (void)textViewCursorColorDidChangeFrom:(NSColor *)before to:(NSColor *)after;
 - (void)textViewTransparencyDidChange;
 - (void)textViewProcessedBackgroundColorDidChange;
 
@@ -268,6 +275,17 @@ extern NSNotificationName iTermPortholesDidChange;
 - (void)textViewEnterShortcutNavigationMode;
 - (void)textViewExitShortcutNavigationMode;
 - (void)textViewWillHandleMouseDown:(NSEvent *)event;
+- (BOOL)textViewPasteFiles:(NSArray<NSString *> *)filenames;
+- (NSString *)textViewNaturalLanguageQuery;
+- (void)textViewPerformNaturalLanguageQuery;
+- (void)textViewUpdateTrackingAreas;
+- (BOOL)textViewShouldShowOffscreenCommandLine;
+- (BOOL)textViewShouldUseSelectedTextColor;
+- (void)textViewOpenComposer:(NSString *)string;
+- (BOOL)textViewIsAutoComposerOpen;
+- (VT100GridRange)textViewLinesToSuppressDrawing;
+- (NSRect)textViewCursorFrameInScreenCoords;
+- (void)textViewDidReceiveSingleClick;
 @end
 
 @interface iTermHighlightedRow : NSObject
@@ -358,15 +376,7 @@ extern NSNotificationName iTermPortholesDidChange;
 // Returns the entire content of the view as a string.
 @property(nonatomic, readonly) NSString *content;
 
-// Regular and non-ascii fonts.
-@property(nonatomic, readonly) NSFont *font;
-@property(nonatomic, readonly) NSFont *nonAsciiFont;
-
-@property(nonatomic, readonly) PTYFontInfo *primaryFont;
-@property(nonatomic, readonly) PTYFontInfo *secondaryFont;  // non-ascii font, only used if self.useNonAsciiFont is set.
-
-// Returns the non-ascii font, even if it's not being used.
-@property(nonatomic, readonly) NSFont *nonAsciiFontEvenIfNotUsed;
+@property(nonatomic, readonly) iTermFontTable *fontTable;
 
 // Size of a character.
 @property(nonatomic, readonly) double lineHeight;
@@ -495,7 +505,7 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
 
 // Copy with or without styles, as set by user defaults. Not for use when a copy item in the menu is invoked.
 - (void)copySelectionAccordingToUserPreferences;
-- (void)copyString:(NSString *)string;
+- (BOOL)copyString:(NSString *)string;
 
 // Copy the current selection to the pasteboard.
 - (void)copy:(id)sender;
@@ -517,11 +527,11 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
 - (void)setSemanticHistoryPrefs:(NSDictionary *)prefs;
 
 // Various accessors (TODO: convert as many as possible into properties)
-- (void)setFont:(NSFont*)aFont
-    nonAsciiFont:(NSFont *)nonAsciiFont
-    horizontalSpacing:(CGFloat)horizontalSpacing
-    verticalSpacing:(CGFloat)verticalSpacing;
+- (void)setFontTable:(iTermFontTable *)fontTable
+   horizontalSpacing:(CGFloat)horizontalSpacing
+     verticalSpacing:(CGFloat)verticalSpacing;
 - (NSRect)scrollViewContentSize;
+- (NSRect)offscreenCommandLineFrameForView:(NSView *)view;
 - (void)setAntiAlias:(BOOL)asciiAA nonAscii:(BOOL)nonAsciiAA;
 
 // Update the scroller color for light or dark backgrounds.
@@ -550,6 +560,7 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
 - (void)scrollEnd;
 - (void)scrollToAbsoluteOffset:(long long)absOff height:(int)height;
 - (void)scrollToSelection;
+- (void)lockScroll;
 
 // Saving/printing
 - (void)saveDocumentAs:(id)sender;
@@ -624,10 +635,11 @@ scrollToFirstResult:(BOOL)scrollToFirstResult;
                          suffix:(NSString *)suffix
                      completion:(void (^)(BOOL ok))completion;
 
-- (PTYFontInfo*)getFontForChar:(UniChar)ch
-                     isComplex:(BOOL)isComplex
-                    renderBold:(BOOL*)renderBold
-                  renderItalic:(BOOL*)renderItalic;
+- (PTYFontInfo *)getFontForChar:(UniChar)ch
+                      isComplex:(BOOL)isComplex
+                     renderBold:(BOOL *)renderBold
+                   renderItalic:(BOOL *)renderItalic
+                       remapped:(UTF32Char *)ch;
 
 - (NSColor*)colorForCode:(int)theIndex
                    green:(int)green
@@ -684,7 +696,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult;
 // Turns on the flicker fixer (if enabled) while drawing.
 - (void)performBlockWithFlickerFixerGrid:(void (NS_NOESCAPE ^)(void))block;
 
-- (id)contentWithAttributes:(BOOL)attributes;
+- (id)contentWithAttributes:(BOOL)attributes timestamps:(BOOL)timestamps;
 - (void)setUseBoldColor:(BOOL)flag brighten:(BOOL)brighten;
 
 - (void)drawRect:(NSRect)rect inView:(NSView *)view;
@@ -692,6 +704,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult;
 - (void)setAlphaValue:(CGFloat)alphaValue NS_UNAVAILABLE;
 - (NSRect)rectForCoord:(VT100GridCoord)coord;
 - (void)updateSubviewFrames;
+- (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProviderUsingProcessedColors:(BOOL)processed;
 
 #pragma mark - Testing only
 

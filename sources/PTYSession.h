@@ -38,6 +38,7 @@ extern NSString *const PTYSessionCreatedNotification;
 extern NSString *const PTYSessionTerminatedNotification;
 extern NSString *const PTYSessionRevivedNotification;
 extern NSString *const iTermSessionWillTerminateNotification;
+extern NSString *const PTYSessionDidResizeNotification;
 
 @class CapturedOutput;
 @protocol ExternalSearchResultsController;
@@ -48,6 +49,7 @@ extern NSString *const iTermSessionWillTerminateNotification;
 @class iTermEchoProbe;
 @class iTermImageWrapper;
 @class iTermKeyBindingAction;
+@class iTermSSHReconnectionInfo;
 @class iTermScriptHistoryEntry;
 @class iTermStatusBarViewController;
 @class iTermSwiftyStringGraph;
@@ -179,10 +181,9 @@ typedef enum {
 - (void)unmaximize;
 
 // Tmux window number (a tmux window is like a tab).
-- (void)setTmuxFont:(NSFont *)font
-       nonAsciiFont:(NSFont *)nonAsciiFont
-           hSpacing:(double)horizontalSpacing
-           vSpacing:(double)verticalSpacing;
+- (void)setTmuxFontTable:(iTermFontTable *)fontTable
+                hSpacing:(double)horizontalSpacing
+                vSpacing:(double)verticalSpacing;
 
 // The tmux window title changed.
 - (void)sessionDidChangeTmuxWindowNameTo:(NSString *)newName;
@@ -199,7 +200,10 @@ typedef enum {
 - (BOOL)session:(PTYSession *)session shouldAllowDrag:(id<NSDraggingInfo>)sender;
 - (BOOL)session:(PTYSession *)session performDragOperation:(id<NSDraggingInfo>)sender;
 
-// Indicates if the splits are currently being dragged. Affects how resizing works for tmux tabs.
+// Indicates if the splits in a tmux tab are currently being dragged. Affects how resizing works for tmux tabs.
+- (BOOL)sessionBelongsToTmuxTabWhoseSplitsAreBeingDragged;
+
+// As above but for all tabs, not just tmux.
 - (BOOL)sessionBelongsToTabWhoseSplitsAreBeingDragged;
 
 // User double clicked on title bar
@@ -280,7 +284,7 @@ backgroundColor:(NSColor *)backgroundColor;
 - (void)sessionClose:(PTYSession *)session;
 - (void)sessionProcessInfoProviderDidChange:(PTYSession *)session;
 - (void)sessionSwapWithSessionInDirection:(int)direction;
-
+- (BOOL)sessionBelongsToHotkeyWindow:(PTYSession *)session;
 @end
 
 @class SessionView;
@@ -306,6 +310,8 @@ backgroundColor:(NSColor *)backgroundColor;
 @property(nonatomic, assign) BOOL active;
 
 @property(nonatomic, assign) BOOL alertOnNextMark;
+// This comes from prefs and is kept up to date.
+@property(nonatomic, readonly) BOOL alertOnMarksinOffscreenSessions;
 @property(nonatomic, copy) NSColor *tabColor;
 
 @property(nonatomic, readonly) DVR *dvr;
@@ -573,6 +579,7 @@ backgroundColor:(NSColor *)backgroundColor;
 @property(nonatomic, copy) NSDictionary *foundingArrangement;
 @property(nonatomic, readonly) id<ExternalSearchResultsController> externalSearchResultsController;
 @property(nonatomic, readonly) SSHIdentity *sshIdentity;
+@property(nonatomic, readonly) NSArray<iTermSSHReconnectionInfo *> *sshCommandLineSequence;
 @property(nonatomic, readonly) id<ProcessInfoProvider> processInfoProvider;
 
 #pragma mark - methods
@@ -608,6 +615,7 @@ backgroundColor:(NSColor *)backgroundColor;
 
 // Begin showing DVR frames from some live session.
 - (void)setDvr:(DVR*)dvr liveSession:(PTYSession*)liveSession;
+- (void)clearInstantReplay;
 
 - (void)willRetireSyntheticSession:(PTYSession *)syntheticSession;
 
@@ -657,6 +665,7 @@ backgroundColor:(NSColor *)backgroundColor;
               isUTF8:(BOOL)isUTF8
        substitutions:(NSDictionary *)substitutions
          arrangement:(NSString *)arrangement
+     fromArrangement:(BOOL)fromArrangement
           completion:(void (^)(BOOL))completion;
 
 // This is an alternative to runCommandWithOldCwd and startProgram. It attaches
@@ -699,9 +708,10 @@ backgroundColor:(NSColor *)backgroundColor;
 // NO for `forceEncoding` and the terminal's encoding will be used instead of `optionalEncoding`.
 - (void)writeTaskNoBroadcast:(NSString *)string
                     encoding:(NSStringEncoding)optionalEncoding
-               forceEncoding:(BOOL)forceEncoding;
+               forceEncoding:(BOOL)forceEncoding
+                   reporting:(BOOL)reporting;
 
-- (void)writeLatin1EncodedData:(NSData *)data broadcastAllowed:(BOOL)broadcast;
+- (void)writeLatin1EncodedData:(NSData *)data broadcastAllowed:(BOOL)broadcast reporting:(BOOL)reporting;
 
 - (void)updateViewBackgroundImage;
 - (void)invalidateBlend;
@@ -729,6 +739,7 @@ backgroundColor:(NSColor *)backgroundColor;
 // of this session based on rows/cols, and taking into account the presence of
 // a scrollbar.
 - (NSSize)idealScrollViewSizeWithStyle:(NSScrollerStyle)scrollerStyle;
+- (void)lockScroll;
 
 // Update the scrollbar's visibility and style. Returns YES if a change was made.
 // This is the one and only way that scrollbars should be changed after initialization. It ensures
@@ -762,10 +773,9 @@ backgroundColor:(NSColor *)backgroundColor;
 - (NSString*)ansiColorsMatchingForeground:(NSDictionary*)fg andBackground:(NSDictionary*)bg inBookmark:(Profile*)aDict;
 
 - (void)changeFontSizeDirection:(int)dir;
-- (void)setFont:(NSFont*)font
-    nonAsciiFont:(NSFont*)nonAsciiFont
-    horizontalSpacing:(CGFloat)horizontalSpacing
-    verticalSpacing:(CGFloat)verticalSpacing;
+- (void)setFontTable:(iTermFontTable *)fontTable
+   horizontalSpacing:(CGFloat)horizontalSpacing
+     verticalSpacing:(CGFloat)verticalSpacing;
 
 // Assigns a new GUID to the session so that changes to the bookmark will not
 // affect it. Returns the GUID of a divorced bookmark. Does nothing if already
@@ -829,6 +839,9 @@ backgroundColor:(NSColor *)backgroundColor;
 - (void)previousAnnotation;
 - (void)nextAnnotation;
 - (void)scrollToMark:(id<iTermMark>)mark;
+- (void)scrollToMarkWithGUID:(NSString *)guid;
+- (void)saveScrollPositionWithName:(NSString *)name;
+- (void)renameMark:(id<VT100ScreenMarkReading>)mark to:(NSString *)newName;
 
 // Select this session and tab and bring window to foreground.
 - (void)reveal;
@@ -849,6 +862,12 @@ backgroundColor:(NSColor *)backgroundColor;
 
 - (BOOL)encodeArrangementWithContents:(BOOL)includeContents
                               encoder:(id<iTermEncoderAdapter>)encoder;
+
+- (BOOL)encodeArrangementWithContents:(BOOL)includeContents
+                              encoder:(id<iTermEncoderAdapter>)encoder
+                   replacementProfile:(Profile *)replacementProfile
+                          saveProgram:(BOOL)saveProgram
+                         pendingJumps:(NSArray<iTermSSHReconnectionInfo *> *)pendingJumps;
 
 - (void)toggleTmuxZoom;
 - (void)forceTmuxDetach;
@@ -912,7 +931,6 @@ backgroundColor:(NSColor *)backgroundColor;
 - (void)updateStatusBarStyle;
 - (BOOL)checkForCyclesInSwiftyStrings;
 - (void)applyAction:(iTermAction *)action;
-- (void)didUpdateCurrentDirectory;
 - (BOOL)sessionModeConsumesEvent:(NSEvent *)event;
 - (Profile *)profileForSplit;
 - (void)compose;
@@ -925,6 +943,8 @@ backgroundColor:(NSColor *)backgroundColor;
 - (void)userInitiatedReset;
 - (void)resetForRelaunch;
 - (void)resetMode;
+- (void)enclosingTabWillBeDeselected;
+- (void)enclosingTabDidBecomeSelected;
 
 #pragma mark - API
 

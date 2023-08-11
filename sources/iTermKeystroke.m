@@ -7,6 +7,7 @@
 
 #import "iTermKeystroke.h"
 
+#import "iTermPreferences.h"
 #import "DebugLogging.h"
 #import "NSArray+iTerm.h"
 #import "NSDictionary+iTerm.h"
@@ -279,6 +280,17 @@ const int iTermKeystrokeKeyCodeUnavailable = 0;
     return [NSString stringWithFormat:@":0x%x:0x%llx", self.modifiedCharacter, flags];
 }
 
+- (NSString *)portableSerialized {
+    if (_characterIsModified) {
+        return [self modifiedSerialized];
+    }
+    if (self.virtualKeyCode == iTermKeystrokeKeyCodeUnavailable) {
+        return [self legacySerialized];
+    }
+    return [NSString stringWithFormat: @"*-0x%llx-0x%x",
+            (unsigned long long)self.modifierFlags, self.virtualKeyCode];
+}
+
 - (NSString *)serialized {
     if (_characterIsModified) {
         return [self modifiedSerialized];
@@ -292,6 +304,25 @@ const int iTermKeystrokeKeyCodeUnavailable = 0;
 
 - (NSString *)keyInBindingDictionary:(NSDictionary<NSString *, NSDictionary *> *)dict {
     if (![dict isKindOfClass:[NSDictionary class]]) {
+        return nil;
+    }
+    if ([iTermPreferences boolForKey:kPreferenceKeyLanguageAgnosticKeyBindings] && self.hasVirtualKeyCode) {
+        if (dict[self.modifiedSerialized]) {
+            // Note that we don't try to support language-agnostic key bindings when there's a
+            // modified shortcut matching this keystroke. Otherwise, tmux shortcuts would never work
+            // since they always lack a virtual keycode.
+            return self.modifiedSerialized;
+        }
+
+        NSString *portableSerialized = self.portableSerialized;
+        @autoreleasepool {
+            for (NSString *key in dict) {
+                iTermKeystroke *candidate = [[iTermKeystroke alloc] initWithString:key];
+                if ([candidate.portableSerialized isEqualToString:portableSerialized]) {
+                    return key;
+                }
+            }
+        }
         return nil;
     }
     id result;

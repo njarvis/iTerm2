@@ -49,7 +49,6 @@
 int kVT100ScreenMinColumns = 2;
 int kVT100ScreenMinRows = 2;
 
-
 const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 
@@ -108,9 +107,11 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 }
 
 - (void)userDidPressReturn {
+    DLog(@"userDidPressReturn");
     [self mutateAsynchronously:^(VT100Terminal * _Nonnull terminal,
                                  VT100ScreenMutableState * _Nonnull mutableState,
                                  id<VT100ScreenDelegate>  _Nonnull delegate) {
+        DLog(@"mutableState.fakePromptDetectedAbsLine=%@", @(mutableState.fakePromptDetectedAbsLine));
         if (mutableState.fakePromptDetectedAbsLine >= 0) {
             [mutableState didInferEndOfCommand];
         }
@@ -140,7 +141,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (NSSize)viewSize {
     NSSize cellSize = [delegate_ screenCellSize];
-    VT100GridSize gridSize = _state.currentGrid.size;
+    VT100GridSize gridSize = self.size;
     return NSMakeSize(cellSize.width * gridSize.width, cellSize.height * gridSize.height);
 }
 
@@ -277,6 +278,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (ScreenCharArray *)screenCharArrayForLine:(int)line {
     return [_state screenCharArrayForLine:line];
+}
+
+- (NSDate *)dateForLine:(int)line {
+    return [_state dateForLine:line];
 }
 
 - (ScreenCharArray *)screenCharArrayAtScreenIndex:(int)index {
@@ -575,6 +580,77 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     return [_state coordRangeForInterval:mark.entry.interval];
 }
 
+- (BOOL)isAtCommandPrompt {
+    id<VT100ScreenMarkReading> mark = [self screenMarkBeforeAbsLine:self.numberOfLines + _state.totalScrollbackOverflow + 1];
+    if (!mark) {
+        DLog(@"No preceding mark");
+        return NO;
+    }
+    const VT100GridAbsCoordRange zero = VT100GridAbsCoordRangeMake(0, 0, 0, 0);
+    const BOOL runningCommand = VT100GridAbsCoordRangeEquals(_state.currentPromptRange, zero);
+    return !runningCommand;
+}
+
+- (iTermOffscreenCommandLine *)offscreenCommandLineBefore:(int)line {
+    if (line >= _state.numberOfScrollbackLines && _state.terminalSoftAlternateScreenMode) {
+        return nil;
+    }
+    id<VT100ScreenMarkReading> mark = [self screenMarkBeforeAbsLine:line + _state.totalScrollbackOverflow + 1];
+    if (!mark) {
+        return nil;
+    }
+    if (!mark.hasCode) {
+        return nil;
+    }
+    const long long absLine = [_state absCoordRangeForInterval:mark.entry.interval].start.y;
+    if (absLine >= _state.totalScrollbackOverflow + _state.numberOfScrollbackLines) {
+        return nil;
+    }
+    if (absLine < _state.totalScrollbackOverflow) {
+        return nil;
+    }
+    if (absLine - _state.totalScrollbackOverflow == line) {
+        return nil;
+    }
+    if (VT100GridCoordRangeHeight([self rangeOfOutputForCommandMark:mark]) <= 3) {
+        // The UI will cover up the command output so it's counterproductive to show it.
+        return nil;
+    }
+    const int commandLineNumber = absLine - _state.totalScrollbackOverflow;
+    ScreenCharArray *sca = [_state screenCharArrayForLine:commandLineNumber];
+    NSDate *date = nil;
+    const NSTimeInterval timestamp = [_state metadataOnLine:commandLineNumber].timestamp;
+    if (timestamp) {
+        date = [NSDate dateWithTimeIntervalSinceReferenceDate:timestamp];
+    }
+    return [[[iTermOffscreenCommandLine alloc] initWithCharacters:sca
+                                               absoluteLineNumber:absLine
+                                                             date:date
+                                                             mark:mark] autorelease];
+}
+
+- (NSInteger)numberOfCellsUsedInRange:(VT100GridRange)range {
+    VT100GridRange historyRange;
+    VT100GridRange screenRange;
+
+    const NSInteger numberOfScrollbackLines = self.numberOfScrollbackLines;
+    if (range.location < numberOfScrollbackLines) {
+        historyRange.location = range.location;
+        historyRange.length = numberOfScrollbackLines - range.location;
+
+        screenRange.location = 0;
+        screenRange.length = range.length - historyRange.length;
+    } else {
+        historyRange = VT100GridRangeMake(0, 0);
+
+        screenRange.location = range.location - numberOfScrollbackLines;
+        screenRange.length = range.length;
+    }
+
+    return ([_state.linebuffer numberOfCellsUsedInWrappedLineRange:historyRange width:self.width] +
+            [self.currentGrid numberOfCellsUsedInRange:screenRange]);
+}
+
 - (NSArray *)charactersWithNotesOnLine:(int)line {
     NSMutableArray *result = [NSMutableArray array];
     Interval *interval = [_state intervalForGridCoordRange:VT100GridCoordRangeMake(0,
@@ -635,6 +711,15 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
             }
         }
         objects = [enumerator nextObject];
+    }
+    return nil;
+}
+
+- (id<VT100ScreenMarkReading>)namedMarkWithGUID:(NSString *)guid {
+    for (id<VT100ScreenMarkReading> mark in _state.namedMarks) {
+        if ([mark.guid isEqualToString:guid]) {
+            return mark;
+        }
     }
     return nil;
 }
@@ -761,6 +846,12 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     return [_state markOnLine:line];
 }
 
+- (void)removeNamedMark:(id<VT100ScreenMarkReading>)mark {
+    [self mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
+        [mutableState removeNamedMark:(VT100ScreenMark *)mark.progenitor];
+    }];
+}
+
 - (NSArray<id<VT100ScreenMarkReading>> *)lastMarks {
     NSEnumerator *enumerator = [_state.intervalTree reverseLimitEnumerator];
     return [self firstMarkBelongingToAnyClassIn:@[ [VT100ScreenMark class] ]
@@ -795,11 +886,11 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     return objects;
 }
 
-- (long long)lineNumberOfMarkBeforeAbsLine:(long long)absLine {
+- (id<VT100ScreenMarkReading>)screenMarkBeforeAbsLine:(long long)absLine {
     const long long overflow = self.totalScrollbackOverflow;
     const long long line = absLine - overflow;
     if (line < 0 || line > INT_MAX) {
-        return -1;
+        return nil;
     }
     Interval *interval = [_state intervalForGridCoordRange:VT100GridCoordRangeMake(0, line, 0, line)];
     NSEnumerator *enumerator = [_state.intervalTree reverseLimitEnumeratorAt:interval.limit];
@@ -808,12 +899,20 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
         for (id object in objects) {
             if ([object isKindOfClass:[VT100ScreenMark class]]) {
                 id<VT100ScreenMarkReading> mark = object;
-                return overflow + [_state coordRangeForInterval:mark.entry.interval].start.y;
+                return mark;
             }
         }
         objects = [enumerator nextObject];
     }
-    return -1;
+    return nil;
+}
+
+- (long long)lineNumberOfMarkBeforeAbsLine:(long long)absLine {
+    id<VT100ScreenMarkReading> mark = [self screenMarkBeforeAbsLine:absLine];
+    if (!mark) {
+        return -1;
+    }
+    return [_state absCoordRangeForInterval:mark.entry.interval].start.y;
 }
 
 - (long long)lineNumberOfMarkAfterAbsLine:(long long)absLine {
@@ -907,6 +1006,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 }
 
 - (VT100GridCoordRange)textViewRangeOfOutputForCommandMark:(id<VT100ScreenMarkReading>)mark {
+    return [self rangeOfOutputForCommandMark:mark];
+}
+
+- (VT100GridCoordRange)rangeOfOutputForCommandMark:(id<VT100ScreenMarkReading>)mark {
     NSEnumerator *enumerator = [_state.intervalTree forwardLimitEnumeratorAt:mark.entry.interval.limit];
     NSArray *objects;
     do {
@@ -1082,6 +1185,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
                kScreenStatePrimaryGridStateKey: _state.primaryGrid.dictionaryValue ?: @{},
                kScreenStateAlternateGridStateKey: _state.altGrid.dictionaryValue ?: [NSNull null],
                kScreenStateProtectedMode: @(_state.protectedMode),
+               kScreenStatePromptStateKey: _state.promptStateDictionary,
             };
             dict = [dict dictionaryByRemovingNullValues];
             [encoder mergeDictionary:dict];
@@ -1143,6 +1247,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     [_mutableState performBlockAsynchronously:block];
 }
 
+- (BOOL)stateIsShared {
+    return _sharedStateCount > 0;
+}
+
 - (VT100ScreenState *)switchToSharedState {
     ++_sharedStateCount;
     DLog(@"switch to shared state. count becomes %@", @(_sharedStateCount));
@@ -1165,6 +1273,12 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
         [_mutableState.altGrid markAllCharsDirty:YES updateTimestamps:NO];
     }
     [_state mergeFrom:_mutableState];
+
+    // This is important during resizing since the search buffer has to be kept in lockstep with the readonly line buffer.
+    [self updateSearchBuffer:YES];
+    //if (_searchBuffer) {
+    //    assert([_searchBuffer isEqual:_state.linebuffer]);
+    //}
     if (resetDirty) {
         DLog(@"reset dirty");
         // More cells in the mutable grid were marked dirty since the last refresh.
@@ -1185,6 +1299,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
         };
     }
     DLog(@"Begin %@", self);
+    [self.delegate screenWillSynchronize];
     [mutableState willSynchronize];
     switch (checkTriggers) {
         case VT100ScreenTriggerCheckTypeNone:
@@ -1216,30 +1331,14 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     if (resetOverflow) {
         [mutableState resetScrollbackOverflow];
     }
+    const BOOL namedMarksChanged = mutableState.namedMarksDirty;
     if (_state) {
-        DLog(@"merge state");
+        DLog(@"%@: merge state", self);
         const BOOL mutableStateLineBufferWasDirty = mutableState.linebuffer.dirty;
         [_state mergeFrom:mutableState];
+        mutableState.namedMarksDirty = NO;
 
-        if (!_wantsSearchBuffer) {
-            [_searchBuffer release];
-            _searchBuffer = nil;
-            DLog(@"nil out searchBuffer");
-        } else if (!_searchBuffer) {
-            _searchBuffer = [_state.linebuffer copy];
-            DLog(@"Initialize searchBuffer to fresh copy");
-        } else {
-            if (mutableStateLineBufferWasDirty) {
-                // forceMergeFrom: is necessary because _state.linebuffer will
-                // not be marked dirty since it hasn't been mutated. Because it
-                // has an old copy, the merge did mutate it but linebuffer
-                // doesn't know that the copy will be merged so it doesn't get
-                // marked dirty.
-                [_searchBuffer forceMergeFrom:_state.linebuffer];
-            } else {
-                DLog(@"Line buffer wasn't dirty so leaving searchBuffer alone");
-            }
-        }
+        [self updateSearchBuffer:mutableStateLineBufferWasDirty];
     } else {
         DLog(@"copy state");
         [_state autorelease];
@@ -1255,12 +1354,41 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
         }
     }
     _wantsSearchBuffer = NO;
+    [self.delegate screenDidSynchronize];
     [mutableState didSynchronize:resetOverflow];
-    DLog(@"End overflow=%@ haveScrolled=%@", @(overflow), @(_state.currentGrid.haveScrolled));
+    DLog(@"%@: End overflow=%@ haveScrolled=%@", self, @(overflow), @(_state.currentGrid.haveScrolled));
     return (VT100SyncResult) {
         .overflow = overflow,
-        .haveScrolled = _state.currentGrid.haveScrolled
+        .haveScrolled = _state.currentGrid.haveScrolled,
+        .namedMarksChanged = namedMarksChanged
     };
+}
+
+- (void)updateSearchBuffer:(BOOL)force {
+    if (!_state) {
+        return;
+    }
+    if (!_wantsSearchBuffer) {
+        [_searchBuffer release];
+        _searchBuffer = nil;
+        DLog(@"nil out searchBuffer");
+    } else if (!_searchBuffer) {
+        _searchBuffer = [_state.linebuffer copy];
+        //assert([_searchBuffer isEqual:_state.linebuffer]);
+        DLog(@"Initialize searchBuffer to fresh copy");
+    } else {
+        if (force) {
+            // forceMergeFrom: is necessary because _state.linebuffer will
+            // not be marked dirty since it hasn't been mutated. Because it
+            // has an old copy, the merge did mutate it but linebuffer
+            // doesn't know that the copy will be merged so it doesn't get
+            // marked dirty.
+            [_searchBuffer forceMergeFrom:_state.linebuffer];
+            //assert([_searchBuffer isEqual:_state.linebuffer]);
+        } else {
+            DLog(@"Line buffer wasn't dirty so leaving searchBuffer alone");
+        }
+    }
 }
 
 - (void)injectData:(NSData *)data {
@@ -1325,7 +1453,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 - (void)clearBuffer {
     [self.delegate screenEnsureDefaultMode];
     [self performBlockWithJoinedThreads:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
-        [mutableState clearBufferSavingPrompt:YES];
+        [mutableState clearBufferWithoutTriggersSavingPrompt:YES];
     }];
 }
 
@@ -1387,6 +1515,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
         }
     }];
     return result;
+}
+
+- (NSArray<id<VT100ScreenMarkReading>> *)namedMarks {
+    return _state.namedMarks.strongObjects;
 }
 
 #pragma mark - Accessors
@@ -1465,6 +1597,12 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (int)terminalCharset {
     return _state.terminalCharset;
+}
+
+- (void)restoreSavedState:(NSDictionary *)savedState {
+    [self mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
+        [mutableState restoreFromSavedState:savedState];
+    }];
 }
 
 - (VT100GridCoordRange)commandRange {
@@ -1593,6 +1731,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (NSIndexSet *)animatedLines {
     return _animatedLines;
+}
+
+- (BOOL)sendingIsBlocked {
+    return _mutableState.sendingIsBlocked;
 }
 
 #pragma mark - VT100ScreenSideEffectPerforming

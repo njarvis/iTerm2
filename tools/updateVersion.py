@@ -1,6 +1,13 @@
-#!/usr/bin/python3
+#!/Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+# Get it from:
+# https://www.python.org/ftp/python/3.9.13/python-3.9.13-macos11.pkg
+# Install the package and then do
+# /Library/Frameworks/Python.framework/Versions/3.9/bin/pip3 install pyobjc
+
+# We can't use the python in $PATH because xcode ships with Python and we need one that has pybobjc.
 
 import os
+import sys
 import time
 import subprocess
 
@@ -50,21 +57,3 @@ infoFile = os.environ["INFOPLIST_PATH"]
 path = os.path.join(buildDir, infoFile)
 
 update(path)
-
-
-# Now update extensions and plugins.
-
-# Contents/PlugIns
-BUNDLE_PLUGINS_FOLDER_PATH = os.environ["BUNDLE_PLUGINS_FOLDER_PATH"]
-
-# iTerm2.app/Contents/Frameworks
-FRAMEWORKS_FOLDER_PATH = os.environ["FRAMEWORKS_FOLDER_PATH"]
-
-paths = [
-    f'{buildDir}/iTermFileProvider.appex/Contents/Info.plist',
-    f'{buildDir}/FileProviderService.framework/Versions/A/Resources/Info.plist',
-]
-
-for path in paths:
-    update(path)
-

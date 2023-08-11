@@ -425,8 +425,8 @@
         // move actual NSTabViewItem
         if ([self sourceTabBar] != [self destinationTabBar]) {
             //remove the tracking rects and bindings registered on the old tab
-            [[self sourceTabBar] removeTrackingRect:[[self draggedCell] closeButtonTrackingTag]];
-            [[self sourceTabBar] removeTrackingRect:[[self draggedCell] cellTrackingTag]];
+            [self.draggedCell removeCloseButtonTrackingRectFrom:self.sourceTabBar];
+            [self.draggedCell removeCellTrackingRectFrom:self.sourceTabBar];
             [[self sourceTabBar] removeTabForCell:[self draggedCell]];
 
             int i, insertIndex;
@@ -531,12 +531,12 @@
             willDropTabViewItem:[[self draggedCell] representedObject]
                        inTabBar:control];
     }
-    //add the dragged tab to the new window
+    // Add the dragged tab to the new window.
     [[control cells] insertObject:[self draggedCell] atIndex:0];
 
-    //remove the tracking rects and bindings registered on the old tab
-    [[self sourceTabBar] removeTrackingRect:[[self draggedCell] closeButtonTrackingTag]];
-    [[self sourceTabBar] removeTrackingRect:[[self draggedCell] cellTrackingTag]];
+    // Remove the tracking rects and bindings registered on the old tab.
+    [self.draggedCell removeCloseButtonTrackingRectFrom:self.sourceTabBar];
+    [self.draggedCell removeCellTrackingRectFrom:self.sourceTabBar];
     [[self sourceTabBar] removeTabForCell:[self draggedCell]];
 
     //rebind the cell to the new control

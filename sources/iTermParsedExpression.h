@@ -23,7 +23,9 @@ typedef NS_ENUM(NSUInteger, iTermParsedExpressionType) {
     iTermParsedExpressionTypeInterpolatedString,
     // These two are only produced if you request an AST from the expression parser
     iTermParsedExpressionTypeVariableReference,
-    iTermParsedExpressionTypeArrayLookup
+    iTermParsedExpressionTypeArrayLookup,
+    iTermParsedExpressionTypeFunctionCalls,
+    iTermParsedExpressionTypeBoolean
 
     // Note: When adding new types, also update the Python function iterm2_encode().
 };
@@ -53,6 +55,7 @@ typedef NS_ENUM(NSUInteger, iTermParsedExpressionType) {
 @property (nonatomic, strong, readonly) NSNumber *number;
 @property (nonatomic, strong, readonly) NSError *error;
 @property (nonatomic, strong, readonly) iTermScriptFunctionCall *functionCall;
+@property (nonatomic, strong, readonly) NSArray<iTermScriptFunctionCall *> *functionCalls;
 @property (nonatomic, strong, readonly) NSArray<iTermParsedExpression *> *interpolatedStringParts;
 @property (nonatomic, strong, readonly) id<iTermExpressionParserPlaceholder> placeholder;
 
@@ -63,12 +66,14 @@ typedef NS_ENUM(NSUInteger, iTermParsedExpressionType) {
 
 - (instancetype)initWithString:(NSString *)string;
 - (instancetype)initWithFunctionCall:(iTermScriptFunctionCall *)functionCall;
+- (instancetype)initWithFunctionCalls:(NSArray<iTermScriptFunctionCall *> *)functionCalls;
 - (instancetype)initWithErrorCode:(int)code reason:(NSString *)localizedDescription;
 // Object may be NSString, NSNumber, or NSArray. If it is not, an error will be created with the
 // given reason.
 - (instancetype)initWithObject:(id)object errorReason:(NSString *)errorReason;
 - (instancetype)initWithOptionalObject:(id)object;
 - (instancetype)initWithNumber:(NSNumber *)number;
+- (instancetype)initWithBoolean:(BOOL)value;
 - (instancetype)initWithError:(NSError *)error;
 - (instancetype)initWithInterpolatedStringParts:(NSArray<iTermParsedExpression *> *)parts;
 - (instancetype)initWithArrayOfExpressions:(NSArray<iTermParsedExpression *> *)array;

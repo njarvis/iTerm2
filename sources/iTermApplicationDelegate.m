@@ -144,6 +144,7 @@ static NSString *const kMarkAlertAction = @"Mark Alert Action";
 NSString *const kMarkAlertActionModalAlert = @"Modal Alert";
 NSString *const kMarkAlertActionPostNotification = @"Post Notification";
 NSString *const kShowFullscreenTabsSettingDidChange = @"kShowFullscreenTabsSettingDidChange";
+NSString *const iTermDidToggleAlertOnMarksInOffscreenSessionsNotification = @"iTermDidToggleAlertOnMarksInOffscreenSessionsNotification";
 
 static NSString *const kScreenCharRestorableStateKey = @"kScreenCharRestorableStateKey";
 static NSString *const kURLStoreRestorableStateKey = @"kURLStoreRestorableStateKey";
@@ -204,6 +205,9 @@ static BOOL hasBecomeActive = NO;
     IBOutlet NSMenuItem *_splitVertically;
     IBOutlet NSMenuItem *_triggers;
     IBOutlet NSMenuItem *_enterFullScreenMenuItem;
+    IBOutlet NSMenu *_iterm2Menu;
+    IBOutlet NSMenuItem *_captureGPUFrameMenuItem;
+    IBOutlet NSMenuItem *_namedMarksMenuItem;
 
     // If set, skip performing launch actions.
     BOOL quiet_;
@@ -338,8 +342,14 @@ static BOOL hasBecomeActive = NO;
         _splitVertically.title = [@"│⃞ " stringByAppendingString:_splitVertically.title];
         _splitVerticallyWithCurrentProfile.title = [@"│⃞ " stringByAppendingString:_splitVerticallyWithCurrentProfile.title];
     }
+
+#if !BETA
+    [_iterm2Menu removeItem:_captureGPUFrameMenuItem];
+#endif
+
     [[iTermBuriedSessions sharedInstance] setMenus:[NSArray arrayWithObjects:_buriedSessions, _statusIconBuriedSessions, nil]];
     _triggers.submenu.delegate = self;
+    _namedMarksMenuItem.submenu.delegate = self;
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
@@ -445,6 +455,9 @@ static BOOL hasBecomeActive = NO;
     } else if (menuItem.action == @selector(toggleDisableTransparencyForActiveWindow:)) {
         const BOOL value = [iTermPreferences boolForKey:kPreferenceKeyDisableTransparencyForKeyWindow];
         menuItem.state = value ? NSControlStateValueOn : NSControlStateValueOff;
+        return YES;
+    } else if (menuItem.action == @selector(toggleAlertOnMarksInOffscreenSessions:)) {
+        menuItem.state = [iTermPreferences boolForKey:kPreferenceKeyAlertOnMarksInOffscreenSessions];
         return YES;
     } else {
         return YES;
@@ -600,6 +613,8 @@ static BOOL hasBecomeActive = NO;
         [iTermScriptImporter importScriptFromURL:[NSURL fileURLWithPath:filename]
                                    userInitiated:NO
                                  offerAutoLaunch:NO
+                                   callbackQueue:dispatch_get_main_queue()
+                                         avoidUI:NO
                                       completion:^(NSString * _Nullable errorMessage, BOOL quiet, NSURL *location) {
                                           if (quiet) {
                                               return;
@@ -746,6 +761,20 @@ static BOOL hasBecomeActive = NO;
     });
     [[iTermPresentationController sharedInstance] update];
 }
+
+- (BOOL)systemIsShuttingDown {
+    NSAppleEventDescriptor *currentAppleEvent = [[NSAppleEventManager sharedAppleEventManager] currentAppleEvent];
+    NSAppleEventDescriptor *reason = [currentAppleEvent attributeDescriptorForKeyword:kEventParamReason];
+    switch (reason.typeCodeValue) {
+        case kAEShutDown:
+        case kAERestart:
+        case kAEReallyLogOut:
+            return YES;
+        default:
+            return NO;
+    }
+}
+
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSNotification *)theNotification {
     DLog(@"applicationShouldTerminate:");
     NSArray *terminals;
@@ -757,32 +786,34 @@ static BOOL hasBecomeActive = NO;
     int numSessions = 0;
 
     iTermPromptOnCloseReason *reason = [iTermPromptOnCloseReason noReason];
-    for (PseudoTerminal *term in terminals) {
-        numSessions += [[term allSessions] count];
+    if (![self systemIsShuttingDown] || ![iTermPreferences boolForKey:kPreferenceKeyNeverBlockSystemShutdown]) {
+        for (PseudoTerminal *term in terminals) {
+            numSessions += [[term allSessions] count];
 
-        [reason addReason:term.promptOnCloseReason];
-    }
-
-    // Display prompt if we need to
-    if (!quittingBecauseLastWindowClosed_ &&  // cmd-q
-        [iTermPreferences boolForKey:kPreferenceKeyPromptOnQuit]) {  // preference is to prompt on quit cmd
-        if (terminals.count > 0) {
-            [reason addReason:[iTermPromptOnCloseReason alwaysConfirmQuitPreferenceEnabled]];
-        } else if ([iTermPreferences boolForKey:kPreferenceKeyPromptOnQuitEvenIfThereAreNoWindows]) {
-            [reason addReason:[iTermPromptOnCloseReason alwaysConfirmQuitPreferenceEvenIfThereAreNoWindowsEnabled]];
+            [reason addReason:term.promptOnCloseReason];
         }
-    }
-    quittingBecauseLastWindowClosed_ = NO;
-    if ([iTermPreferences boolForKey:kPreferenceKeyConfirmClosingMultipleTabs] && numSessions > 1) {
-        // closing multiple sessions
-        [reason addReason:[iTermPromptOnCloseReason closingMultipleSessionsPreferenceEnabled]];
-    }
-    if ([iTermAdvancedSettingsModel runJobsInServers] &&
-        self.sparkleRestarting &&
-        [iTermAdvancedSettingsModel restoreWindowContents] &&
-        [[iTermController sharedInstance] willRestoreWindowsAtNextLaunch]) {
-        // Nothing will be lost so just restart without asking.
-        reason = [iTermPromptOnCloseReason noReason];
+
+        // Display prompt if we need to
+        if (!quittingBecauseLastWindowClosed_ &&  // cmd-q
+            [iTermPreferences boolForKey:kPreferenceKeyPromptOnQuit]) {  // preference is to prompt on quit cmd
+            if (terminals.count > 0) {
+                [reason addReason:[iTermPromptOnCloseReason alwaysConfirmQuitPreferenceEnabled]];
+            } else if ([iTermPreferences boolForKey:kPreferenceKeyPromptOnQuitEvenIfThereAreNoWindows]) {
+                [reason addReason:[iTermPromptOnCloseReason alwaysConfirmQuitPreferenceEvenIfThereAreNoWindowsEnabled]];
+            }
+        }
+        quittingBecauseLastWindowClosed_ = NO;
+        if ([iTermPreferences boolForKey:kPreferenceKeyConfirmClosingMultipleTabs] && numSessions > 1) {
+            // closing multiple sessions
+            [reason addReason:[iTermPromptOnCloseReason closingMultipleSessionsPreferenceEnabled]];
+        }
+        if ([iTermAdvancedSettingsModel runJobsInServers] &&
+            self.sparkleRestarting &&
+            [iTermAdvancedSettingsModel restoreWindowContents] &&
+            [[iTermController sharedInstance] willRestoreWindowsAtNextLaunch]) {
+            // Nothing will be lost so just restart without asking.
+            reason = [iTermPromptOnCloseReason noReason];
+        }
     }
 
     if (reason.hasReason) {
@@ -1035,6 +1066,11 @@ void TurnOnDebugLoggingAutomatically(void) {
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)aNotification {
+    DLog(@"Begin");
+    if ([iTermUserDefaults importPath]) {
+        [iTerm2ImportExport finishImporting];
+        assert(NO);
+    }
     [iTermMenuBarObserver sharedInstance];
     // Cleanly crash on uncaught exceptions, such as during actions.
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{ @"NSApplicationCrashOnExceptions": @YES }];
@@ -1048,15 +1084,22 @@ void TurnOnDebugLoggingAutomatically(void) {
 
     _globalScopeController = [[iTermGlobalScopeController alloc] init];
 
+    DLog(@"registerBuiltInFunctions");
     [PTYSession registerBuiltInFunctions];
+    DLog(@"registerBuiltInFunctions");
     [PTYTab registerBuiltInFunctions];
+    DLog(@"registerStandardFunctions");
     [iTermBuiltInFunctions registerStandardFunctions];
-    
+
+    DLog(@"migrateApplicationSupportDirectoryIfNeeded");
     [iTermMigrationHelper migrateApplicationSupportDirectoryIfNeeded];
+    DLog(@"buildScriptMenu");
     [self buildScriptMenu:nil];
 
     // Fix up various user defaults settings.
+    DLog(@"initializeUserDefaults");
     [iTermPreferences initializeUserDefaults];
+    DLog(@"performMigrations");
     [iTermUserDefaults performMigrations];
 
     // Enable restoring windows to their original Spaces if needed.
@@ -1072,21 +1115,28 @@ void TurnOnDebugLoggingAutomatically(void) {
     }
 
     // This sets up bonjour and migrates bookmarks if needed.
+    DLog(@"Make ITAddressBookMgr");
     [ITAddressBookMgr sharedInstance];
 
     // Bookmarks must be loaded for this to work since it needs to know if the hotkey's profile
     // exists.
+    DLog(@"updateProcessType");
     [self updateProcessType];
 
+    DLog(@"iTermToolbeltView populateMenu");
     [iTermToolbeltView populateMenu:toolbeltMenu];
 
     // Start tracking windows entering/exiting full screen.
+    DLog(@"Make iTermFullScreenWindowManager");
     [iTermFullScreenWindowManager sharedInstance];
 
+    DLog(@"complainIfNightlyBuildIsTooOld");
     [self complainIfNightlyBuildIsTooOld];
 
     // Set the Appcast URL and when it changes update it.
+    DLog(@"refreshSoftwareUpdateUserDefaults");
     [[iTermController sharedInstance] refreshSoftwareUpdateUserDefaults];
+    DLog(@"Add observers");
     [iTermPreferences addObserverForKey:kPreferenceKeyCheckForTestReleases
                                   block:^(id before, id after) {
                                       [[iTermController sharedInstance] refreshSoftwareUpdateUserDefaults];
@@ -1098,10 +1148,12 @@ void TurnOnDebugLoggingAutomatically(void) {
 
     if ([iTermPreferences boolForKey:kPreferenceKeyOpenArrangementAtStartup] ||
         [iTermPreferences boolForKey:kPreferenceKeyOpenNoWindowsAtStartup]) {
+        DLog(@"disableInitialUntitledWindow");
         [_untitledWindowStateMachine disableInitialUntitledWindow];
     }
 
     NSError *error = nil;
+    DLog(@"Start iTermSecretServer");
     [[iTermSecretServer instance] listenAndReturnError:&error];
     if (error) {
         DLog(@"Secret server failed to start: %@", error);
@@ -1118,6 +1170,8 @@ void TurnOnDebugLoggingAutomatically(void) {
     } else {
         [_untitledWindowStateMachine didFinishRestoringWindows];
     }
+
+    [[iTermInputSourceForcer sharedInstance] begin];
 }
 
 - (void)restoreWindows {
@@ -1127,6 +1181,18 @@ void TurnOnDebugLoggingAutomatically(void) {
         [_untitledWindowStateMachine didFinishRestoringWindows];
         ScreenCharGarbageCollectImages();
     }];
+}
+
+- (void)turnOffMetalCaptureEnabledIfNeeded {
+    NSString *key = @"MetalCaptureEnabledDate";
+    NSNumber *n = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    if (!n) {
+        return;
+    }
+    if (n.doubleValue < [NSDate timeIntervalSinceReferenceDate]) {
+        [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"MetalCaptureEnabled"];
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
+    }
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
@@ -1144,6 +1210,7 @@ void TurnOnDebugLoggingAutomatically(void) {
                 [[[NSProcessInfo processInfo] beginActivityWithOptions:NSActivityUserInitiatedAllowingIdleSystemSleep
                                                                 reason:@"User Preference"] retain];
     }
+    [self turnOffMetalCaptureEnabledIfNeeded];
     [iTermFontPanel makeDefault];
 
     finishedLaunching_ = YES;
@@ -1270,6 +1337,10 @@ void TurnOnDebugLoggingAutomatically(void) {
                                 keyEquivalent:@""] autorelease];
     [menu addItem:item];
 
+    NSMenuItem *mainMenuItem = [[[NSMenuItem alloc] initWithTitle:@"Main Menu" action:nil keyEquivalent:@""] autorelease];
+    mainMenuItem.submenu = [NSApp mainMenu];
+    [menu addItem:mainMenuItem];
+    
     item = [[[NSMenuItem alloc] initWithTitle:@"Quit iTerm2"
                                        action:@selector(terminate:)
                                 keyEquivalent:@""] autorelease];
@@ -2137,6 +2208,37 @@ void TurnOnDebugLoggingAutomatically(void) {
      }];
 }
 
+- (IBAction)installAlreadyDownloadedPythonRuntime:(id)sender {
+    __weak NSOpenPanel *panel = [[NSOpenPanel alloc] init];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = NO;
+    panel.allowsMultipleSelection = NO;
+    [panel beginWithCompletionHandler:^(NSModalResponse result) {
+        if (panel.URL != nil && result == NSModalResponseOK) {
+            [[iTermPythonRuntimeDownloader sharedInstance] installPythonEnvironmentFromZip:panel.URL.path
+                                                                                completion:^(NSError *error) {
+                if (!error) {
+                    [iTermWarning showWarningWithTitle:@"Installed successfully!"
+                                               actions:@[ @"OK" ]
+                                             accessory:nil
+                                            identifier:nil
+                                           silenceable:kiTermWarningTypePersistent
+                                               heading:@"Python Runtime"
+                                                window:nil];
+                } else {
+                    [iTermWarning showWarningWithTitle:error.localizedDescription ?: @"Unknown error"
+                                               actions:@[ @"OK" ]
+                                             accessory:nil
+                                            identifier:nil
+                                           silenceable:kiTermWarningTypePersistent
+                                               heading:@"Error Installing Python Runtime"
+                                                window:nil];
+                }
+            }];
+        }
+    }];
+}
+
 - (IBAction)buildScriptMenu:(id)sender {
     [iTermScriptConsole sharedInstance];
     [self.scriptsMenuController build];
@@ -2289,6 +2391,13 @@ void TurnOnDebugLoggingAutomatically(void) {
 - (IBAction)loadRecording:(id)sender {
     [iTermRecordingCodec loadRecording];
 }
+
+- (IBAction)toggleAlertOnMarksInOffscreenSessions:(id)sender {
+    [iTermPreferences setBool:![iTermPreferences boolForKey:kPreferenceKeyAlertOnMarksInOffscreenSessions]
+                    forKey:kPreferenceKeyAlertOnMarksInOffscreenSessions];
+    [[NSNotificationCenter defaultCenter] postNotificationName:iTermDidToggleAlertOnMarksInOffscreenSessionsNotification object:nil];
+}
+
 
 #pragma mark - Private
 
@@ -2718,7 +2827,7 @@ void TurnOnDebugLoggingAutomatically(void) {
                          identifier:@""
                          generation:[[iTermURLStore sharedInstance] generation]
                               block:^BOOL(iTermGraphEncoder * _Nonnull subencoder) {
-            [subencoder mergeDictionary:[[iTermURLStore sharedInstance] dictionaryValue]];
+            [[iTermURLStore sharedInstance] encodeGraphWithEncoder:subencoder];
             return YES;
         }];
 
@@ -2764,9 +2873,9 @@ void TurnOnDebugLoggingAutomatically(void) {
         [PortholeRegistry.instance decodeRecord:portholeRecord];
     }
 
-    NSDictionary *urlStoreState = [NSDictionary castFrom:[[app childRecordWithKey:kURLStoreRestorableStateKey identifier:@""] propertyListValue]];
-    if (urlStoreState) {
-        [[iTermURLStore sharedInstance] loadFromDictionary:urlStoreState];
+    iTermEncoderGraphRecord *urlStoreRecord = [app childRecordWithKey:kURLStoreRestorableStateKey identifier:@""];
+    if (urlStoreRecord) {
+        [[iTermURLStore sharedInstance] loadFromGraphRecord:urlStoreRecord];
     }
 
     iTermEncoderGraphRecord *hotkeyWindowsStates = [app childRecordWithKey:kHotkeyWindowsRestorableStates identifier:@""];
@@ -2787,7 +2896,7 @@ void TurnOnDebugLoggingAutomatically(void) {
     if ([iTermAdvancedSettingsModel logRestorableStateSize]) {
         NSDictionary *dict = @{ kScreenCharRestorableStateKey: screenCharState ?: @{},
                                 kPortholeRestorableStateKey: [PortholeRegistry.instance dictionaryValue] ?: @{},
-                                kURLStoreRestorableStateKey: urlStoreState ?: @{},
+                                kURLStoreRestorableStateKey: urlStoreRecord.propertyListValue ?: @{},
                                 iTermBuriedSessionState: _buriedSessionsState ?: @[] };
         NSString *log = [dict sizeInfo];
         [log writeToFile:[NSString stringWithFormat:@"/tmp/statesize.app-%p.txt", self] atomically:NO encoding:NSUTF8StringEncoding error:nil];
@@ -2805,35 +2914,55 @@ void TurnOnDebugLoggingAutomatically(void) {
 #pragma mark - NSMenuDelegate
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
-    // Remove all tagged items. This includes the last separator and items for triggers.
-    while (_triggers.submenu.itemArray.lastObject.tag != 0) {
-        [_triggers.submenu removeItemAtIndex:_triggers.submenu.itemArray.count - 1];
-    }
+    if (menu == _triggers.submenu) {
+        // Remove all tagged items. This includes the last separator and items for triggers.
+        while (_triggers.submenu.itemArray.lastObject.tag != 0) {
+            [_triggers.submenu removeItemAtIndex:_triggers.submenu.itemArray.count - 1];
+        }
 
-    PTYSession *currentSession = [[[iTermController sharedInstance] currentTerminal] currentSession];
-    if (!currentSession) {
-        return;
-    }
+        PTYSession *currentSession = [[[iTermController sharedInstance] currentTerminal] currentSession];
+        if (!currentSession) {
+            return;
+        }
 
-    NSArray<iTermTuple<NSString *, NSNumber *> *> *triggers = [currentSession triggerTuples];
-    if (triggers.count) {
-        [_triggers.submenu addItem:[NSMenuItem separatorItem]];
-        _triggers.submenu.itemArray.lastObject.tag = 1;
+        NSArray<iTermTuple<NSString *, NSNumber *> *> *triggers = [currentSession triggerTuples];
+        if (triggers.count) {
+            [_triggers.submenu addItem:[NSMenuItem separatorItem]];
+            _triggers.submenu.itemArray.lastObject.tag = 1;
+        }
+        [triggers enumerateObjectsUsingBlock:^(iTermTuple<NSString *,NSNumber *> * _Nonnull tuple, NSUInteger idx, BOOL * _Nonnull stop) {
+            [_triggers.submenu addItemWithTitle:tuple.firstObject
+                                         action:@selector(toggleTriggerEnabled:)
+                                  keyEquivalent:@""];
+            NSMenuItem *item = _triggers.submenu.itemArray.lastObject;
+            item.representedObject = @(idx);
+            item.tag = 1;
+            item.state = tuple.secondObject.boolValue ? NSControlStateValueOn : NSControlStateValueOff;
+            item.target = self;
+        }];
+    } else if (menu == _namedMarksMenuItem.submenu) {
+        [menu removeAllItems];
+
+        // Populate the submenu with dynamic menu items
+        NSArray<id<VT100ScreenMarkReading>> *namedMarks = [[[[[[iTermController sharedInstance] currentTerminal] currentSession] screen] namedMarks] sortedArrayUsingComparator:^NSComparisonResult(id<VT100ScreenMarkReading> lhs, id<VT100ScreenMarkReading> rhs) {
+            return [@(lhs.entry.interval.location) compare:@(rhs.entry.interval.location)];
+        }];
+        for (id<VT100ScreenMarkReading> mark in namedMarks) {
+            NSMenuItem *menuItem = [[NSMenuItem alloc] initWithTitle:mark.name ?: @"Unnamed Mark"
+                                                              action:@selector(navigateToNamedMark:)
+                                                       keyEquivalent:@""];
+            menuItem.representedObject = mark.guid;
+            [menu addItem:menuItem];
+        }
     }
-    [triggers enumerateObjectsUsingBlock:^(iTermTuple<NSString *,NSNumber *> * _Nonnull tuple, NSUInteger idx, BOOL * _Nonnull stop) {
-        [_triggers.submenu addItemWithTitle:tuple.firstObject
-                                     action:@selector(toggleTriggerEnabled:)
-                              keyEquivalent:@""];
-        NSMenuItem *item = _triggers.submenu.itemArray.lastObject;
-        item.representedObject = @(idx);
-        item.tag = 1;
-        item.state = tuple.secondObject.boolValue ? NSControlStateValueOn : NSControlStateValueOff;
-        item.target = self;
-    }];
+}
+
+- (void)navigateToNamedMark:(NSMenuItem *)menuItem {
+    [[[[iTermController sharedInstance] currentTerminal] currentSession] scrollToMarkWithGUID:menuItem.representedObject ?: @""];
 }
 
 - (void)menuWillOpen:(NSMenu *)menu {
-    NSLog(@"menu will open");
+    DLog(@"menu will open");
 }
 
 - (void)toggleTriggerEnabled:(id)sender {

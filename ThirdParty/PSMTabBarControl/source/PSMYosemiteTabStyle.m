@@ -502,7 +502,7 @@
         return [NSColor clearColor];
     }
     // `base` gives how much darker the unselected tab is as an alpha value.
-    const CGFloat base = 0.07;
+    CGFloat base = [[_tabBar.delegate tabView:_tabBar valueOfOption:PSMTabBarControlOptionLightModeInactiveTabDarkness] doubleValue];
     return [NSColor colorWithWhite:0 alpha:base + (1 - base) * (highlightAmount * 0.05)];
 }
 
@@ -1213,7 +1213,8 @@
     }
 
     // Background to the right of the rightmost tab and left of the leftmost tab.
-    [self drawBackgroundInRect:clipRect color:[self tabBarColor] horizontal:horizontal];
+    NSColor *marginColor = [self backgroundColorSelected:NO highlightAmount:0];
+    [self drawBackgroundInRect:clipRect color:marginColor horizontal:horizontal];
 
     // Draw line above tab bar.
     NSColor *topLineColor = [self topLineColorSelected:NO];

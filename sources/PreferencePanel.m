@@ -725,7 +725,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
 - (NSSearchToolbarItem *)bigSurSearchFieldToolbarItem NS_AVAILABLE_MAC(10_16){
     if (!_bigSurSearchFieldToolbarItem) {
         _bigSurSearchFieldToolbarItem = [[NSSearchToolbarItem alloc] initWithItemIdentifier:iTermPreferencePanelSearchFieldToolbarItemIdentifier];
-        _bigSurSearchFieldToolbarItem.label = @"Search";
+        _bigSurSearchFieldToolbarItem.label = @"";
         _bigSurSearchFieldToolbarItem.searchField.delegate = self;
     }
     return _bigSurSearchFieldToolbarItem;
@@ -932,6 +932,10 @@ andEditComponentWithIdentifier:(NSString *)identifier
 
     [self resizeWindowForTabViewItem:tabViewItem animated:YES];
     [_profilesViewController invalidateSavedSize];
+}
+
+- (void)tabView:(NSTabView *)tabView willSelectTabViewItem:(NSTabViewItem *)tabViewItem {
+    [[self viewControllerForTabViewItem:[tabView selectedTabViewItem]] willDeselectTab];
 }
 
 - (void)resizeWindowForTabViewItem:(NSTabViewItem *)tabViewItem animated:(BOOL)animated {

@@ -2,13 +2,20 @@
 #import "VT100GridTypes.h"
 
 typedef enum {
+    MOUSE_BUTTON_UNKNOWN = -1,   // unknown button
     // X11 button number
     MOUSE_BUTTON_LEFT = 0,       // left button
     MOUSE_BUTTON_MIDDLE = 1,     // middle button
     MOUSE_BUTTON_RIGHT = 2,      // right button
     MOUSE_BUTTON_NONE = 3,       // no button pressed - for 1000/1005/1015 mode
     MOUSE_BUTTON_SCROLLDOWN = 4, // scroll down
-    MOUSE_BUTTON_SCROLLUP = 5    // scroll up
+    MOUSE_BUTTON_SCROLLUP = 5,   // scroll up
+    MOUSE_BUTTON_SCROLLLEFT = 6, // scroll left
+    MOUSE_BUTTON_SCROLLRIGHT = 7,// scroll right
+    MOUSE_BUTTON_BACKWARD = 8,   // backward (4th button)
+    MOUSE_BUTTON_FORWARD = 9,    // forward (5th button)
+    MOUSE_BUTTON_10 = 10,        // extra button 1
+    MOUSE_BUTTON_11 = 11,        // extra button 2
 } MouseButtonNumber;
 
 typedef NS_ENUM(NSInteger, MouseFormat) {
@@ -69,6 +76,7 @@ BOOL VT100OutputCursorInformationGetLineDrawingMode(VT100OutputCursorInformation
 @property(nonatomic, assign) BOOL cursorMode;
 @property(nonatomic, assign) BOOL optionIsMetaForSpecialKeys;
 @property(nonatomic, assign) VT100EmulationLevel vtLevel;
+
 - (NSDictionary *)configDictionary;
 
 - (NSData *)keyArrowUp:(unsigned int)modflag;

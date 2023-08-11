@@ -28,7 +28,9 @@
 #import "iTermNotificationController.h"
 
 #import "DebugLogging.h"
+#import "iTermAdvancedSettingsModel.h"
 #import "iTermController.h"
+#import "iTermImage.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "PreferencePanel.h"
 #import "PseudoTerminal.h"
@@ -84,6 +86,51 @@
                       sticky:NO];
 }
 
+- (BOOL)notifyRich:(NSString *)title
+      withSubtitle:(NSString *)subtitle
+   withDescription:(NSString *)description
+         withImage:(NSString *)image
+       windowIndex:(int)windowIndex
+          tabIndex:(int)tabIndex
+         viewIndex:(int)viewIndex {
+    DLog(@"Notify title=%@ description=%@ window=%@ tab=%@ view=%@",
+            title, description, @(windowIndex), @(tabIndex), @(viewIndex));
+
+    if (description == nil) {
+        DLog(@"notifyRich passed nil description.");
+        return NO;
+    }
+
+    // Send to NSUserDefaults directly
+    NSUserNotification *notification = [[NSUserNotification alloc] init];
+    notification.informativeText = description;
+
+    NSDictionary *context = nil;
+    if (windowIndex >= 0) {
+        context = @{ @"win": @(windowIndex),
+                     @"tab": @(tabIndex),
+                     @"view": @(viewIndex) };
+    }
+    notification.userInfo = context;
+
+    if (title != nil) {
+        notification.title = title;
+    }
+    if (subtitle != nil) {
+        notification.subtitle = subtitle;
+    }
+    if (image != nil) {
+        NSData *data = [NSData dataWithContentsOfFile:image];
+        if (data != nil) {
+            notification.contentImage = [[[iTermImage imageWithCompressedData:data] images] firstObject];
+        }
+    }
+    DLog(@"Post notification %@", notification);
+    [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:notification];
+
+    return [notification isPresented];
+}
+
 - (BOOL)notify:(NSString *)title
     withDescription:(NSString *)description
         windowIndex:(int)windowIndex
@@ -105,7 +152,7 @@
     notification.title = title;
     notification.informativeText = description;
     notification.userInfo = context;
-    notification.soundName = NSUserNotificationDefaultSoundName;
+    notification.soundName = [iTermAdvancedSettingsModel silentUserNotifications] ? nil : NSUserNotificationDefaultSoundName;
     DLog(@"Post notification %@", notification);
     [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:notification];
 
@@ -118,7 +165,7 @@
     notification.informativeText = detail;
     NSDictionary *context = @{ @"URL": url.absoluteString };
     notification.userInfo = context;
-    notification.soundName = NSUserNotificationDefaultSoundName;
+    notification.soundName = [iTermAdvancedSettingsModel silentUserNotifications] ? nil : NSUserNotificationDefaultSoundName;
     DLog(@"Post notification %@", notification);
     [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:notification];
 }
@@ -141,7 +188,7 @@
     NSDictionary *context = @{ @"CallbackNotificationName": name,
                                @"CallbackUserInfo": userInfo ?: @{} };
     notification.userInfo = context;
-    notification.soundName = NSUserNotificationDefaultSoundName;
+    notification.soundName = [iTermAdvancedSettingsModel silentUserNotifications] ? nil : NSUserNotificationDefaultSoundName;
     if (actionButtonTitle) {
         notification.actionButtonTitle = actionButtonTitle;
     }

@@ -58,16 +58,10 @@ static NSString *kCommandTimestamp = @"timestamp";
     self = [super init];
     if (self) {
         static NSInteger next = 1;
-        _identifier = [[NSString stringWithFormat:@"it2_%@", @(next++)] retain];
+        _identifier = [NSString stringWithFormat:@"it2_%@", @(next++)];
         _block = [block copy];
     }
     return self;
-}
-
-- (void)dealloc {
-    [_identifier release];
-    [_block release];
-    [super dealloc];
 }
 
 - (NSString *)description {
@@ -124,20 +118,6 @@ static NSString *kCommandTimestamp = @"timestamp";
     return self;
 }
 
-- (void)dealloc {
-    [commandQueue_ release];
-    [currentCommand_ release];
-    [currentCommandResponse_ release];
-    [currentCommandData_ release];
-    [strayMessages_ release];
-    [_minimumServerVersion release];
-    [_maximumServerVersion release];
-    [_dcsID release];
-    [_subscriptions release];
-
-    [super dealloc];
-}
-
 - (void)abortWithErrorMessage:(NSString *)message {
     [self abortWithErrorMessage:[NSString stringWithFormat:@"%@", message]
                           title:@"tmux Reported a Problem"];
@@ -147,14 +127,14 @@ static NSString *kCommandTimestamp = @"timestamp";
 - (void)abortWithErrorMessage:(NSString *)message title:(NSString *)title {
     // This can run in a side-effect and it's not safe to start a runloop in a side effect.
     dispatch_async(dispatch_get_main_queue(), ^{
-        NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+        NSAlert *alert = [[NSAlert alloc] init];
         alert.messageText = title;
         alert.informativeText = message;
         [alert addButtonWithTitle:@"OK"];
         [alert runModal];
     });
     [self detach];
-    [delegate_ tmuxHostDisconnected:[[_dcsID copy] autorelease]];  // Force the client to quit
+    [delegate_ tmuxHostDisconnected:[_dcsID copy]];  // Force the client to quit
 }
 
 - (void)doubleAttachDetectedForSessionGUID:(NSString *)sessionGuid {
@@ -207,49 +187,58 @@ static NSString *kCommandTimestamp = @"timestamp";
     const char *command = [data bytes];
     char *space = strchr(command, ' ');
     if (!space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     const char *outputCommand = "%extended-output";
     if (strncmp(outputCommand, command, strlen(outputCommand))) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
 
     // Pane ID
     const char *paneId = space + 1;
     if (*paneId != '%') {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     paneId++;
     space = strchr(paneId, ' ');
     if (!space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     char *endptr = NULL;
     int windowPane = strtol(paneId, &endptr, 10);
     if (windowPane < 0 || endptr != space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
 
     // Latency
     const char *latency = space + 1;
     space = strchr(latency, ' ');
     if (!space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     endptr = NULL;
     NSNumber *ms = @(strtoll(latency, &endptr, 10));
     ms = @(ms.doubleValue / 1000.0);
     if (endptr != space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
 
     // Skip unknown params
     const char *colon = strchr(space + 1, ':');
     if (!colon) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     if (colon[1] != ' ') {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
 
     const char *encodedData = colon + 2;
@@ -261,9 +250,9 @@ static NSString *kCommandTimestamp = @"timestamp";
             windowPane, ms, (int)[decodedData length], (const char *)[decodedData bytes]);
 
     [delegate_ tmuxReadTask:decodedData windowPane:windowPane latency:ms];
+}
 
-    return;
-error:
+- (void)parsingFailedForCommand:(const char *)command {
     [self abortWithErrorMessage:[NSString stringWithFormat:@"Malformed command (expected %%num data): \"%s\"", command]];
 }
 
@@ -277,27 +266,32 @@ error:
     const char *command = [data bytes];
     char *space = strchr(command, ' ');
     if (!space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     const char *outputCommand = "%output";
     if (strncmp(outputCommand, command, strlen(outputCommand))) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
 
     // Pane ID
     const char *paneId = space + 1;
     if (*paneId != '%') {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     paneId++;
     space = strchr(paneId, ' ');
     if (!space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
     char *endptr = NULL;
     int windowPane = strtol(paneId, &endptr, 10);
     if (windowPane < 0 || endptr != space) {
-        goto error;
+        [self parsingFailedForCommand:command];
+        return;
     }
 
     // Payload
@@ -307,13 +301,9 @@ error:
             windowPane, (int)[decodedData length], (const char *)[decodedData bytes]);
 
     [delegate_ tmuxReadTask:decodedData windowPane:windowPane latency:nil];
-
-    return;
-error:
-    [self abortWithErrorMessage:[NSString stringWithFormat:@"Malformed command (expected %%num data): \"%s\"", command]];
 }
 
-- (NSNumber *)layoutIsZoomed:(NSString *)args {
+- (NSNumber *)layoutIsZoomedInLayoutChange:(NSString *)args {
     // window-layout window-visible-layout window-flags
     NSArray<NSString *> *components = [args componentsSeparatedByString:@" "];
     if (components.count < 3) {
@@ -323,20 +313,39 @@ error:
     return @([windowFlags containsString:@"Z"]);
 }
 
+- (NSString *)regularLayoutFromLayoutChange:(NSString *)args {
+    NSArray<NSString *> *components = [args componentsSeparatedByString:@" "];
+    if (components.count < 1) {
+        return nil;
+    }
+    return components[0];
+}
+
+- (NSString *)visibleLayoutFromLayoutChange:(NSString *)args {
+    NSArray<NSString *> *components = [args componentsSeparatedByString:@" "];
+    if (components.count < 2) {
+        return nil;
+    }
+    return components[1];
+}
+
 - (void)parseLayoutChangeCommand:(NSString *)command
 {
-    // %layout-change <window> <layout>
+    // %layout-change <window> <layout> [window_visible_layout window_flags]
+    DLog(@"TmuxGateway: received layout change %@", command);
     NSArray *components = [command captureComponentsMatchedByRegex:@"^%layout-change @([0-9]+) (.*)"];
     if (components.count != 3) {
-        [self abortWithErrorMessage:[NSString stringWithFormat:@"Malformed command (expected %%layout-change <window> <layout>): \"%@\"",
+        [self abortWithErrorMessage:[NSString stringWithFormat:@"Malformed command (expected %%layout-change <window> <layout> [<window_visible_layout> <window_flags>]): \"%@\"",
                                      command]];
         return;
     }
     int window = [[components objectAtIndex:1] intValue];
-    NSString *layout = [components objectAtIndex:2];
+    NSString *rest = [components objectAtIndex:2];
+
     [delegate_ tmuxUpdateLayoutForWindow:window
-                                  layout:layout
-                                  zoomed:[self layoutIsZoomed:layout]
+                                  layout:[self regularLayoutFromLayoutChange:rest]
+                           visibleLayout:[self visibleLayoutFromLayoutChange:rest]
+                                  zoomed:[self layoutIsZoomedInLayoutChange:rest]
                                     only:YES];
 }
 
@@ -432,6 +441,18 @@ error:
     [delegate_ tmuxSessionWindowDidChangeTo:[components[2] intValue]];
 }
 
+// %paste-buffer-changed buffer1
+- (void)parsePasedChangedCommand:(NSString *)command {
+    // For security purposes we restrict the accepted buffer names since we will output this buffer name to fetch its contents.
+    // It's an instance of attacker-controlled values that we then output which could be used as user input.
+    NSArray<NSString *> *components = [command captureComponentsMatchedByRegex:@"^%paste-buffer-changed (buffer[0-9]+)"];
+    if (components.count != 2) {
+        DLog(@"Unexpected syntax: %@", command);
+        return;
+    }
+    [delegate_ tmuxSessionPasteDidChange:components[1]];
+}
+
 - (void)parsePauseCommand:(NSString *)command {
     NSArray<NSString *> *components = [command captureComponentsMatchedByRegex:@"^%pause %([0-9]+)$"];
     if (components.count != 2) {
@@ -465,7 +486,7 @@ error:
 
 - (void)hostDisconnected {
     disconnected_ = YES;
-    [delegate_ tmuxHostDisconnected:[[_dcsID copy] autorelease]];
+    [delegate_ tmuxHostDisconnected:[_dcsID copy]];
     [commandQueue_ removeAllObjects];
 }
 
@@ -528,22 +549,22 @@ error:
     SEL selector = [self currentCommandSelector];
     id obj = [self currentCommandObject];
     if (withError) {
-        [target performSelector:selector
-                     withObject:nil
-                     withObject:obj];
+        [target it_performNonObjectReturningSelector:selector
+                                          withObject:nil
+                                          withObject:obj];
         return;
     }
     if (_tmuxLogging) {
         [delegate_ tmuxPrintLine:[NSString stringWithFormat:@"[Normal response to “%@”]", currentCommand_[kCommandString]]];
     }
     if ([self currentCommandFlags] & kTmuxGatewayCommandWantsData) {
-        [target performSelector:selector
-                     withObject:currentCommandData_
-                     withObject:obj];
+        [target it_performNonObjectReturningSelector:selector
+                                          withObject:currentCommandData_
+                                          withObject:obj];
     } else {
-        [target performSelector:selector
-                     withObject:currentCommandResponse_
-                     withObject:obj];
+        [target it_performNonObjectReturningSelector:selector
+                                          withObject:currentCommandResponse_
+                                          withObject:obj];
     }
 }
 
@@ -624,11 +645,9 @@ error:
     if (!(flags & 1)) {
         // Not a client-originated command.
         TmuxLog(@"Begin auto response");
-        currentCommand_ = [[NSMutableDictionary dictionaryWithObjectsAndKeys:
-                               [components objectAtIndex:1], kCommandId,
-                               nil] retain];
-        [currentCommandResponse_ release];
-        [currentCommandData_ release];
+        currentCommand_ = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+                           [components objectAtIndex:1], kCommandId,
+                           nil];
         currentCommandResponse_ = [[NSMutableString alloc] init];
         currentCommandData_ = [[NSMutableData alloc] init];
     } else {
@@ -645,21 +664,16 @@ error:
 }
 
 - (void)resetCurrentCommand {
-    [currentCommand_ release];
     currentCommand_ = nil;
-    [currentCommandResponse_ release];
     currentCommandResponse_ = nil;
-    [currentCommandData_ release];
     currentCommandData_ = nil;
 }
 
 - (void)beginHandlingNextResponseWithID:(NSString *)commandId {
     assert(!currentCommand_);
-    currentCommand_ = [commandQueue_[0] retain];
+    currentCommand_ = commandQueue_[0];
     currentCommand_[kCommandId] = commandId;
 
-    [currentCommandResponse_ release];
-    [currentCommandData_ release];
     currentCommandResponse_ = [[NSMutableString alloc] init];
     currentCommandData_ = [[NSMutableData alloc] init];
     [commandQueue_ removeObjectAtIndex:0];
@@ -768,6 +782,8 @@ error:
                [command hasPrefix:@"%pane-mode-changed"]) {  // copy mode, etc
         // New in tmux 2.5. Don't care.
         TmuxLog(@"Ignore %@", command);
+    } else if ([command hasPrefix:@"%paste-buffer-changed "]) {
+        if (acceptNotifications_) [self parsePasedChangedCommand:command];
     } else if ([command hasPrefix:@"%exit "] ||
                [command isEqualToString:@"%exit"]) {
         TmuxLog(@"tmux exit message: %@", command);
@@ -833,7 +849,7 @@ error:
     } else {
         // Send each byte of UTF-8 as a separate "keystroke". For tmux 2.1 and earlier.
         NSData *data = [string dataUsingEncoding:NSUTF8StringEncoding];
-        NSString *temp = [[[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding] autorelease];
+        NSString *temp = [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
         [self sendCodePoints:[temp codePoints] toWindowPane:windowPane];
     }
 }
@@ -937,8 +953,8 @@ error:
     NSString *command = [NSString stringWithFormat:@"send %@ %%%d %@",
                          asLiteralCharacters ? @"-lt" : @"-t", windowPane, value];
     NSDictionary *dict = [self dictionaryForCommand:command
-                                     responseTarget:self
-                                   responseSelector:@selector(noopResponseSelector:)
+                                     responseTarget:nil
+                                   responseSelector:nil
                                      responseObject:nil
                                               flags:kTmuxGatewayCommandShouldTolerateErrors];
     return dict;
@@ -953,15 +969,11 @@ error:
         }
     }
     [self sendCommand:command
-       responseTarget:self
-     responseSelector:@selector(noopResponseSelector:)
+       responseTarget:nil
+     responseSelector:nil
        responseObject:nil
                 flags:kTmuxGatewayCommandOfferToDetachIfLaggyDuplicate];
     detachSent_ = YES;
-}
-
-- (void)noopResponseSelector:(NSString *)response
-{
 }
 
 - (NSDictionary *)dictionaryForCommand:(NSString *)command
@@ -988,7 +1000,7 @@ error:
             }
         }
     }
-    NSMutableDictionary *object = [[dict mutableCopy] autorelease];
+    NSMutableDictionary *object = [dict mutableCopy];
     object[kCommandTimestamp] = @(CACurrentMediaTime());
     [commandQueue_ addObject:object];
 }
@@ -1095,7 +1107,7 @@ error:
                                             target:(NSString *)target
                                              block:(void (^)(NSString *,
                                                              NSArray<NSString *> *))block {
-    iTermTmuxSubscriptionHandle *handle = [[[iTermTmuxSubscriptionHandle alloc] initWithBlock:block] autorelease];
+    iTermTmuxSubscriptionHandle *handle = [[iTermTmuxSubscriptionHandle alloc] initWithBlock:block];
     NSString *subscribe = [NSString stringWithFormat:@"refresh-client -B '%@:%@:%@'",
                            handle.identifier,
                            target ?: @"",

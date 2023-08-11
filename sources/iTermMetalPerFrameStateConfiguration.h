@@ -9,11 +9,13 @@
 #import <simd/simd.h>
 #import "ITAddressBookMgr.h"
 #import "iTermTextRendererCommon.h"
+#import "iTermLineStyleMarkRenderer.h"
 #import "VT100GridTypes.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
 @class iTermColorMap;
+@class iTermFontTable;
 @protocol iTermMetalPerFrameStateDelegate;
 @class iTermTextDrawingHelper;
 @class NSColor;
@@ -31,6 +33,7 @@ NS_ASSUME_NONNULL_BEGIN
     iTermColorMap *_colorMap;
     vector_float4 _fullScreenFlashColor;
     NSColor *_processedDefaultBackgroundColor;  // dimmed, etc.
+    iTermLineStyleMarkColors _lineStyleMarkColors;
     vector_float4 _unfocusedSelectionColor;
     CGFloat _transparencyAlpha;
     BOOL _transparencyAffectsOnlyDefaultBackgroundColor;
@@ -38,8 +41,7 @@ NS_ASSUME_NONNULL_BEGIN
     NSColorSpace *_colorSpace;
 
     // Text
-    PTYFontInfo *_asciiFont;
-    PTYFontInfo *_nonAsciiFont;
+    iTermFontTable *_fontTable;
     BOOL _useNonAsciiFont;
     BOOL _asciiAntialias;
     BOOL _nonasciiAntialias;
@@ -54,6 +56,7 @@ NS_ASSUME_NONNULL_BEGIN
     BOOL _useCustomBoldColor;
     BOOL _brightenBold;
     BOOL _useNativePowerlineGlyphs;
+    BOOL _useSelectedTextColor;
 
     // Focus
     BOOL _isFrontTextView;
@@ -82,6 +85,10 @@ NS_ASSUME_NONNULL_BEGIN
     BOOL _timestampsEnabled;
     BOOL _blinkingItemsVisible;
     NSFont *_timestampFont;
+
+    // Offscreen command line
+    NSColor *_offscreenCommandLineBackgroundColor;
+    NSColor *_offscreenCommandLineOutlineColor;
 };
 
 - (void)loadSettingsWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper

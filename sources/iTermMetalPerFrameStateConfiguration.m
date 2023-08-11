@@ -9,6 +9,7 @@
 #import "NSColor+iTerm.h"
 #import "PTYTextView.h"
 #import "VT100Terminal.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermColorMap.h"
 #import "iTermController.h"
 #import "iTermMetalPerFrameState.h"
@@ -31,8 +32,7 @@ static vector_float4 VectorForColor(NSColor *color) {
                                   textView.dataSource.height);
     _baselineOffset = drawingHelper.baselineOffset;
     _colorMap = [textView.colorMap copy];
-    _asciiFont = textView.primaryFont;
-    _nonAsciiFont = textView.secondaryFont;
+    _fontTable = textView.fontTable;
     _useBoldFont = textView.useBoldFont;
     _useItalicFont = textView.useItalicFont;
     _useNonAsciiFont = textView.useNonAsciiFont;
@@ -50,8 +50,15 @@ static vector_float4 VectorForColor(NSColor *color) {
     _asciiAntialias = drawingHelper.asciiAntiAlias || forceAA;
     _nonasciiAntialias = (_useNonAsciiFont ? drawingHelper.nonAsciiAntiAlias : _asciiAntialias)  || forceAA;
     _useNativePowerlineGlyphs = drawingHelper.useNativePowerlineGlyphs;
+    _useSelectedTextColor = drawingHelper.useSelectedTextColor;
     _showBroadcastStripes = drawingHelper.showStripes;
-    _processedDefaultBackgroundColor = [[drawingHelper defaultBackgroundColor] colorUsingColorSpace:textView.window.screen.colorSpace ?: [NSColorSpace it_defaultColorSpace]];
+    NSColorSpace *colorSpace = textView.window.screen.colorSpace ?: [NSColorSpace it_defaultColorSpace];
+    _processedDefaultBackgroundColor = [[drawingHelper defaultBackgroundColor] colorUsingColorSpace:colorSpace];
+    _lineStyleMarkColors = (iTermLineStyleMarkColors) {
+        .success = [[[drawingHelper defaultBackgroundColor] blendedWithColor:[iTermTextDrawingHelper successMarkColor] weight:0.5] colorUsingColorSpace:colorSpace].vector,
+        .other = [[[drawingHelper defaultBackgroundColor] blendedWithColor:[iTermTextDrawingHelper otherMarkColor] weight:0.5] colorUsingColorSpace:colorSpace].vector,
+        .failure = [[[drawingHelper defaultBackgroundColor] blendedWithColor:[iTermTextDrawingHelper errorMarkColor] weight:0.5] colorUsingColorSpace:colorSpace].vector
+    };
     _isFrontTextView = (textView == [[iTermController sharedInstance] frontTextView]);
     _unfocusedSelectionColor = VectorForColor([[_colorMap colorForKey:kColorMapSelection] colorDimmedBy:2.0/3.0
                                                                                        towardsGrayLevel:0.5]);
@@ -76,26 +83,26 @@ static vector_float4 VectorForColor(NSColor *color) {
     _edgeInsets.right *= _scale;
 
     _asciiUnderlineDescriptor.color = VectorForColor([_colorMap colorForKey:kColorMapUnderline]);
-    _asciiUnderlineDescriptor.offset = [drawingHelper yOriginForUnderlineForFont:_asciiFont.font
+    _asciiUnderlineDescriptor.offset = [drawingHelper yOriginForUnderlineForFont:_fontTable.asciiFont.font
                                                                          yOffset:0
                                                                       cellHeight:_cellSize.height];
-    _asciiUnderlineDescriptor.thickness = [drawingHelper underlineThicknessForFont:_asciiFont.font];
+    _asciiUnderlineDescriptor.thickness = [drawingHelper underlineThicknessForFont:_fontTable.asciiFont.font];
 
     if (_useNonAsciiFont) {
         _nonAsciiUnderlineDescriptor.color = _asciiUnderlineDescriptor.color;
-        _nonAsciiUnderlineDescriptor.offset = [drawingHelper yOriginForUnderlineForFont:_nonAsciiFont.font
+        _nonAsciiUnderlineDescriptor.offset = [drawingHelper yOriginForUnderlineForFont:_fontTable.defaultNonASCIIFont.font
                                                                                 yOffset:0
                                                                              cellHeight:_cellSize.height];
-        _nonAsciiUnderlineDescriptor.thickness = [drawingHelper underlineThicknessForFont:_nonAsciiFont.font];
+        _nonAsciiUnderlineDescriptor.thickness = [drawingHelper underlineThicknessForFont:_fontTable.defaultNonASCIIFont.font];
     } else {
         _nonAsciiUnderlineDescriptor = _asciiUnderlineDescriptor;
     }
     // We use the ASCII font's color and underline thickness for strikethrough.
     _strikethroughUnderlineDescriptor.color = _asciiUnderlineDescriptor.color;
-    _strikethroughUnderlineDescriptor.offset = [drawingHelper yOriginForStrikethroughForFont:_asciiFont.font
+    _strikethroughUnderlineDescriptor.offset = [drawingHelper yOriginForStrikethroughForFont:_fontTable.asciiFont.font
                                                                                      yOffset:0
                                                                                   cellHeight:_cellSize.height];
-    _strikethroughUnderlineDescriptor.thickness = [drawingHelper strikethroughThicknessForFont:_asciiFont.font];
+    _strikethroughUnderlineDescriptor.thickness = [drawingHelper strikethroughThicknessForFont:_fontTable.asciiFont.font];
 
     // Indicators
     NSColor *color = [[textView indicatorFullScreenFlashColor] colorUsingColorSpace:_colorSpace];
@@ -106,7 +113,14 @@ static vector_float4 VectorForColor(NSColor *color) {
 
     // Timestamps
     _timestampsEnabled = drawingHelper.shouldShowTimestamps;
-    _timestampFont = textView.font;
+    _timestampFont = _fontTable.asciiFont.font;
+
+    // Offscreen command line
+    if (textView.drawingHelper.offscreenCommandLine) {
+        _offscreenCommandLineBackgroundColor = [textView.drawingHelper.offscreenCommandLineBackgroundColor colorUsingColorSpace:_colorSpace];
+        _offscreenCommandLineOutlineColor = [textView.drawingHelper.offscreenCommandLineOutlineColor colorUsingColorSpace:_colorSpace];
+        _offscreenCommandLineBackgroundColor = [textView.drawingHelper.offscreenCommandLineBackgroundColor colorUsingColorSpace:_colorSpace];
+    }
 }
 
 @end

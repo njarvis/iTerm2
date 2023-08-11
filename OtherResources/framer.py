@@ -5,14 +5,17 @@ import errno
 import fcntl
 import json
 import os
+import platform
 import pty
 import pwd
 import random
 import re
+import shutil
 import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 import traceback
@@ -21,7 +24,7 @@ import traceback
 PROCESSES = {}
 # List of pids that are completed. Their tasks can be awaited and removed.
 COMPLETED = []
-VERBOSE=0
+VERBOSE=1
 LOGFILE=None
 RUNLOOP=None
 TASKS=[]
@@ -30,6 +33,7 @@ REGISTERED=[]
 LASTPS={}
 AUTOPOLL = 0
 AUTOPOLL_TASK = None
+TTY_TASK = None
 RECOVERY_STATE={}
 # 0: Not blocking on stdin
 # 1: Blocking on stdin
@@ -165,6 +169,8 @@ class Process:
         self.__return_code = None
         self.__master = master
         self.__descr = descr
+        self.echo = True
+        self.icanon = True
         self.login = False
 
     @property
@@ -263,8 +269,8 @@ async def autopoll(delay):
         global AUTOPOLL
         while True:
             log('autopoll: call poll()')
-            output = await poll()
-            if not len(output):
+            cats = await poll()
+            if not cats:
                 log(f'autopoll: sleep for {delay}')
                 await asyncio.sleep(delay)
                 log(f'autopoll: awoke')
@@ -272,8 +278,7 @@ async def autopoll(delay):
             # Send poll output and sleep until client requests autopolling again.
             identifier = makeid()
             send_esc(f'%autopoll {identifier}')
-            for line in output:
-                send(line.encode("utf-8") + b'\n')
+            send_poll_output(cats)
             send_esc(f'%end {identifier}')
             AUTOPOLL = 0
             while not AUTOPOLL:
@@ -286,7 +291,106 @@ async def autopoll(delay):
     except Exception as e:
         log(f'autopoll threw {e}: {traceback.format_exc()}')
 
+def send_poll_output(cats):
+    for catname in cats:
+        output = cats[catname]
+        send(f'$begin {catname}'.encode("utf-8") + b'\n')
+        for line in output:
+            send(line.encode("utf-8") + b'\n')
+
+def get_echo_icanon(tty):
+    try:
+        attrs = termios.tcgetattr(tty)
+        return (bool(attrs[3] & termios.ECHO), bool(attrs[3] & termios.ICANON))
+    except Exception as e:
+        log(f'get_echo_icanon threw {e}: {traceback.format_exc()}')
+        return (False, False)
+
+async def watch_tty(proc, delay):
+    try:
+        while True:
+            poll_tty(proc)
+            await asyncio.sleep(delay)
+    except asyncio.CancelledError:
+        log('watch_tty canceled')
+        raise
+    except Exception as e:
+        log(f'watch_tty threw {e}: {traceback.format_exc()}')
+
+def poll_tty(proc):
+    log("Check TTY")
+    new_echo, new_icanon = get_echo_icanon(proc.master)
+    if new_echo != proc.echo or new_icanon != proc.icanon:
+        log(f'echo: {proc.echo}->{new_echo}, icanon: {proc.icanon}->{new_icanon}')
+        parts = [
+            ('+' if new_echo else '-') + 'echo',
+            ('+' if new_icanon else '-') + 'icanon']
+        print_tty(" ".join(parts))
+    proc.echo = new_echo
+    proc.icanon = new_icanon
+
 async def poll():
+    result = {}
+    ps_out = await poll_ps()
+    if ps_out is not None:
+        result["ps"] = ps_out
+    cpu_time_diff = await poll_cpu()
+    if cpu_time_diff is not None:
+        result["cpu"] = cpu_time_diff
+    return result
+
+mpstat_exists = None  # Global variable to cache the mpstat existence check
+
+async def check_mpstat_exists():
+    global mpstat_exists
+    if mpstat_exists is None:
+        try:
+            log("Checking if mpstat exists")
+            proc = await asyncio.create_subprocess_shell(
+                "mpstat -V",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            output, _ = await proc.communicate()
+            log(f'return code is {proc.returncode}')
+            mpstat_exists = proc.returncode == 0
+        except FileNotFoundError:
+            log("mpstat: file not found")
+            mpstat_exists = False
+
+
+async def poll_cpu():
+    operating_system = platform.system()
+    if operating_system == 'Darwin':  # macOS
+        command = "top -l 1 -n 0 | awk '/CPU usage/ {print $3}'"
+    elif operating_system == 'Linux':  # Linux
+        await check_mpstat_exists()
+        if not mpstat_exists:
+            return None
+        command = "mpstat -P ALL 1 1 | awk '/Average:/ && $2 == \"all\" {print 100 - $NF}'"
+    else:
+        return None
+    env = dict(os.environ)
+    env["LANG"] = "C"
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env)
+    log(f'poll_cpu: run {command} {proc}')
+    output, erroutput = await proc.communicate()
+    if proc.returncode == 0:
+        log(f'poll_cpu: successful return')
+        # Parse the output here
+        final = "=" + output.decode("utf-8").strip()
+        log(f'poll_cpu: return parsed output')
+        return [final]
+    log(f'poll_cpu: {command} failed with {proc.returncode}')
+    return None
+
+async def poll_ps():
     env = dict(os.environ)
     env["LANG"] = "C"
     proc = await asyncio.create_subprocess_shell(
@@ -295,14 +399,14 @@ async def poll():
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env)
-    log(f'poll: run ps {proc}')
+    log(f'poll_ps: run ps {proc}')
     output, erroutput = await proc.communicate()
     if proc.returncode == 0:
-        log(f'poll: successful return')
+        log(f'poll_ps: successful return')
         final = procmon_parse(output)
-        log(f'poll: return parsed output')
+        log(f'poll_ps: return parsed output')
         return final
-    log(f'poll: ps failed with {proc.returncode}')
+    log(f'poll_ps: ps failed with {proc.returncode}')
     return None
 
 async def register(pid):
@@ -414,6 +518,26 @@ def procmon_parse(output):
     return list(diff())
 
 
+async def save_and_exec(identifier, code):
+    log("begin save_and_exec")
+    try:
+        tmp = tempfile.NamedTemporaryFile(delete=False)
+        tmpname = tmp.name
+        log(f'save_and_exec: tmp={tmpname}')
+        tmp.write(code.encode("utf-8"))
+        tmp.close()
+        st = os.stat(tmpname)
+        os.chmod(tmpname, st.st_mode | stat.S_IEXEC)
+
+        e = dict(os.environ)
+        e["SELF"] = tmpname
+        await run_login_shell(identifier, "/bin/sh", ["sh", tmpname], os.getcwd(), e)
+    except Exception as e:
+        log(f'save_and_exec: {traceback.format_exc()}')
+        begin(identifier)
+        send_esc(f'Command failed: {e}')
+        end(identifier, 1)
+
 ## Commands
 
 async def handle_login(identifier, args):
@@ -423,24 +547,23 @@ async def handle_login(identifier, args):
     log(f'cwd={cwd} args={args}')
     cwd = os.path.expandvars(os.path.expanduser(cwd))
     had_args = len(args) > 0
-    guessed = guess_login_shell()
     if args:
-        login_shell = args[0]
-        del args[0]
-        argv0 = login_shell
-    else:
-        login_shell = guessed
-    if login_shell == guessed:
-        _, shell_name = os.path.split(login_shell)
-        argv0 = "-" + shell_name
+        args = ["-c", " ".join(args)]
+        log(f'Update args to {args}')
+    login_shell = guess_login_shell()
+    _, shell_name = os.path.split(login_shell)
+    argv0 = "-" + shell_name
 
-    log(f'Login shell is {login_shell}. Guessed shell is {guessed}. argv0 is {argv0}')
+    return await run_login_shell(identifier, login_shell, [argv0] + args, cwd, os.environ)
+
+async def run_login_shell(identifier, login_shell, argv, directory, environment):
+    log(f'run_login_shell: dir={directory} command={login_shell} argv={argv}')
     try:
         proc = await Process.run_tty(
             login_shell,
-            [argv0] + args,
-            cwd,
-            os.environ)
+            argv,
+            directory,
+            environment)
         log("login shell started")
         global PROCESSES
         proc.login = True
@@ -450,7 +573,7 @@ async def handle_login(identifier, args):
         end(identifier, 0)
         await proc.handle_read(make_monitor_process(proc, True))
     except Exception as e:
-        log(f'handle_login: {e}')
+        log(f'run_login_shell: {e}')
         begin(identifier)
         send_esc(f'Command failed: {e}')
         end(identifier, 1)
@@ -466,11 +589,16 @@ async def handle_run(identifier, args):
         send_esc(proc.pid)
         end(identifier, 0)
         await proc.handle_read(make_monitor_process(proc, False))
+
+        start_tty_task(identifier, proc)
     except Exception as e:
         log(f'handle_run: {e}')
         begin(identifier)
         end(identifier, 1)
     return False
+
+def start_tty_task(identifier, proc):
+    proc.tty_task = asyncio.create_task(watch_tty(proc, 1))
 
 def reset():
     global REGISTERED
@@ -497,23 +625,86 @@ async def handle_save(identifier, args):
     begin(identifier)
     end(identifier, code)
 
+async def handle_eval(identifier, args):
+    log(f'handle_eval {identifier} [{len(args[0])} bytes]')
+    await save_and_exec(identifier, base64.b64decode(args[0]).decode('latin1'))
+
 async def handle_file(identifier, args):
-    log(f'handle_ls {identifier} {args}')
+    log(f'handle_file {identifier} {args}')
     if len(args) < 2:
         begin(identifier)
         end(identifier, 1)
         return
     begin(identifier)
-    if args[0] == "ls":
+    sub = args[0]
+    if sub == "ls":
         await handle_file_ls(identifier, base64.b64decode(args[1]).decode('latin1'), args[2])
         return
-    if args[0] == "fetch":
-        await handle_file_fetch(identifier, base64.b64decode(args[1]).decode('latin1'))
+    if sub == "fetch":
+        if len(args) >= 4:
+            await handle_file_fetch(identifier, base64.b64decode(args[1]).decode('latin1'), int(args[2]), int(args[3]))
+        else:
+            await handle_file_fetch(identifier, base64.b64decode(args[1]).decode('latin1'), 0, float('inf'))
         return
-    if args[0] == "stat":
+        return
+    if sub == "stat":
         await handle_file_stat(identifier, base64.b64decode(args[1]).decode('latin1'))
         return
-    log(f'unrecognized subcommand args[0]')
+    if sub == "suggest":
+        await handle_file_suggest(identifier,
+                                  base64.b64decode(args[1]).decode('latin1'),
+                                  args[2],
+                                  base64.b64decode(args[3]).decode('latin1'),
+                                  args[4])
+        return
+    if sub == "rm":
+        i = 1
+        recursive = False
+        while i < len(args) and args[i].startswith("-"):
+            if args[i] == "-r":
+                recursive = True
+            i += 1
+        if i == len(args):
+            end(identifier, 1)
+            return
+        await handle_file_rm(identifier, base64.b64decode(args[i]).decode('latin1'), recursive)
+        return
+    if sub == "ln":
+        await handle_file_ln(
+            identifier,
+            base64.b64decode(args[1]).decode('latin1'),
+            base64.b64decode(args[2]).decode('latin1'))
+        return
+    if sub == "mv":
+        await handle_file_mv(
+            identifier,
+            base64.b64decode(args[1]).decode('latin1'),
+            base64.b64decode(args[2]).decode('latin1'))
+        return
+    if sub == "mkdir":
+        await handle_file_mkdir(identifier, base64.b64decode(args[1]).decode('latin1'))
+        return
+    if sub == "create":
+        await handle_file_create(identifier,
+                                 base64.b64decode(args[1]).decode('latin1'),
+                                 base64.b64decode("".join(args[2:])))
+        return
+    if sub == "append":
+        await handle_file_append(identifier,
+                                 base64.b64decode(args[1]).decode('latin1'),
+                                 base64.b64decode("".join(args[2:])))
+        return
+    if sub == "utime":
+        await handle_file_utime(identifier,
+                                base64.b64decode(args[1]).decode('latin1'),
+                                int(float(args[2])))
+        return
+    if sub == "chmod-u":
+        await handle_file_chmod_u(identifier,
+                                  base64.b64decode(args[1]).decode('latin1'),
+                                  args[2])
+        return
+    log(f'unrecognized subcommand {sub}')
     end(identifier, 1)
 
 def permissions(path):
@@ -587,23 +778,98 @@ async def handle_file_ls(identifier, path, sorting):
     except Exception as e:
         file_error(identifier, e, path)
 
+def send_remote_file(path):
+    pp = permissions(os.path.abspath(os.path.join(path, os.pardir)))
+    s = os.stat(path, follow_symlinks=False)
+    obj = remotefile(pp, path, s)
+    j = json.dumps(obj)
+    send_esc(j)
+
 async def handle_file_stat(identifier, path):
     log(f'handle_file_stat {identifier} {path}')
     try:
-        pp = permissions(os.path.abspath(os.path.join(path, os.pardir)))
-        s = os.stat(path, follow_symlinks=False)
-        obj = remotefile(pp, path, s)
-        j = json.dumps(obj)
-        send_esc(j)
+        send_remote_file(path)
         end(identifier, 0)
     except Exception as e:
         file_error(identifier, e, path)
 
-async def handle_file_fetch(identifier, path):
+async def handle_file_suggest(identifier, prefix, directories, pwd, permissions):
+    log(f'handle_file_suggest({identifier}, {prefix}, {directories}, {pwd}, {permissions})')
+    combined = []
+    max_count = 1
+    for relative_directory in decode_base64_directories(directories):
+        if relative_directory.startswith('/'):
+            directory = relative_directory
+        else:
+            if not pwd:
+                continue
+            directory = os.path.join(pwd, relative_directory)
+        temp = await really_find_completions_with_prefix(prefix, directory, max_count, 'x' in permissions)
+        temp.sort()
+        combined.extend([entry.removeprefix(prefix) for entry in temp])
+        if len(combined) > max_count:
+            break
+    send_esc(json.dumps(combined))
+    end(identifier, 0)
+
+def decode_base64_directories(encoded_directories):
+    decoded_directories = []
+    directories = encoded_directories.split()
+
+    for directory in directories:
+        decoded_directory = base64.b64decode(directory).decode('utf-8')
+        decoded_directories.append(decoded_directory)
+
+    return decoded_directories
+
+async def really_find_completions_with_prefix(prefix, directory, max_count, executable):
+    if not prefix.startswith('/') and directory.startswith('/'):
+        temp = await really_find_completions_with_prefix(
+            os.path.join(directory, prefix), '', max_count, executable)
+        prefix_to_remove = directory if directory.endswith('/') else directory + '/'
+        return [entry.removeprefix(prefix_to_remove) for entry in temp]
+
+    if prefix.endswith('/'):
+        return await contents_of_directory(prefix, '', executable, max_count)
+
+    results = []
+    is_directory = False
+    exists = os.path.exists(prefix)
+    if exists:
+        is_directory = os.path.isdir(prefix)
+        if is_directory:
+            results.append(prefix + '/')
+
+    container = os.path.dirname(prefix)
+    if len(container) == 0:
+        return results
+
+    results.extend(await contents_of_directory(container, os.path.basename(prefix), executable, max_count))
+    return results
+
+async def contents_of_directory(directory, prefix, executable, max_count):
+    relative = await asyncio.get_event_loop().run_in_executor(None, lambda: os.listdir(directory))
+    result = []
+    for path in relative:
+        if len(result) >= max_count:
+            break
+        file_name = os.path.basename(path)
+        if len(prefix) == 0 or file_name.startswith(prefix):
+            full_path = os.path.join(directory, path)
+            if not executable or os.access(full_path, os.X_OK):
+                result.append(full_path)
+    return result
+
+async def handle_file_fetch(identifier, path, offset, size):
     log(f'handle_file_fetch {identifier} {path}')
     try:
         with open(path, "rb") as f:
-            content = f.read()
+            if offset > 0:
+                f.seek(offset)
+            if size == float('inf'):
+                content = f.read()
+            else:
+                content = f.read(size)
             log(type(content))
             encoded = base64.encodebytes(content).decode('utf8')
             for line in encoded.split("\n"):
@@ -614,6 +880,92 @@ async def handle_file_fetch(identifier, path):
     except Exception as e:
         file_error(identifier, e, path)
 
+async def handle_file_rm(identifier, path, recursive):
+    log(f'handle_file_rm {identifier} {path} {recursive}')
+    try:
+        if os.path.isdir(path):
+            if recursive:
+                shutil.rmtree(path)
+            else:
+                os.rmdir(path)
+        else:
+            os.unlink(path)
+        log("ending")
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, path)
+
+async def handle_file_ln(identifier, pointTo, symlink):
+    log(f'handle_file_ln {pointTo} {symlink}')
+    try:
+        os.symlink(pointTo, symlink)
+        send_remote_file(symlink)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, symlink)
+
+async def handle_file_mv(identifier, source, dest):
+    log(f'handle_file_mv {source} {dest}')
+    try:
+        shutil.move(source, dest)
+        send_remote_file(dest)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, source)
+
+async def handle_file_mkdir(identifier, path):
+    log(f'handle_file_mkdir {identifier} {path}')
+    try:
+        os.mkdir(path)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, path)
+
+async def handle_file_create(identifier, path, content):
+    log(f'handle_file_create {identifier} {path} length={len(content)} bytes')
+    try:
+        with open(path, "wb") as f:
+            f.write(content)
+        send_remote_file(path)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, path)
+
+async def handle_file_append(identifier, path, content):
+    log(f'handle_file_append {identifier} {path} length={len(content)} bytes')
+    try:
+        with open(path, "ab") as f:
+            f.write(content)
+        send_remote_file(path)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, path)
+
+async def handle_file_utime(identifier, path, date):
+    log(f'handle_file_utime {identifier} {path} {date}')
+    try:
+        os.utime(path, (date, date))
+        send_remote_file(path)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, path)
+
+async def handle_file_chmod_u(identifier, path, mode):
+    log(f'handle_file_chmod_u {identifier} {path} {mode}')
+    try:
+        s = os.stat(path, follow_symlinks=False)
+        value = s.st_mode & ~(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        if "r" in mode:
+            value |= stat.S_IRUSR
+        if "w" in mode:
+            value |= stat.S_IWUSR
+        if "x" in mode:
+            value |= stat.S_IXUSR
+        os.chmod(path, value)
+        send_remote_file(path)
+        end(identifier, 0)
+    except Exception as e:
+        file_error(identifier, e, path)
 
 async def handle_recover(identifier, args):
     log("handle_recover")
@@ -671,15 +1023,13 @@ async def handle_autopoll(identifier, args):
         return
     AUTOPOLL_TASK = asyncio.create_task(autopoll(1.0))
 
-
 async def handle_poll(identifier, args):
     log(f'handle_poll({identifier}, {args})')
     output = await poll()
-    log(f'handle_poll({identifier}, {args}): read {len(output)} bytes of output')
+    log(f'handle_poll({identifier}, {args}): read {len(output)} categories of output')
     begin(identifier)
     if output is not None:
-        for line in output:
-            send_esc(line)
+        send_poll_output(output)
         end(identifier, 0)
     else:
         end(identifier, 1)
@@ -757,6 +1107,7 @@ def make_monitor_process(proc, islogin):
             COMPLETED.append(proc.pid)
             return cleanup()
         print_output(makeid(), proc.pid, channel, islogin, value)
+        poll_tty(proc)
         return None
     return monitor_process
 
@@ -767,6 +1118,9 @@ def print_output(identifier, pid, channel, islogin, data):
         send_esc(f'%output {identifier} {pid} {channel} {DEPTH}')
     send(data)
     send_esc(f'%end {identifier}')
+
+def print_tty(message):
+    send_esc(f'%notif tty {message}')
 
 ## Infra
 
@@ -926,6 +1280,7 @@ HANDLERS = {
     "recover": handle_recover,
     "save": handle_save,
     "file": handle_file,
+    "eval": handle_eval
 }
 
 def main():

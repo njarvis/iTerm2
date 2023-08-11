@@ -22,9 +22,9 @@ class CommandLineProvidedAccount: NSObject, PasswordManagerAccount {
         return "\(accountName)\u{2002}—\u{2002}\(userName)"
     }
 
-    func fetchPassword(_ completion: @escaping (String?, Error?) -> ()) {
+    func fetchPassword(_ completion: @escaping (String?, String?, Error?) -> ()) {
         configuration.getPasswordRecipe.transformAsync(inputs: CommandLinePasswordDataSource.AccountIdentifier(value: identifier)) { result, error in
-            completion(result, error)
+            completion(result?.password, result?.otp, error)
         }
     }
 
@@ -164,7 +164,8 @@ class CommandLinePasswordDataSource: NSObject {
         var callbacks: Callbacks? = nil
         var useTTY = false
         var executionQueue = DispatchQueue.global()
-        static let ioQueue = DispatchQueue(label: "com.iterm2.pwcmd-io")
+        // This queue will block on the main queue, so it has to have the same priority.
+        static let ioQueue = DispatchQueue(label: "com.iterm2.pwcmd-io", qos: .userInitiated)
 
         struct Callbacks {
             var callbackQueue: DispatchQueue
@@ -569,6 +570,65 @@ class CommandLinePasswordDataSource: NSObject {
         }
     }
 
+    struct AsyncCommandRecipe<Inputs, Outputs>: Recipe {
+        private let asyncInputTransformer: (Inputs, @escaping (Result<CommandLinePasswordDataSourceExecutableCommand, Error>) -> ()) -> Void
+        private let asyncRecovery: (Error, @escaping (Error?) -> ()) -> Void
+        private let asyncOutputTransformer: (Output, @escaping (Result<Outputs, Error>) -> ()) -> Void
+
+        func transformAsync(inputs: Inputs, completion: @escaping (Outputs?, Error?) -> ()) {
+            asyncInputTransformer(inputs) { result in
+                switch result {
+                case .success(let command):
+                    DLog("\(inputs) -> \(command)")
+                    execAsync(command, retriesLeft: 3, completion: completion)
+                    return
+                case .failure(let error):
+                    completion(nil, error)
+                }
+            }
+        }
+
+        private func execAsync(_ command: CommandLinePasswordDataSourceExecutableCommand,
+                               retriesLeft: Int,
+                               completion: @escaping (Outputs?, Error?) -> ()) {
+            command.execAsync { output, error in
+                DispatchQueue.main.async {
+                    if let output = output {
+                        asyncOutputTransformer(output) { result in
+                            switch result {
+                            case .success(let outputs):
+                                completion(outputs, nil)
+                                return
+                            case .failure(let error):
+                                guard retriesLeft > 0 else {
+                                    completion(nil, error)
+                                    return
+                                }
+                                asyncRecovery(error) { maybeError in
+                                    if let error = maybeError {
+                                        completion(nil, error)
+                                        return
+                                    }
+                                    self.execAsync(command,
+                                                   retriesLeft: retriesLeft - 1,
+                                                   completion: completion)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        init(inputTransformer: @escaping (Inputs, @escaping (Result<CommandLinePasswordDataSourceExecutableCommand, Error>) -> ()) -> Void,
+             recovery: @escaping (Error, @escaping (Error?) -> ()) -> Void,
+             outputTransformer: @escaping (Output, @escaping (Result<Outputs, Error>) -> ()) -> Void) {
+            self.asyncInputTransformer = inputTransformer
+            self.asyncRecovery = recovery
+            self.asyncOutputTransformer = outputTransformer
+        }
+    }
+
     struct CommandRecipe<Inputs, Outputs>: Recipe {
         private let inputTransformer: (Inputs) throws -> (CommandLinePasswordDataSourceExecutableCommand)
         private let recovery: (Error) throws -> Void
@@ -785,9 +845,14 @@ class CommandLinePasswordDataSource: NSObject {
         let password: String
     }
 
+    struct Password {
+        var password: String
+        var otp: String?
+    }
+
     struct Configuration {
         let listAccountsRecipe: AnyRecipe<Void, [Account]>
-        let getPasswordRecipe: AnyRecipe<AccountIdentifier, String>
+        let getPasswordRecipe: AnyRecipe<AccountIdentifier, Password>
         let setPasswordRecipe: AnyRecipe<SetPasswordRequest, Void>
         let deleteRecipe: AnyRecipe<AccountIdentifier, Void>
         let addAccountRecipe: AnyRecipe<AddRequest, AccountIdentifier>

@@ -10,7 +10,8 @@ typedef enum iTermVertexInputIndex {
     iTermVertexInputIndexOffset,
     iTermVertexInputIndexCursorDescription,
     iTermVertexInputIndexDefaultBackgroundColorInfo,  // Points at iTermMetalBackgroundColorInfo
-    iTermVertexTextInfo
+    iTermVertexTextInfo,
+    iTermVertexColorArray  // Points at per-quad vector_float4 color
 } iTermVertexInputIndex;
 
 typedef enum iTermTextureIndex {
@@ -91,6 +92,11 @@ typedef struct {
     // Offset of source texture in pixels.
     vector_float2 textureOffset;
 } iTermMarkPIU;
+
+typedef struct {
+    float y;
+    vector_float4 color;
+} iTermLineStyleMarkPIU;
 
 typedef struct {
     // Offset from vertex

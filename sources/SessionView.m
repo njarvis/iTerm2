@@ -45,7 +45,7 @@
 
 static int nextViewId;
 
-static const CGFloat iTermGetSessionViewTitleHeight() {
+static const CGFloat iTermGetSessionViewTitleHeight(void) {
     return iTermGetStatusBarHeight() + 1;
 }
 
@@ -749,6 +749,32 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     _metalClipView.legacyView = _legacyView;
 }
 
+- (void)insertSubview:(NSView *)subview atIndex:(NSInteger)index {
+    [super insertSubview:subview atIndex:index];
+    [self sanityCheckSubviewOrder];
+}
+
+- (void)addSubview:(NSView *)view positioned:(NSWindowOrderingMode)place relativeTo:(NSView *)otherView {
+    [super addSubview:view positioned:place relativeTo:otherView];
+    [self sanityCheckSubviewOrder];
+}
+
+- (void)sanityCheckSubviewOrder {
+    NSInteger l = [self.subviews indexOfObjectPassingTest:^BOOL(__kindof NSView * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        return obj == _legacyView;
+    }];
+    NSInteger s = [self.subviews indexOfObjectPassingTest:^BOOL(__kindof NSView * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        return obj == _scrollview;
+    }];
+    if (l != NSNotFound && s != NSNotFound && l > s)  {
+        NSString *message = [NSString stringWithFormat:@"Wrong subview order.\n%@\n%@", [self subviews], [NSThread callStackSymbols]];
+#if BETA
+        ITCriticalError(NO, @"%@", message);
+#else
+        DLog(@"%@", message);
+#endif
+    }
+}
 - (void)installMetalViewWithDataSource:(id<iTermMetalDriverDataSource>)dataSource NS_AVAILABLE_MAC(10_11) {
     if (_metalView) {
         [self removeMetalView];
@@ -867,11 +893,12 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
 - (void)addSubviewBelowFindView:(NSView *)aView {
     if ([aView isKindOfClass:[PTYScrollView class]]) {
-        NSInteger i = [self.subviews indexOfObjectPassingTest:^BOOL(__kindof NSView * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
-            return [obj isKindOfClass:[MTKView class]];
+        NSIndexSet *indexes = [self.subviews indexesOfObjectsPassingTest:^BOOL(__kindof NSView * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+            return [obj isKindOfClass:[MTKView class]] || obj == _legacyView;
         }];
-        if (i != NSNotFound) {
-            // Insert scrollview after metal view
+        if (indexes.count) {
+            // Insert scrollview after metal view and legacy view
+            const NSUInteger i = [indexes lastIndex];
             [self addSubview:aView positioned:NSWindowAbove relativeTo:self.subviews[i]];
             return;
         }
@@ -895,6 +922,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
 - (void)resizeSubviewsWithOldSize:(NSSize)oldBoundsSize {
     [self updateLayout];
+    [self updateTrackingAreas];
 }
 
 - (NSRect)frameForLegacyScroller {
@@ -922,6 +950,9 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
         }
         if (self.showBottomStatusBar) {
             [self updateBottomStatusBarFrame];
+        }
+        if (self.composerHeight > 0) {
+            [self.delegate sessionViewUpdateComposerFrame];
         }
     } else {
         DLog(@"Keep everything top aligned.");
@@ -1119,42 +1150,99 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     }
 }
 
+static const NSInteger SessionViewNumberOfTrackingAreas = 2;
+
+typedef struct {
+    NSRect rect;
+    NSTrackingAreaOptions options;
+} iTermTrackingAreaSpec;
+
+// specs points at space for SessionViewNumberOfTrackingAreas values.
+- (void)getDesiredTrackingRectFrames:(iTermTrackingAreaSpec *)specs {
+    NSTrackingAreaOptions trackingOptions;
+    trackingOptions = (NSTrackingMouseEnteredAndExited |
+                       NSTrackingActiveAlways |
+                       NSTrackingEnabledDuringMouseDrag);
+    if ([self.delegate sessionViewCaresAboutMouseMovement]) {
+        DLog(@"Track mouse moved events");
+        trackingOptions |= NSTrackingMouseMoved;
+    } else {
+        DLog(@"Do not track mouse moved events");
+    }
+    const iTermTrackingAreaSpec value[SessionViewNumberOfTrackingAreas] = {
+        {
+            .rect = self.bounds,
+            .options=trackingOptions
+        },
+        {
+            .rect = [self offscreenCommandLineFrame],
+            .options = NSTrackingActiveInActiveApp | NSTrackingMouseEnteredAndExited
+        }
+    };
+    memmove(specs, value, sizeof(value));
+}
+
+
 // It's very expensive for PTYTextView to own its own tracking events because its frame changes
 // constantly, plus it can miss mouse exit events and spurious mouse enter events (issue 3345).
 // I believe it also caused hangs (issue 3974).
 - (void)updateTrackingAreas {
-    DLog(@"updateTrackingAreas\n%@", [NSThread callStackSymbols]);
-    if ([self window]) {
-        NSTrackingAreaOptions trackingOptions;
-        trackingOptions = (NSTrackingMouseEnteredAndExited |
-                           NSTrackingActiveAlways |
-                           NSTrackingEnabledDuringMouseDrag);
-        if ([self.delegate sessionViewCaresAboutMouseMovement]) {
-            DLog(@"Track mouse moved events");
-            trackingOptions |= NSTrackingMouseMoved;
-        } else {
-            DLog(@"Do not track mouse moved events");
-        }
+    [super updateTrackingAreas];
+    if ([self window] && [self shouldUpdateTrackingAreas]) {
         while (self.trackingAreas.count) {
             [self removeTrackingArea:self.trackingAreas[0]];
         }
-        NSTrackingArea *trackingArea = [[NSTrackingArea alloc] initWithRect:self.bounds
-                                                                    options:trackingOptions
-                                                                      owner:self
-                                                                   userInfo:nil];
-        [self addTrackingArea:trackingArea];
+
+        iTermTrackingAreaSpec specs[SessionViewNumberOfTrackingAreas];
+        [self getDesiredTrackingRectFrames:specs];
+        for (NSInteger i = 0; i < SessionViewNumberOfTrackingAreas; i++) {
+            NSTrackingArea *trackingArea = [[NSTrackingArea alloc] initWithRect:specs[i].rect
+                                                                        options:specs[i].options
+                                                                          owner:self
+                                                                       userInfo:nil];
+            [self addTrackingArea:trackingArea];
+        }
     }
 }
 
+- (BOOL)shouldUpdateTrackingAreas {
+    iTermTrackingAreaSpec specs[SessionViewNumberOfTrackingAreas];
+    if (self.trackingAreas.count != SessionViewNumberOfTrackingAreas) {
+        DLog(@"Must initialize tracking areas");
+        return YES;
+    }
+    [self getDesiredTrackingRectFrames:specs];
+    for (NSInteger i = 0; i < SessionViewNumberOfTrackingAreas; i++) {
+        NSTrackingArea *area = self.trackingAreas[i];
+        if (!NSEqualRects(area.rect, specs[i].rect)) {
+            DLog(@"Found unequal rect");
+            return YES;
+        }
+        if (area.options != specs[i].options) {
+            DLog(@"Found unequal options");
+            return YES;
+        }
+    }
+    DLog(@"Existing tracking areas are just fine");
+    return NO;
+}
+
+- (NSRect)offscreenCommandLineFrame {
+    return [self.delegate sessionViewOffscreenCommandLineFrameForView:self];
+}
+
 - (void)mouseEntered:(NSEvent *)theEvent {
+    DLog(@"enter %@", theEvent.trackingArea);
     [_delegate sessionViewMouseEntered:theEvent];
 }
 
 - (void)mouseExited:(NSEvent *)theEvent {
+    DLog(@"exit %@", theEvent.trackingArea);
     [_delegate sessionViewMouseExited:theEvent];
 }
 
 - (void)mouseMoved:(NSEvent *)theEvent {
+    DLog(@"Mouse moved");
     [_delegate sessionViewMouseMoved:theEvent];
 }
 
@@ -1466,6 +1554,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    DLog(@"performDragOperation: %@", sender);
     BOOL result = [_delegate sessionViewPerformDragOperation:sender];
     [_delegate sessionViewDraggingExited:sender];
     return result;
@@ -1654,6 +1743,7 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
         size.height -= iTermGetStatusBarHeight();
         DLog(@"maximumPossibleScrollViewContentSize: sub bottom status bar height. size=%@", NSStringFromSize(size));
     }
+    DLog(@"maximumPossibleScrollViewContentSize: size=%@", NSStringFromSize(size));
     Class verticalScrollerClass = [[[self scrollview] verticalScroller] class];
     if (![[self scrollview] hasVerticalScroller]) {
         verticalScrollerClass = nil;
@@ -1707,16 +1797,16 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 - (void)updateScrollViewFrame {
     DLog(@"update scrollview frame");
     CGFloat titleHeight = _showTitle ? _title.frame.size.height : 0;
-    CGFloat bottomStatusBarHeight = _showBottomStatusBar ? iTermGetStatusBarHeight() : 0;
+    CGFloat reservedSpaceOnBottom = _showBottomStatusBar ? iTermGetStatusBarHeight() : 0;
     NSSize proposedSize = NSMakeSize(self.frame.size.width,
-                                     self.frame.size.height - titleHeight - bottomStatusBarHeight);
+                                     self.frame.size.height - titleHeight - reservedSpaceOnBottom);
     NSSize size = [_delegate sessionViewScrollViewWillResize:proposedSize];
     NSRect rect = NSMakeRect(0,
-                             bottomStatusBarHeight + proposedSize.height - size.height,
+                             reservedSpaceOnBottom + proposedSize.height - size.height,
                              size.width,
                              size.height);
     DLog(@"titleHeight=%@ bottomStatusBarHeight=%@ proposedSize=%@ size=%@ rect=%@",
-         @(titleHeight), @(bottomStatusBarHeight), NSStringFromSize(proposedSize), NSStringFromSize(size),
+         @(titleHeight), @(reservedSpaceOnBottom), NSStringFromSize(proposedSize), NSStringFromSize(size),
          NSStringFromRect(rect));
     [self scrollview].frame = rect;
     DLog(@"Scrollview frame is now %@", NSStringFromRect(self.scrollview.frame));

@@ -32,8 +32,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (const screen_char_t *)drawingHelperLineAtIndex:(int)line;
 - (const screen_char_t *)drawingHelperLineAtScreenIndex:(int)line;
 
-- (iTermTextExtractor * _Nullable)drawingHelperTextExtractor;
-
 - (NSArray * _Nullable)drawingHelperCharactersWithNotesOnLine:(int)line;
 
 - (void)drawingHelperUpdateFindCursorView;
@@ -51,7 +49,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (PTYFontInfo *)drawingHelperFontForChar:(UniChar)ch
                                 isComplex:(BOOL)isComplex
                                renderBold:(BOOL *)renderBold
-                             renderItalic:(BOOL *)renderItalic;
+                             renderItalic:(BOOL *)renderItalic
+                                 remapped:(UTF32Char *)ch;
 
 - (NSData * _Nullable)drawingHelperMatchesOnLine:(int)line;
 

@@ -100,6 +100,8 @@ class SelectionExtractor: NSObject {
     fileprivate var canceled: Bool {
         return _canceled.value
     }
+    @objc var progress: Progress?
+    @objc var addTimestamps = false
 
     // Does not include selected text on lines before |minimumLineNumber|.
     // Returns an NSAttributedString* if style is iTermCopyTextStyleAttributed, or an NSString* if not.
@@ -138,11 +140,22 @@ class SelectionExtractor: NSObject {
 
     }
 
+    private func weight(_ selection: iTermSelection) -> Double {
+        return Double(selection.approximateNumberOfLines)
+    }
+
+    private func weight(_ range: VT100GridAbsWindowedRange) -> Double {
+        return Double(range.coordRange.end.y - range.coordRange.start.y + 1)
+    }
+
     fileprivate func extract(_ result: Destination,
                              attributeProvider: ((screen_char_t, iTermExternalAttribute) -> [AnyHashable: Any])?) {
         DLog("Begin extracting \(String(describing: selection.allSubSelections)) self=\(self)")
         var cap = maxBytes > 0 ? maxBytes : Int32.max
+        var fractionSoFar = Double(0)
+        let totalWeight = weight(selection)
         selection.enumerateSelectedAbsoluteRanges { [unowned self] absRange, stopPtr, eol in
+            let subselectionWeight = weight(absRange) / totalWeight
             if _canceled.value {
                 return
             }
@@ -165,7 +178,14 @@ class SelectionExtractor: NSObject {
                     }
                 }
                 let extractor = iTermTextExtractor(dataSource: snapshot)
+                if let progress {
+                    progress.transform = { localFraction in
+                        fractionSoFar + localFraction * subselectionWeight
+                    }
+                    extractor.progress = progress
+                }
                 atomicExtractor.set(extractor)
+                extractor.addTimestamps = addTimestamps
                 let content = extractor.content(in: range,
                                                 attributeProvider: attributeProvider,
                                                 nullPolicy: .kiTermTextExtractorNullPolicyMidlineAsSpaceIgnoreTerminal,
@@ -179,6 +199,7 @@ class SelectionExtractor: NSObject {
                 atomicExtractor.set(nil)
                 result.appendSelectionContent(content, newline: eol)
             }
+            fractionSoFar += subselectionWeight
         }
         DLog("Finish extracting \(String(describing: selection.allSubSelections)). canceled=\(_canceled.value) self=\(self)")
     }
@@ -219,7 +240,7 @@ class SGRSelectionExtractor: StringSelectionExtractor {
         let temp = NSMutableAttributedString()
         super.extract(temp, attributeProvider: attributeProvider)
         let result = NSMutableString()
-        let sgr0 = "\u{1b}[0"
+        let sgr0 = "\u{1b}[0m"
         temp.enumerateAttribute(sgrAttribute,
                                 in: NSMakeRange(0, temp.length),
                                 options: []) { value, range, stop in
@@ -257,7 +278,10 @@ class AttributedStringSelectionExtractor: SelectionExtractor {
 
 @objc(iTermSelectionPromise)
 class SelectionPromise: NSObject {
-    private static let queue = DispatchQueue(label: "com.iterm2.selection")
+    private static let queue: DispatchQueue = {
+        let queue = DispatchQueue(label: "com.iterm2.selection")
+        return queue
+    }()
 
     @objc
     class func string(_ extractor: StringSelectionExtractor?,

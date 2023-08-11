@@ -84,14 +84,14 @@ class ComplexCharRegistry: NSObject {
 
     @objc
     func charToString(_ char: screen_char_t) -> NSString? {
+        if char.image != 0 {
+            return ""
+        }
         return string(for: char.code, isComplex: char.complexChar != 0)
     }
 
     @objc(stringForCode:isComplex:)
     func string(for code: unichar, isComplex: Bool) -> NSString? {
-        if code == UNICODE_REPLACEMENT_CHAR {
-            return UnicodeReplacementString as NSString
-        }
         if isComplex {
             return mutex.sync { impl.string(for: Int(code)) }
         }
@@ -297,3 +297,19 @@ extension NSString {
         }
     }
 }
+
+extension screen_char_t {
+    var baseCharacter: UTF32Char {
+        if image != 0 {
+            return 0
+        }
+        if complexChar == 0 {
+            return UTF32Char(code)
+        }
+        guard let string = ComplexCharRegistry.instance.charToString(self) else {
+            return 0
+        }
+        return string.longCharacter(at: 0)
+    }
+}
+

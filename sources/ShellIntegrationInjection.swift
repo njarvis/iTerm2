@@ -126,6 +126,10 @@ fileprivate class ShellIntegrationInjectionFactory {
         case bash = "bash"
 
         init?(path: String) {
+            if path == "/bin/bash" {
+                // Refuse to work with macOS’s bash. See note in ProfilesGeneralPreferencesViewController.
+                return nil
+            }
             let name = path.lastPathComponent.lowercased().removing(prefix: "-")
             guard let shell = Shell(rawValue: String(name)) else {
                 return nil
@@ -135,6 +139,15 @@ fileprivate class ShellIntegrationInjectionFactory {
     }
 
     func createInjector(shellIntegrationDir: String, path: String) -> ShellIntegrationInjecting? {
+        let login = "login"
+        if path == login {
+            DLog("Want to create injector for `login`")
+            if let shell = iTermOpenDirectory.userShell(), shell != login {
+                DLog("User shell is\(shell)")
+                return createInjector(shellIntegrationDir: shellIntegrationDir, path: shell)
+            }
+            return nil
+        }
         switch Shell(path: path) {
         case .none:
             return nil

@@ -21,6 +21,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) LineBlock *firstBlock;
 @property (nonatomic) BOOL resizing;
 @property (nonatomic, readonly) NSString *dumpForCrashlog;
+@property (nullable, nonatomic) NSNumber *lastUncompressedHeadBlock;
+@property (nullable, nonatomic) NSNumber *firstUncompressedTailBlock;
+
+// Automatically gets set to YES when any line block gets decompressed.
+@property (nonatomic) BOOL needsPurge;
 
 - (NSString *)dumpWidths:(NSSet<NSNumber *> *)widths;
 
@@ -59,6 +64,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)sanityCheck;
 - (void)oopsWithWidth:(int)width block:(void (^)(void))block;
 - (NSSet<NSNumber *> *)cachedWidths;
+- (NSInteger)numberOfWrappedLinesForWidth:(int)width
+                          upToBlockAtIndex:(NSInteger)limit;
+- (void)findUncompressedBlocks;
 
 @end
 

@@ -28,6 +28,7 @@
 #import "ITAddressBookMgr.h"
 
 #import "DebugLogging.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermDynamicProfileManager.h"
 #import "iTermExpressionEvaluator.h"
 #import "iTermHotKeyController.h"
@@ -57,8 +58,8 @@ const NSInteger iTermMaxInitialSessionSize = 1250;
 
 static NSMutableArray<NSNotification *> *sDelayedNotifications;
 
-static NSString *iTermPathToSSH(void) {
-    return [[NSBundle bundleForClass:[ITAddressBookMgr class]] pathForResource:@"it2ssh" ofType:nil];
+NSString *iTermPathToSSH(void) {
+    return [[NSBundle bundleForClass:[ITAddressBookMgr class]] pathForResource:@"utilities/it2ssh" ofType:nil];
 }
 
 iTermWindowType iTermWindowDefaultType(void) {
@@ -282,8 +283,12 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
     return [plist colorValue];
 }
 
++ (NSFont *)defaultFont {
+    return [NSFont userFixedPitchFontOfSize:0.0] ?: [NSFont systemFontOfSize:[NSFont systemFontSize]];
+}
+
 + (NSFont *)fontWithDesc:(NSString *)fontDesc {
-    return [fontDesc fontValue];
+    return [fontDesc fontValue] ?: [self defaultFont];
 }
 
 - (void)setBookmarks:(NSArray *)newBookmarksArray defaultGuid:(NSString *)guid {
@@ -690,13 +695,19 @@ iTermWindowType iTermThemedWindowType(iTermWindowType windowType) {
         NSString *command = bookmark[KEY_COMMAND_LINE];
         if ([[command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet] ] length] > 0) {
             if (ssh) {
-                NSString *wrappedCommand = [NSString stringWithFormat:@"%@ %@",
+                NSDictionary *dict = bookmark[KEY_SSH_CONFIG];
+                iTermSSHConfiguration *config = [[iTermSSHConfiguration alloc] initWithDictionary:dict];
+                if (!config.sshIntegration) {
+                    return [NSString stringWithFormat:@"ssh %@", command];
+                }
+                NSString *wrappedCommand = [NSString stringWithFormat:@"'%@' %@",
                                             iTermPathToSSH(),
                                             command];
                 command = [NSString stringWithFormat:@"/usr/bin/login -fpq %@ %@ -c %@",
                            [NSUserName() stringWithBackslashEscapedShellCharactersIncludingNewlines:YES],
-                           [iTermOpenDirectory userShell],
+                           [iTermOpenDirectory userShell] ?: @"/bin/zsh",
                            [wrappedCommand stringWithBackslashEscapedShellCharactersIncludingNewlines:YES]];
+                DLog(@"wrappedCommand=%@, command=%@", wrappedCommand, command);
             }
             return command;
         }

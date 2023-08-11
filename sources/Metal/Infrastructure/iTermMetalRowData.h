@@ -10,11 +10,13 @@
 #import "iTermData.h"
 #import "iTermMarkRenderer.h"
 
+@class ScreenCharArray;
 @class iTermMetalImageRun;
 
 NS_CLASS_AVAILABLE(10_11, NA)
 @interface iTermMetalRowData : NSObject
-@property (nonatomic) int y;
+@property (nonatomic) int y;  // 0 = top of screen
+@property (nonatomic) int line;  // 0 = top of history
 
 // iTermMetalGlyphKey
 @property (nonatomic, strong) iTermGlyphKeyData *keysData;
@@ -26,7 +28,7 @@ NS_CLASS_AVAILABLE(10_11, NA)
 @property (nonatomic, strong) iTermData *backgroundColorRLEData;
 
 // screen_char_t
-@property (nonatomic, strong) const iTermData *const lineData;
+@property (nonatomic, strong) ScreenCharArray *screenCharArray;
 
 @property (nonatomic) int numberOfBackgroundRLEs;
 
@@ -34,6 +36,7 @@ NS_CLASS_AVAILABLE(10_11, NA)
 @property (nonatomic) int numberOfDrawableGlyphs;
 
 @property (nonatomic) iTermMarkStyle markStyle;
+@property (nonatomic) BOOL lineStyleMark;
 
 // Last-changed timestamp, if used.
 @property (nonatomic, strong) NSDate *date;

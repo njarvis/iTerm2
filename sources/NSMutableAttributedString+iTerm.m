@@ -9,9 +9,22 @@
 #import <Cocoa/Cocoa.h>
 
 #include "NSImage+iTerm.h"
+#import "NSStringITerm.h"
 #import "NSMutableAttributedString+iTerm.h"
 
+NSAttributedStringKey iTermReplacementBaseCharacterAttributeName = @"iTermReplacementBaseCharacterAttributeName";
+
 @implementation NSMutableAttributedString (iTerm)
+
++ (CGFloat)kernForString:(NSString *)string
+             toHaveWidth:(CGFloat)desiredWidth
+                withFont:(NSFont *)font {
+    const CGFloat actualWidth = [string sizeWithAttributes:@{NSFontAttributeName: font}].width;
+    if (actualWidth <= 0 || desiredWidth <= 0) {
+        return 0;
+    }
+    return desiredWidth - actualWidth;
+}
 
 - (void)iterm_appendString:(NSString *)string {
     NSDictionary *attributes;
@@ -25,6 +38,10 @@
 }
 
 - (void)iterm_appendString:(NSString *)string withAttributes:(NSDictionary *)attributes {
+    NSNumber *base = attributes[iTermReplacementBaseCharacterAttributeName];
+    if (base) {
+        string = [string stringByReplacingBaseCharacterWith:base.unsignedIntegerValue];
+    }
     [self appendAttributedString:[[NSAttributedString alloc] initWithString:string
                                                                  attributes:attributes]];
 }
@@ -46,6 +63,10 @@
         [self removeAttribute:key range:range];
         [self addAttribute:key value:newAttributes[key] range:range];
     }
+}
+
+- (void)appendCharacter:(unichar)c withAttributes:(NSDictionary *)attributes {
+    [self iterm_appendString:[NSString stringWithLongCharacter:c] withAttributes:attributes];
 }
 
 @end
@@ -84,7 +105,7 @@
 
     [layoutManager addTextContainer:textContainer];
     [textStorage addLayoutManager:layoutManager];
-    [layoutManager setHyphenationFactor:0.0];
+    layoutManager.usesDefaultHyphenation = NO;
 
     // Force layout.
     [layoutManager glyphRangeForTextContainer:textContainer];

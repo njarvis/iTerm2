@@ -45,6 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL darkMode;
 @property (nonatomic, readonly) BOOL useSeparateColorsForLightAndDarkMode;
 @property (nonatomic, readonly) float minimumContrast;
+@property (nonatomic, readonly) float faintTextAlpha;
 @property (nonatomic, readonly) double mutingAmount;
 @property (nonatomic, readonly) iTermUnicodeNormalization normalization;
 @property (nonatomic, readonly) BOOL appendToScrollbackWithStatusBar;
@@ -58,6 +59,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) double dimmingAmount;
 @property (nonatomic, readonly) BOOL publishing;
 @property (nonatomic, readonly) BOOL terminalCanChangeBlink;
+@property (nonatomic, strong, readonly, nullable) NSNumber *desiredComposerRows;
+@property (nonatomic, readonly) BOOL autoComposerEnabled;
+@property (nonatomic, readonly) BOOL useLineStyleMarks;
 
 @property (nonatomic, readonly) BOOL isDirty;
 
@@ -94,6 +98,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readwrite) BOOL darkMode;
 @property (nonatomic, readwrite) BOOL useSeparateColorsForLightAndDarkMode;
 @property (nonatomic, readwrite) float minimumContrast;
+@property (nonatomic, readwrite) float faintTextAlpha;
 @property (nonatomic, readwrite) double mutingAmount;
 @property (nonatomic, readwrite) iTermUnicodeNormalization normalization;
 @property (nonatomic, readwrite) BOOL appendToScrollbackWithStatusBar;
@@ -108,6 +113,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readwrite) double dimmingAmount;
 @property (nonatomic, readwrite) BOOL publishing;
 @property (nonatomic, readwrite) BOOL terminalCanChangeBlink;
+@property (nonatomic, strong, readwrite, nullable) NSNumber *desiredComposerRows;
+@property (nonatomic, readwrite) BOOL autoComposerEnabled;
+@property (nonatomic, readwrite) BOOL useLineStyleMarks;
 
 @property (nonatomic, readwrite) BOOL isDirty;
 

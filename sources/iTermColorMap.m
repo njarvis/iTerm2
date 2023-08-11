@@ -11,6 +11,7 @@
 #import "DebugLogging.h"
 #import "ITAddressBookMgr.h"
 #import "NSColor+iTerm.h"
+#import "iTerm2SharedARC-Swift.h"
 #import <simd/simd.h>
 
 const int kColorMapForeground = 0;
@@ -77,6 +78,7 @@ const int kColorMapAnsiBrightModifier = 8;
     if (self) {
         _map = [[NSMutableDictionary alloc] init];
         _fastMap = [[NSMutableDictionary alloc] init];
+        _faintTextAlpha = 0.5;
     }
     return self;
 }
@@ -458,6 +460,10 @@ const int kColorMapAnsiBrightModifier = 8;
 
 - (NSString *)profileKeyForColorMapKey:(int)theKey {
     NSString *baseKey = [self baseProfileKeyForColorMapKey:theKey];
+    return [self profileKeyForBaseKey:baseKey];
+}
+
+- (NSString *)profileKeyForBaseKey:(NSString *)baseKey {
     if (!self.useSeparateColorsForLightAndDarkMode) {
         return baseKey;
     }
@@ -562,7 +568,8 @@ const int kColorMapAnsiBrightModifier = 8;
     other->_fastMap = [_fastMap mutableCopy];
     other->_useSeparateColorsForLightAndDarkMode = _useSeparateColorsForLightAndDarkMode;
     other->_darkMode = _darkMode;
-    
+    other->_faintTextAlpha = _faintTextAlpha;
+
     return other;
 }
 
@@ -645,6 +652,17 @@ const int kColorMapAnsiBrightModifier = 8;
     return _sanitizingAdapter;
 }
 
+- (VT100SavedColorsSlot *)savedColorsSlot {
+    DLog(@"begin");
+    return [[VT100SavedColorsSlot alloc] initWithTextColor:[self colorForKey:kColorMapForeground]
+                                            backgroundColor:[self colorForKey:kColorMapBackground]
+                                         selectionTextColor:[self colorForKey:kColorMapSelectedText]
+                                   selectionBackgroundColor:[self colorForKey:kColorMapSelection]
+                                       indexedColorProvider:^NSColor *(NSInteger index) {
+        return [self colorForKey:kColorMap8bitBase + index] ?: [NSColor clearColor];
+    }];
+}
+
 @end
 
 @interface iTermColorMapSanitizingAdapterImpl: NSObject
@@ -686,6 +704,7 @@ const int kColorMapAnsiBrightModifier = 8;
 
 @dynamic dimOnlyText;
 @dynamic dimmingAmount;
+@dynamic faintTextAlpha;
 @dynamic mutingAmount;
 @dynamic minimumContrast;
 @dynamic useSeparateColorsForLightAndDarkMode;

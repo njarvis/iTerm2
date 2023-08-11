@@ -8,44 +8,73 @@
 import Foundation
 import FileProviderService
 
-enum SSHEndpointException: Error {
+enum SSHEndpointException: LocalizedError {
     case connectionClosed
     case fileNotFound
     case internalError  // e.g., non-decodable data from fetch
+
+    var errorDescription: String? {
+        get {
+            switch self {
+            case .connectionClosed:
+                return "Connection closed"
+            case .fileNotFound:
+                return "File not found"
+            case .internalError:
+                return "Internal error"
+            }
+        }
+    }
+}
+
+struct DownloadChunk: Codable, Equatable {
+    var offset: Int
+    var size: Int
 }
 
 protocol SSHEndpoint: AnyObject {
     @available(macOS 11.0, *)
+    @MainActor
     func listFiles(_ path: String, sort: FileSorting) async throws -> [RemoteFile]
 
     @available(macOS 11.0, *)
-    func download(_ path: String) async throws -> Data
+    @MainActor
+    func download(_ path: String, chunk: DownloadChunk?) async throws -> Data
 
     @available(macOS 11.0, *)
+    @MainActor
     func stat(_ path: String) async throws -> RemoteFile
 
     @available(macOS 11.0, *)
+    @MainActor
     func delete(_ path: String, recursive: Bool) async throws
 
     @available(macOS 11.0, *)
+    @MainActor
     func ln(_ source: String, _ symlink: String) async throws -> RemoteFile
 
     @available(macOS 11.0, *)
+    @MainActor
     func mv(_ file: String, newParent: String, newName: String) async throws -> RemoteFile
 
     @available(macOS 11.0, *)
+    @MainActor
     func mkdir(_ file: String) async throws
 
     @available(macOS 11.0, *)
+    @MainActor
     func create(_ file: String, content: Data) async throws
 
     @available(macOS 11.0, *)
+    @MainActor
     func replace(_ file: String, content: Data) async throws -> RemoteFile
 
     @available(macOS 11.0, *)
+    @MainActor
     func setModificationDate(_ file: String, date: Date) async throws -> RemoteFile
 
     @available(macOS 11.0, *)
+    @MainActor
     func chmod(_ file: String, permissions: RemoteFile.Permissions) async throws -> RemoteFile
 
     var sshIdentity: SSHIdentity { get }
@@ -97,7 +126,7 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
 
     func handleSSHFileRequest(_ request: ExtensionToMainAppPayload.Event.Kind) async -> MainAppToExtensionPayload.Event.Kind {
         log("Handle SSH request \(request.debugDescription)")
-        logger.debug("handleSSHFileRequest: \(request.debugDescription, privacy: .public)")
+        logger.debug("handleSSHFileRequest: \(request.debugDescription)")
         switch request {
         case .list(path: let path, requestedPage: let requestedPage, sort: let sort, pageSize: let pageSize):
             return await list(path: path, requestedPage: requestedPage, sort: sort, pageSize: pageSize)
@@ -117,8 +146,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
             return await mkdir(file: file)
         case .create(file: let file, content: let content):
             return await create(file: file, content: content)
-        case .replaceContents(file: let file, url: let url):
-            return await replaceContents(file: file, url: url)
+        case .replaceContents(file: let file, contents: let contents):
+            return await replaceContents(file: file, contents: contents)
         case .setModificationDate(file: let file, date: let date):
             return await setModificationDate(file: file, date: date)
         case .chmod(file: let file, permissions: let permissions):
@@ -133,6 +162,7 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
 
     private func endpoint(forPath path: String) -> DataSource? {
         guard path.hasPrefix("/") else {
+            log("Failed to find endpoint for relative path \(path)")
             return nil
         }
         let components = (path as NSString).pathComponents
@@ -142,6 +172,7 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         if let endpoint = endpoints[components[1]], endpoint.isValid {
             return .ssh(endpoint)
         }
+        log("Failed to find endpoint for \(path) with host component of \(components[1]). I have these endpoints: \(endpoints.keys.joined(separator: ", ")). These endpoints are valid: \(endpoints.filter { $0.value.isValid }.keys.joined(separator: ", ")).")
         return nil
     }
 
@@ -154,6 +185,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
                                                      requestedPage: requestedPage,
                                                      sort: sort,
                                                      pageSize: pageSize)))
+        } catch let error as SSHEndpointException {
+            return .list(.failure(iTermFileProviderServiceError(error, filename: path)))
         } catch let error as iTermFileProviderServiceError {
             return .list(.failure(error))
         } catch {
@@ -164,6 +197,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
     func lookup(path: String) async -> MainAppToExtensionPayload.Event.Kind {
         do {
             return .lookup(.success(try await lookupImpl(path: path)))
+        } catch let error as SSHEndpointException {
+            return .lookup(.failure(iTermFileProviderServiceError(error, filename: path)))
         } catch let error as iTermFileProviderServiceError {
             return .lookup(.failure(error))
         } catch {
@@ -179,6 +214,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
     func fetch(path: String) async -> MainAppToExtensionPayload.Event.Kind {
         do {
             return .fetch(.success(try await fetchImpl(path: path)))
+        } catch let error as SSHEndpointException {
+            return .fetch(.failure(iTermFileProviderServiceError(error, filename: path)))
         } catch let error as iTermFileProviderServiceError {
             return .fetch(.failure(error))
         } catch {
@@ -191,6 +228,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         do {
             try await deleteImpl(file: file, recursive: recursive)
             return .delete(nil)
+        } catch let error as SSHEndpointException {
+            return .delete(iTermFileProviderServiceError(error, filename: file.absolutePath))
         } catch let error as iTermFileProviderServiceError {
             return .delete(error)
         } catch {
@@ -202,6 +241,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
             file: RemoteFile) async -> MainAppToExtensionPayload.Event.Kind {
         do {
             return .ln(.success(try await lnImpl(source: source, file: file)))
+        } catch let error as SSHEndpointException {
+            return .ln(.failure(iTermFileProviderServiceError(error, filename: source)))
         } catch let error as iTermFileProviderServiceError {
             return .ln(.failure(error))
         } catch {
@@ -214,6 +255,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
             newName: String) async -> MainAppToExtensionPayload.Event.Kind {
         do {
             return .mv(.success(try await mvImpl(file: file, newParent: newParent, newName: newName)))
+        } catch let error as SSHEndpointException {
+            return .mv(.failure(iTermFileProviderServiceError(error, filename: file.absolutePath)))
         } catch let error as iTermFileProviderServiceError {
             return .mv(.failure(error))
         } catch {
@@ -225,6 +268,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         do {
             try await mkdirImpl(file: file)
             return .mkdir(nil)
+        } catch let error as SSHEndpointException {
+            return .mkdir(iTermFileProviderServiceError(error, filename: file.absolutePath))
         } catch let error as iTermFileProviderServiceError {
             return .mkdir(error)
         } catch {
@@ -237,6 +282,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         do {
             try await createImpl(file: file, content: content)
             return .create(nil)
+        } catch let error as SSHEndpointException {
+            return .create(iTermFileProviderServiceError(error, filename: file.absolutePath))
         } catch let error as iTermFileProviderServiceError {
             return .create(error)
         } catch {
@@ -245,9 +292,11 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
     }
 
     func replaceContents(file: RemoteFile,
-                         url: URL) async -> MainAppToExtensionPayload.Event.Kind {
+                         contents: Data) async -> MainAppToExtensionPayload.Event.Kind {
         do {
-            return .replaceContents(.success(try await replaceContentsImpl(file: file, url: url)))
+            return .replaceContents(.success(try await replaceContentsImpl(file: file, contents: contents)))
+        } catch let error as SSHEndpointException {
+            return .replaceContents(.failure(iTermFileProviderServiceError(error, filename: file.absolutePath)))
         } catch let error as iTermFileProviderServiceError {
             return .replaceContents(.failure(error))
         } catch {
@@ -260,6 +309,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         do {
             return .setModificationDate(.success(try await setModificationDateImpl(file: file,
                                                                                    date: date)))
+        } catch let error as SSHEndpointException {
+            return .setModificationDate(.failure(iTermFileProviderServiceError(error, filename: file.absolutePath)))
         } catch let error as iTermFileProviderServiceError {
             return .setModificationDate(.failure(error))
         } catch {
@@ -271,6 +322,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
                permissions: RemoteFile.Permissions) async -> MainAppToExtensionPayload.Event.Kind {
         do {
             return .chmod(.success(try await chmodImpl(file: file, permissions: permissions)))
+        } catch let error as SSHEndpointException {
+            return .chmod(.failure(iTermFileProviderServiceError(error, filename: file.absolutePath)))
         } catch let error as iTermFileProviderServiceError {
             return .chmod(.failure(error))
         } catch {
@@ -287,7 +340,6 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         try await logging("list(path: \(path), page: \(requestedPage.stringOrHex), sort: \(sort), pageSize: \(pageSize.debugDescriptionOrNil)") {
             switch self.endpoint(forPath: path) {
             case .none:
-                log("No endpoint for \(path)")
                 throw iTermFileProviderServiceError.notFound(path)
             case .root(let endpoints):
                 log("Root requested.")
@@ -324,7 +376,6 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
         return try await logging("lookup(\(path))") { () async throws -> RemoteFile in
             switch self.endpoint(forPath: path) {
             case .none:
-                log("No endpoint for \(path)")
                 throw iTermFileProviderServiceError.notFound(path)
             case .root(_):
                 log("Lookup of root requested")
@@ -369,7 +420,8 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
             case .root(_):
                 throw iTermFileProviderServiceError.notAFile(path)
             case .ssh(let endpoint):
-                return try await endpoint.download(path.removingHost)
+                return try await endpoint.download(path.removingHost,
+                                                   chunk: nil)
             }
         }
     }
@@ -385,7 +437,7 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
             case .ssh(let endpoint):
                 try await endpoint.delete(file.absolutePath.removingHost, recursive: recursive)
             }
-            throw iTermFileProviderServiceError.todo
+
         }
     }
 
@@ -444,16 +496,13 @@ public struct SSHConnectionIdentifier: Codable, Hashable, CustomDebugStringConve
     }
 
     func replaceContentsImpl(file: RemoteFile,
-                             url: URL) async throws -> RemoteFile {
-        try await logging("replace \(file.absolutePath) \(url.path)") {
+                             contents: Data) async throws -> RemoteFile {
+        try await logging("replace \(file.absolutePath) length=\(contents.count)") {
             switch self.endpoint(forPath: file.absolutePath) {
             case .none, .root:
                 throw iTermFileProviderServiceError.permissionDenied(file.absolutePath)
             case .ssh(let endpoint):
-                guard let data = try? Data(contentsOf: url) else {
-                    throw iTermFileProviderServiceError.internalError(url.path + " not readable")
-                }
-                return try await endpoint.replace(file.absolutePath.removingHost, content: data)
+                return try await endpoint.replace(file.absolutePath.removingHost, content: contents)
             }
         }
     }
@@ -524,8 +573,8 @@ class SSHEndpointProxy: SSHEndpoint {
     }
 
     @MainActor
-    func download(_ path: String) async throws -> Data {
-        return try await realEndpoint(path).download(path)
+    func download(_ path: String, chunk: DownloadChunk?) async throws -> Data {
+        return try await realEndpoint(path).download(path, chunk: chunk)
     }
 
     @MainActor
@@ -583,5 +632,18 @@ extension RemoteFile {
                           parentPermissions: parentPermissions,
                           ctime: ctime,
                           mtime: mtime)
+    }
+}
+
+extension iTermFileProviderServiceError {
+    init(_ ssh: SSHEndpointException, filename: String) {
+        switch ssh {
+        case .connectionClosed:
+            self = .disconnected
+        case .fileNotFound:
+            self = .notFound(filename)
+        case .internalError:
+            self = .unknown("Unknown error for \(filename)")
+        }
     }
 }

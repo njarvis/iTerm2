@@ -9,11 +9,13 @@
 
 // These are convenience methods for looking up the preferences setting for
 // what each modifier ought to do.
-@property(nonatomic, readonly) iTermPreferencesModifierTag controlRemapping;
+@property(nonatomic, readonly) iTermPreferencesModifierTag leftControlRemapping;
+@property(nonatomic, readonly) iTermPreferencesModifierTag rightControlRemapping;
 @property(nonatomic, readonly) iTermPreferencesModifierTag leftOptionRemapping;
 @property(nonatomic, readonly) iTermPreferencesModifierTag rightOptionRemapping;
 @property(nonatomic, readonly) iTermPreferencesModifierTag leftCommandRemapping;
 @property(nonatomic, readonly) iTermPreferencesModifierTag rightCommandRemapping;
+@property(nonatomic, readonly) iTermPreferencesModifierTag functionRemapping;
 
 // Is any modifier set in prefs to do something other than its un-remapped behavior?
 @property(nonatomic, readonly) BOOL isAnyModifierRemapped;

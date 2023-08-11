@@ -11,7 +11,6 @@
 static void iTermMakeBackgroundColorRun(iTermBackgroundColorRun *run,
                                         const screen_char_t *theLine,
                                         VT100GridCoord coord,
-                                        iTermTextExtractor *extractor,
                                         NSIndexSet *selectedIndexes,
                                         NSData *matches,
                                         int width) {
@@ -65,9 +64,7 @@ static void iTermMakeBackgroundColorRun(iTermBackgroundColorRun *run,
                          withinRange:(NSRange)charRange
                              matches:(NSData *)matches
                             anyBlink:(BOOL *)anyBlinkPtr
-                       textExtractor:(iTermTextExtractor *)extractor
-                                   y:(CGFloat)y
-                                line:(int)line {
+                                   y:(CGFloat)y {
     NSMutableArray *runs = [NSMutableArray array];
     iTermBackgroundColorRun previous;
     iTermBackgroundColorRun current;
@@ -85,7 +82,6 @@ static void iTermMakeBackgroundColorRun(iTermBackgroundColorRun *run,
         iTermMakeBackgroundColorRun(&current,
                                     theLine,
                                     VT100GridCoordMake(x, row),
-                                    extractor,
                                     selectedIndexes,
                                     matches,
                                     width);
@@ -111,7 +107,31 @@ static void iTermMakeBackgroundColorRun(iTermBackgroundColorRun *run,
         [[[iTermBackgroundColorRunsInLine alloc] init] autorelease];
     backgroundColorRuns.array = runs;
     backgroundColorRuns.y = y;
-    backgroundColorRuns.line = line;
+    backgroundColorRuns.line = row;
+    return backgroundColorRuns;
+}
+
++ (instancetype)defaultRunOfLength:(int)width
+                               row:(int)row
+                                 y:(CGFloat)y {
+    const screen_char_t defaultCharacter = { 0 };
+
+    iTermBackgroundColorRun run;
+    iTermMakeBackgroundColorRun(&run,
+                                &defaultCharacter,
+                                VT100GridCoordMake(0, 0),
+                                nil,
+                                nil,
+                                width);
+    run.range = NSMakeRange(0, width);
+    NSMutableArray *runs = [NSMutableArray array];
+    [self addBackgroundRun:&run toArray:runs endingAt:width];
+
+    iTermBackgroundColorRunsInLine *backgroundColorRuns =
+    [[[iTermBackgroundColorRunsInLine alloc] init] autorelease];
+    backgroundColorRuns.array = runs;
+    backgroundColorRuns.y = y;
+    backgroundColorRuns.line = row;
     return backgroundColorRuns;
 }
 
@@ -123,6 +143,19 @@ static void iTermMakeBackgroundColorRun(iTermBackgroundColorRun *run,
 - (NSString *)description {
     return [NSString stringWithFormat:@"<%@: %p line=%@ numberEquiv=%@ runs:%@>",
             self.class, self, @(self.line), @(self.numberOfEquivalentRows), self.array];
+}
+
+- (iTermBackgroundColorRun *)runAtIndex:(int)x {
+    for (iTermBoxedBackgroundColorRun *box in self.array) {
+        if (x >= box.valuePointer->range.location && x < NSMaxRange(box.valuePointer->range)) {
+            return box.valuePointer;
+        }
+    }
+    return nil;
+}
+
+- (iTermBackgroundColorRun *)lastRun {
+    return self.array.lastObject.valuePointer;
 }
 
 @end

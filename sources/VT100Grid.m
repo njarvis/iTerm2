@@ -183,6 +183,18 @@ static NSString *const kGridSizeKey = @"Size";
     return [[lines_ objectAtIndex:(screenTop_ + lineNumber) % size_.height] mutableBytes];
 }
 
+- (NSInteger)numberOfCellsUsedInRange:(VT100GridRange)range {
+    __block NSInteger sum = 0;
+
+    [self enumerateCellsInRect:VT100GridRectMake(0, range.location, self.size.width, range.length) block:^(VT100GridCoord coord, screen_char_t c, iTermExternalAttribute *ea, BOOL *stop) {
+        if (c.complexChar || c.code || c.image) {
+            sum += 1;
+        }
+    }];
+
+    return sum;
+}
+
 static int VT100GridIndex(int screenTop, int lineNumber, int height) {
     if (lineNumber >= 0 && lineNumber < height) {
         return (screenTop + lineNumber) % height;
@@ -217,6 +229,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
     [lineInfo setDirty:dirty
                inRange:VT100GridRangeMake(coord.x, 1)
      updateTimestampTo:updateTimestamp ? self.currentDate : 0];
+    _hasChanged = YES;
 }
 
 - (void)markCharsDirty:(BOOL)dirty inRectFrom:(VT100GridCoord)from to:(VT100GridCoord)to {
@@ -236,6 +249,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
                             inRange:xrange
                   updateTimestampTo:dirty ? timestamp : 0];
     }
+    _hasChanged = YES;
 }
 
 - (void)markAllCharsDirty:(BOOL)dirty updateTimestamps:(BOOL)updateTimestamps {
@@ -258,6 +272,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
         }];
         return;
     }
+    _hasChanged = YES;
     allDirty_ = dirty;
     [self markCharsDirty:dirty
               inRectFrom:VT100GridCoordMake(0, 0)
@@ -373,12 +388,30 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
     return numberOfLinesUsed;
 }
 
+- (BOOL)lineIsEmpty:(int)n {
+    const screen_char_t *line = [self screenCharsAtLineNumber:n];
+    for (int i = 0; i < size_.width; i++) {
+        if (line[i].complexChar ||
+            line[i].image ||
+            line[i].code) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
 - (int)numberOfLinesUsed {
     return MAX(MIN(size_.height, cursor_.y + 1), [self numberOfNonEmptyLinesIncludingWhitespaceAsEmpty:NO]);
 }
 
 - (int)appendLines:(int)numLines
       toLineBuffer:(LineBuffer *)lineBuffer {
+    return [self appendLines:numLines toLineBuffer:lineBuffer makeCursorLineSoft:NO];
+}
+
+- (int)appendLines:(int)numLines
+      toLineBuffer:(LineBuffer *)lineBuffer
+makeCursorLineSoft:(BOOL)makeCursorLineSoft {
     assert(numLines <= size_.height);
 
     // Set numLines to the number of lines on the screen that are in use.
@@ -417,10 +450,12 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
         // an '|| (i == size.height)' conjunction. It caused issue 3788 so I
         // removed it. Unfortunately, I can't recall why it was added in the
         // first place.
-        const BOOL isPartial = ((continuation != EOL_HARD) ||
-                                (i + 1 == numLines &&
-                                 self.cursor.y == i &&
-                                 self.cursor.x == [self lengthOfLineNumber:i]));
+        BOOL isPartial = (continuation != EOL_HARD);
+        if (makeCursorLineSoft && !isPartial) {
+            isPartial = (i + 1 == numLines &&
+                         self.cursor.y == i &&
+                         self.cursor.x == [self lengthOfLineNumber:i]);
+        }
         [lineBuffer appendLine:line
                         length:currentLineLength
                        partial:isPartial
@@ -498,7 +533,14 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
         [[self lineInfoAtLineNumber:(size_.height - 1)] resetMetadata];
     }
 
-    [self markAllCharsDirty:YES updateTimestamps:NO];
+    // Mark new line at bottom of screen dirty and update its timestamp.
+    [self markCharsDirty:YES
+              inRectFrom:VT100GridCoordMake(0, size_.height - 1)
+                      to:VT100GridCoordMake(size_.width - 1, size_.height - 1)];
+    if (!lineBuffer) {
+        // Mark everything dirty if we're not using the scrollback buffer.
+        [self markAllCharsDirty:YES updateTimestamps:NO];
+    }
 
     DLog(@"scrolled screen up by 1 line");
     return numLinesDropped;
@@ -842,7 +884,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
     }
 }
 
-- (void)copyDirtyFromGrid:(VT100Grid *)otherGrid {
+- (void)copyDirtyFromGrid:(VT100Grid *)otherGrid  didScroll:(BOOL)didScroll {
     if (otherGrid == self) {
         return;
     }
@@ -850,7 +892,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
     [self setSize:otherGrid.size];
     for (int i = 0; i < size_.height; i++) {
         const VT100GridRange dirtyRange = [otherGrid dirtyRangeForLine:i];
-        if (!sizeChanged && dirtyRange.length <= 0) {
+        if (!didScroll && !sizeChanged && dirtyRange.length <= 0) {
             continue;
         }
         screen_char_t *dest = [self screenCharsAtLineNumber:i];
@@ -865,6 +907,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
             [[self lineInfoAtLineNumber:i] setDirty:YES inRange:dirtyRange updateTimestampTo:0];
         }
     }
+    _hasChanged = YES;
     [otherGrid copyMiscellaneousStateTo:self];
 }
 
@@ -1336,6 +1379,7 @@ externalAttributeIndex:(iTermExternalAttributeIndex *)ea {
     }
 }
 
+// NOTE: `rect` is *not* inclusive of rect.end.y, unlike most uses of VT100GridRect.
 - (void)scrollRect:(VT100GridRect)rect downBy:(int)distance softBreak:(BOOL)softBreak {
     DLog(@"scrollRect:%d,%d %dx%d downBy:%d",
              rect.origin.x, rect.origin.y, rect.size.width, rect.size.height, distance);
@@ -1588,6 +1632,45 @@ externalAttributeIndex:(iTermExternalAttributeIndex *)ea {
                             adjustedLength);
 }
 
+- (int)scrollWholeScreenDownByLines:(int)count poppingFromLineBuffer:(LineBuffer *)lineBuffer {
+    int result = 0;
+    for (int i = 0; i < count; i++) {
+        if ([self scrollWholeScreenDownPoppingFromLineBuffer:lineBuffer]) {
+            result += 1;
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
+- (BOOL)scrollWholeScreenDownPoppingFromLineBuffer:(LineBuffer *)lineBuffer {
+    const int width = self.size.width;
+    if ([lineBuffer numLinesWithWidth:width] == 0 || width < 1) {
+        return NO;
+    }
+    [self scrollRect:VT100GridRectMake(0, 0, width, self.size.height)
+              downBy:1
+           softBreak:NO];
+    screen_char_t *line = [self screenCharsAtLineNumber:0];
+    int eol = 0;
+    iTermImmutableMetadata metadata;
+    screen_char_t continuation;
+    const BOOL ok = [lineBuffer popAndCopyLastLineInto:line
+                                                 width:width
+                                     includesEndOfLine:&eol
+                                              metadata:&metadata
+                                          continuation:&continuation];
+    assert(ok);
+    [[self lineInfoAtLineNumber:0] setMetadataFromImmutable:metadata];
+    line[width] = continuation;
+    line[width].code = eol;
+    if (eol == EOL_DWC) {
+        ScreenCharSetDWC_SKIP(&line[width - 1]);
+    }
+    return YES;
+}
+
 - (BOOL)restoreScreenFromLineBuffer:(LineBuffer *)lineBuffer
                     withDefaultChar:(screen_char_t)defaultChar
                   maxLinesToRestore:(int)maxLines {
@@ -1606,7 +1689,6 @@ externalAttributeIndex:(iTermExternalAttributeIndex *)ea {
 
     BOOL foundCursor = NO;
     BOOL prevLineStartsWithDoubleWidth = NO;
-    int numPopped = 0;
     while (destLineNumber >= 0) {
         screen_char_t *dest = [self screenCharsAtLineNumber:destLineNumber];
         memcpy(dest, defaultLine, sizeof(screen_char_t) * size_.width);
@@ -1627,7 +1709,6 @@ externalAttributeIndex:(iTermExternalAttributeIndex *)ea {
         int cont;
         iTermImmutableMetadata metadata;
         screen_char_t continuation;
-        ++numPopped;
         assert([lineBuffer popAndCopyLastLineInto:dest
                                             width:size_.width
                                 includesEndOfLine:&cont

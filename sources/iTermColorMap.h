@@ -55,6 +55,7 @@ extern const int kColorMap24bitBase;
 
 @class iTermColorMap;
 @protocol iTermColorMapReading;
+@class VT100SavedColorsSlot;
 
 @protocol iTermColorMapDelegate <NSObject>
 
@@ -78,6 +79,7 @@ extern const int kColorMap24bitBase;
 @property(nonatomic, readonly) BOOL useSeparateColorsForLightAndDarkMode;
 @property(nonatomic, readonly) BOOL darkMode;
 @property(nonatomic, readonly) NSInteger generation;
+@property(nonatomic, readonly) CGFloat faintTextAlpha;
 
 - (NSColor *)colorForKey:(iTermColorMapKey)theKey;
 - (vector_float4)fastColorForKey:(iTermColorMapKey)theKey;
@@ -99,6 +101,7 @@ extern const int kColorMap24bitBase;
 
 // Returns non-nil profile key name for valid logical colors, ANSI colors, and bright ANSI colors.
 - (NSString *)profileKeyForColorMapKey:(int)theKey;
+- (NSString *)profileKeyForBaseKey:(NSString *)baseKey;  // Adds light/dark modifier if needed
 - (iTermColorMapKey)keyForSystemMessageForBackground:(BOOL)background;
 - (NSDictionary<NSNumber *, NSString *> *)colormapKeyToProfileKeyDictionary;
 
@@ -122,6 +125,7 @@ extern const int kColorMap24bitBase;
              brightenBold:(BOOL)brightenBold;
 
 - (iTermColorMap *)copy;
+- (VT100SavedColorsSlot *)savedColorsSlot;
 @end
 
 // This class holds the collection of colors used by a single session. Some colors are index-mapped
@@ -141,6 +145,7 @@ extern const int kColorMap24bitBase;
 @property(nonatomic, assign) BOOL useSeparateColorsForLightAndDarkMode;
 @property(nonatomic, assign) BOOL darkMode;
 @property(nonatomic, readonly) id<iTermColorMapReading> sanitizingAdapter;
+@property(nonatomic, assign) CGFloat faintTextAlpha;
 
 + (iTermColorMapKey)keyFor8bitRed:(int)red
                             green:(int)green
@@ -150,3 +155,4 @@ extern const int kColorMap24bitBase;
 - (iTermColorMap *)copy;
 
 @end
+

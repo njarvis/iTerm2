@@ -100,12 +100,14 @@
         case iTermParsedExpressionTypeArrayLookup:
         case iTermParsedExpressionTypeArrayOfValues:
         case iTermParsedExpressionTypeVariableReference:
+        case iTermParsedExpressionTypeBoolean:
             sync = YES;
             break;
 
         case iTermParsedExpressionTypeArrayOfExpressions:
         case iTermParsedExpressionTypeInterpolatedString:
         case iTermParsedExpressionTypeFunctionCall:
+        case iTermParsedExpressionTypeFunctionCalls:
             sync = NO;
             break;
     }

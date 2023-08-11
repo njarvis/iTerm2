@@ -239,6 +239,10 @@ class TokenExecutor: NSObject {
     private var onExecutorQueue: Bool {
         return DispatchQueue.getSpecific(key: Self.isTokenExecutorSpecificKey) == true
     }
+    @objc var isExecutingToken: Bool {
+        iTermGCD.assertMutationQueueSafe()
+        return impl.isExecutingToken
+    }
 
     @objc(initWithTerminal:slownessDetector:queue:)
     init(_ terminal: VT100Terminal,
@@ -358,6 +362,12 @@ class TokenExecutor: NSObject {
         DLog("schedule high-pri task")
         self.impl.scheduleHighPriorityTask(task, syncAllowed: onExecutorQueue)
     }
+
+    // Main queue only
+    @objc
+    func whilePaused(_ block: () -> ()) {
+        self.impl.whilePaused(block, onExecutorQueue: onExecutorQueue)
+    }
 }
 
 // This is a low-budget dequeue.
@@ -436,6 +446,22 @@ private class TaskQueue {
         }
     }
 
+    func append(_ tasks: [TokenExecutorTask]) {
+        mutex.sync {
+            if arrays.last!.canAppend {
+                for task in tasks {
+                    arrays.last!.append(task)
+                }
+                return
+            }
+            let newTaskArray = TaskArray()
+            for task in tasks {
+                newTaskArray.append(task)
+            }
+            arrays.append(newTaskArray)
+        }
+    }
+
     func dequeue() -> TokenExecutorTask? {
         mutex.sync {
             while arrays.count > 1 {
@@ -484,6 +510,8 @@ private class TokenExecutorImpl {
     private let throughputEstimator = iTermThroughputEstimator(historyOfDuration: 5.0 / 30.0,
                                                                secondsPerBucket: 1.0 / 30.0)
     private var commit = true
+    // Access on mutation queue only
+    private(set) var isExecutingToken = false
     weak var delegate: TokenExecutorDelegate?
 
     init(_ terminal: VT100Terminal,
@@ -547,6 +575,41 @@ private class TokenExecutorImpl {
             }
         }
         schedule()
+    }
+
+    // Main queue
+    // Runs block synchronously while token executor is stopped.
+    func whilePaused(_ block: () -> (), onExecutorQueue: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+
+        let sema = DispatchSemaphore(value: 0)
+        queue.sync {
+            let barrierDidRun = MutableAtomicObject(false)
+            taskQueue.append([
+                {
+                    DLog("barrierDidRun <- true")
+                    barrierDidRun.set(true)
+                },
+                {
+                    DLog("waiting...")
+                    _ = sema.wait(timeout: DispatchTime.distantFuture)
+                    DLog("...signaled")
+                }
+            ])
+            queue.async {
+                // We know for sure this is the very next block that'll run on queue.
+                // It'll run the second task (above) and wait for the semaphore to be signaled.
+                DLog("Begin post-sync execute")
+                self.execute()
+                DLog("Finished post-sync execute")
+            }
+            DLog("Running pending high-pri tasks")
+            executeHighPriorityTasks(until: { barrierDidRun.value })
+            precondition(barrierDidRun.value)
+            DLog("Task queue should now be blocked.")
+        }
+        block()
+        sema.signal()
     }
 
     // Any queue
@@ -704,10 +767,26 @@ private class TokenExecutorImpl {
         }
         DLog("Execute token \(token) cursor=\(delegate.tokenExecutorCursorCoordString())")
 
+        isExecutingToken = true
         terminal.execute(token)
+        isExecutingToken = false
 
         // Return true if we need to switch to a high priority queue.
         return (priority > 0) && tokenQueue.hasHighPriorityToken
+    }
+
+    private func executeHighPriorityTasks(until stopCondition: () -> Bool) {
+        DLog("begin")
+        assertQueue()
+        executingCount += 1
+        defer {
+            executingCount -= 1
+        }
+        while !stopCondition(), let task = taskQueue.dequeue() {
+            DLog("execute task")
+            task()
+        }
+        DLog("done")
     }
 
     private func executeHighPriorityTasks() {
@@ -741,7 +820,9 @@ extension TokenExecutorImpl: UnpauserDelegate {
 
 extension TokenExecutor: IdempotentOperationScheduler {
     func scheduleIdempotentOperation(_ closure: @escaping () -> Void) {
-        addSideEffect(closure)
+        // Use a deferred side effect because this might happen during a prompt redraw and we want
+        // to give it a chance to finish so we can avoid syncing with a half-finished prompt.
+        addDeferredSideEffect(closure)
     }
 }
 

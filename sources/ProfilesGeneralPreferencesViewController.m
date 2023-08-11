@@ -645,7 +645,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 
 - (NSString *)loginShell {
     if (!_shell) {
-        _shell = [iTermOpenDirectory userShell];
+        _shell = [iTermOpenDirectory userShell] ?: @"/bin/zsh";
     }
     return _shell;
 }
@@ -661,7 +661,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
             NSArray<NSString *> *parts = [param componentsInShellCommand];
             if ([parts.firstObject isEqual:@"/bin/bash"]) {
                 // Apple's bash disables sourcing ENV when --posix is set 🤬
-                *reasonOut = @"macOS’s built-in bash is broken. Use homebrew bash instead.";
+                *reasonOut = @"Shell integration injection requires a more modern version of bash.";
                 return NO;
             }
             NSString *shell = [parts.firstObject lastPathComponent];
@@ -669,15 +669,18 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
             if (enable) {
                 *reasonOut = nil;
                 return YES;
+            } else if (shell) {
+                *reasonOut = [NSString stringWithFormat:@"Automatic loading doesn’t work with %@", shell];
+                return NO;
             } else {
-                *reasonOut = [NSString stringWithFormat:@"%@ is not a supported shell", shell];
+                *reasonOut = nil;
                 return NO;
             }
         }
         case iTermGeneralProfilePreferenceCustomCommandTagLoginShell: {
             if ([self.loginShell isEqual:@"/bin/bash"]) {
                 // Apple's bash disables sourcing ENV when --posix is set 🤬
-                *reasonOut = @"macOS’s built-in bash is broken. Use homebrew bash instead.";
+                *reasonOut = @"Shell integration injection requires a more modern version of bash.";
                 return NO;
             }
             NSString *shell = [self.loginShell lastPathComponent];
@@ -685,8 +688,11 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
             if (enable) {
                 *reasonOut = nil;
                 return YES;
+            } else if (shell) {
+                *reasonOut = [NSString stringWithFormat:@"Automatic loading doesn’t work with %@", shell];
+                return NO;
             } else {
-                *reasonOut = [NSString stringWithFormat:@"%@ is not a supported shell", shell];
+                *reasonOut = nil;
                 return NO;
             }
         }
@@ -707,7 +713,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     } else {
         _customCommand.hidden = NO;
         _customCommand.enabled = NO;
-        _customCommand.stringValue = self.loginShell;
+        _customCommand.stringValue = self.loginShell ?: @"";
     }
     if ([[self stringForKey:KEY_CUSTOM_COMMAND] isEqualToString:kProfilePreferenceCommandTypeSSHValue]) {
         NSRect frame = _customCommand.frame;
@@ -724,7 +730,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     NSString *reason;
     _loadShellIntegrationAutomatically.enabled = [self shouldEnableLoadShellIntegration:&reason];
     if (reason) {
-        _reasonShellIntegrationDisabledLabel.stringValue = [@"⚠️ " stringByAppendingString:reason];
+        _reasonShellIntegrationDisabledLabel.stringValue = reason;
         [_reasonShellIntegrationDisabledLabel setLabelEnabled:NO];
         _reasonShellIntegrationDisabledLabel.hidden = NO;
     } else {
@@ -840,6 +846,11 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
 - (void)populateBookmarkUrlSchemesFromProfile:(Profile*)profile {
     if ([[[_urlSchemes menu] itemArray] count] == 0) {
         NSArray* urlArray = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleURLTypes"];
+        urlArray = [urlArray sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *obj1, NSDictionary *obj2) {
+            NSString *lhs = obj1[@"CFBundleURLSchemes"][0];
+            NSString *rhs = obj2[@"CFBundleURLSchemes"][0];
+            return [lhs compare:rhs];
+        }];
         [_urlSchemes addItemWithTitle:@"Select URL Schemes…"];
         for (NSDictionary *dict in urlArray) {
             NSString *scheme = dict[@"CFBundleURLSchemes"][0];
@@ -943,6 +954,8 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
         case iTermGeneralProfilePreferenceCustomCommandTagSSH:
             value = kProfilePreferenceCommandTypeSSHValue;
             _customCommand.delegate = _commandDelegate;
+            [self setString:@"" forKey:KEY_COMMAND_LINE];
+            _customCommand.stringValue = @"";
             break;
     }
     [self setString:value forKey:KEY_CUSTOM_COMMAND];
@@ -958,8 +971,6 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
         [_commandType selectItemWithTag:iTermGeneralProfilePreferenceCustomCommandTagCustomShell];
         _customCommand.placeholderString = @"Enter full path to shell";
         [self removeWhitespaceFromCustomCommand];
-        [[NSUserDefaults standardUserDefaults] setObject:_customCommand.stringValue
-                                                  forKey:KEY_COMMAND_LINE];
     } else if ([value isEqualToString:kProfilePreferenceCommandTypeSSHValue]) {
         [_commandType selectItemWithTag:iTermGeneralProfilePreferenceCustomCommandTagSSH];
         _customCommand.placeholderString = @"Arguments to ssh";
@@ -1170,6 +1181,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
                                                                                           tty:@"TTY"
                                                                                          user:@"User"
                                                                                          host:@"Host"
+                                                                                homeDirectory:nil
                                                                                      tmuxPane:nil
                                                                                      iconName:@"“Shell”"
                                                                                    windowName:@""
@@ -1289,7 +1301,7 @@ static NSString *const iTermProfilePreferencesUpdateSessionName = @"iTermProfile
     iTermCallMethodByIdentifier(self.scope.tab.tabID,
                                 @"iterm2.set_title",
                                 @{ @"title": value },
-                                nil);
+                                ^(id obj, NSError *error) { });
 }
 
 - (void)windowTitleDidChange {

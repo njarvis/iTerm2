@@ -81,7 +81,11 @@
                                     iTermVariableKeySessionBellCount,
                                     iTermVariableKeySessionLogFilename,
                                     iTermVariableKeySessionMouseInfo,
-                                    iTermVariableKeySessionApplicationKeypad];
+                                    iTermVariableKeySessionApplicationKeypad,
+                                    iTermVariableKeySessionHomeDirectory,
+                                    iTermVariableKeySSHIntegrationLevel,
+                                    iTermVariableKeyShell,
+                                    iTermVariableKeyUname];
     [names enumerateObjectsUsingBlock:^(NSString * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
         [self recordUseOfVariableNamed:obj inContext:iTermVariablesSuggestionContextSession];
     }];
@@ -132,6 +136,8 @@
     [self recordUseOfVariableNamed:iTermVariableKeyWindowStyle
                          inContext:iTermVariablesSuggestionContextWindow];
     [self recordUseOfVariableNamed:iTermVariableKeyWindowNumber
+                         inContext:iTermVariablesSuggestionContextWindow];
+    [self recordUseOfVariableNamed:iTermVariableKeyWindowIsHotkeyWindow
                          inContext:iTermVariablesSuggestionContextWindow];
 
     // App context

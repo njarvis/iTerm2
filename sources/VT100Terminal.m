@@ -188,6 +188,7 @@ typedef struct {
     VT100TerminalSGRStackEntry _sgrStack[VT100TerminalMaxSGRStackEntries];
     int _sgrStackSize;
     BOOL _isScreenLike;
+    BOOL _receivingMultipartFile;
 }
 
 @synthesize receivingFile = receivingFile_;
@@ -459,6 +460,10 @@ static const int kMaxScreenRows = 4096;
 
 - (void)resetByUserRequest:(BOOL)userInitiated {
     [self resetAllowingResize:YES preservePrompt:userInitiated resetParser:userInitiated modifyContent:YES];
+}
+
+- (void)resetForSSH {
+    [self resetAllowingResize:NO preservePrompt:YES resetParser:NO modifyContent:NO];
 }
 
 - (void)resetForRelaunch {
@@ -1929,10 +1934,15 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
         DLog(@"Not unwrapping. token info=%@", SSHInfoDescription(token.sshInfo));
     }
     [self reallyExecuteToken:token];
+    if (_wantsDidExecuteCallback) {
+        _wantsDidExecuteCallback = NO;
+        [_delegate terminalDidExecuteToken:token];
+    }
     _lastToken = token;
 }
 
 - (void)reallyExecuteToken:(VT100Token *)token {
+    [_delegate terminalWillExecuteToken:token];
     // Handle tmux stuff, which completely bypasses all other normal execution steps.
     if (token->type == DCS_TMUX_HOOK) {
         [_delegate terminalStartTmuxModeWithDCSIdentifier:token.string];
@@ -1958,7 +1968,12 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             [_delegate terminalDidFinishReceivingFile];
             receivingFile_ = NO;
             return;
-        } else {
+        } else if (_receivingMultipartFile) {
+            DLog(@"Receiving multipart file so allow %@ to proceed as usual", token);
+        } else if (token->type != SSH_OUTPUT &&
+                   token->type != SSH_BEGIN &&
+                   token->type != SSH_END &&
+                   token->type != SSH_LINE) {
             DLog(@"Unexpected field receipt end");
             [_delegate terminalFileReceiptEndedUnexpectedly];
             receivingFile_ = NO;
@@ -2493,7 +2508,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             break;
 
         case VT100CSI_REP:
-            [_delegate terminalRepeatPreviousCharacter:token.csi->p[0]];
+            [_delegate terminalRepeatPreviousCharacter:MIN(65535, token.csi->p[0])];
             break;
 
         case VT100CSI_DECRQPSR:
@@ -3175,16 +3190,19 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
                 [parts addObject:[iTermPromise promiseValue:[NSString stringWithFormat:kFormat,
                                                              hexEncodedKey,
                                                              [@"256" hexEncodedString]]]];
+                ok = YES;
                 break;
             case kDcsTermcapTerminfoRequestNumberOfColors2:
                 [parts addObject:[iTermPromise promiseValue:[NSString stringWithFormat:kFormat,
                                                              hexEncodedKey,
                                                              [@"256" hexEncodedString]]]];
+                ok = YES;
                 break;
             case kDcsTermcapTerminfoRequestDirectColorWidth:
                 [parts addObject:[iTermPromise promiseValue:[NSString stringWithFormat:kFormat,
                                                              hexEncodedKey,
                                                              [@"8" hexEncodedString]]]];
+                ok = YES;
                 break;
 
             // key_backspace               kbs       kb     backspace key
@@ -3381,7 +3399,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             [seal fulfill:[NSString stringWithFormat:@"%cP1$r%@%@%c\\", VT100CC_ESC, payload, pt, VT100CC_ESC]];
 
         }] catchError:^(NSError * _Nonnull error) {
-            [seal fulfill:[NSString stringWithFormat:@"%cP0$r%@%c\\", VT100CC_ESC, pt, VT100CC_ESC]];
+            [seal fulfill:[NSString stringWithFormat:@"%cP0$r%@%c\\", VT100CC_ESC, @"", VT100CC_ESC]];
         }];
     }];
 }
@@ -3521,7 +3539,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             if (graphicRendition.fgColorCode < 8) {
                 [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.fgColorCode + 30)]];
             } else if (graphicRendition.fgColorCode < 16) {
-                [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.fgColorCode + 90)]];
+                [result addObject:[NSString stringWithFormat:@"%@", @(graphicRendition.fgColorCode - 8 + 90)]];
             } else {
                 [result addObject:[NSString stringWithFormat:@"38:5:%@", @(graphicRendition.fgColorCode)]];
             }
@@ -3726,6 +3744,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     //   preserveAspectRatio=<bool>        Default: yes
     //   inline=<bool>                     Default: no
     //   type=<string>                     Default: auto-detect; otherwise gives a mime type ("text/plain"), file extension preceded by dot (".txt"), or language name ("plaintext").
+    //   mode=regular|wide                 Default: regular (only relevant for text documents)
     NSArray *parts = [value componentsSeparatedByString:@";"];
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     dict[@"size"] = @(0);
@@ -3776,6 +3795,9 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     if (!name) {
         name = @"Unnamed file";
     }
+
+    const BOOL forceWide = [dict[@"mode"] isEqualToString:@"wide"];
+
     __weak __typeof(self) weakSelf = self;
     if ([dict[@"inline"] boolValue]) {
         NSEdgeInsets inset = {
@@ -3793,6 +3815,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
                                   preserveAspectRatio:[dict[@"preserveAspectRatio"] boolValue]
                                                 inset:inset
                                                  type:type
+                                            forceWide:forceWide
                                            completion:^(BOOL ok) {
                   if (ok) {
                       [weakSelf startReceivingFile];
@@ -3915,7 +3938,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     }
     NSString *params = [token.string substringToIndex:index];
     NSString *urlString = [token.string substringFromIndex:index + 1];
-    if (urlString.length > 2083) {
+    if (urlString.length > [iTermAdvancedSettingsModel maxURLLength]) {
         return;
     }
     self.url = urlString.length ? [NSURL URLWithUserSuppliedString:urlString] : nil;
@@ -3991,7 +4014,8 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
         if ([_delegate terminalIsTrusted]) {
             [_delegate terminalSetPasteboard:value];
         }
-    } else if ([key isEqualToString:@"File"]) {
+    } else if ([key isEqualToString:@"File"] || [key isEqualToString:@"MultipartFile"]) {
+        _receivingMultipartFile = [key isEqualToString:@"MultipartFile"];
         if ([_delegate terminalIsTrusted]) {
             [self executeFileCommandWithValue:value];
         } else {
@@ -3999,11 +4023,18 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             receivingFile_ = YES;
             [_delegate terminalAppendString:[NSString stringWithLongCharacter:0x1F6AB]];
         }
+    } else if ([key isEqualToString:@"FilePart"]) {
+        if ([_delegate terminalIsTrusted]) {
+            [_delegate terminalDidReceiveBase64FileData:value];
+        }
+    } else if ([key isEqualToString:@"FileEnd"]) {
+        [_delegate terminalDidFinishReceivingFile];
+        receivingFile_ = NO;
     } else if ([key isEqualToString:@"Copy"]) {
         if ([_delegate terminalIsTrusted]) {
             NSArray<NSString *> *parts = [value componentsSeparatedByString:@";"];
             int mode;
-            if (parts.count == 1) {
+            if (parts.count == 0 || (parts.count == 1 && [parts[0] length] == 0)) {
                 mode = 1;
             } else {
                 mode = parts[0].intValue;
@@ -4153,6 +4184,8 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
                                                               payload:payload];
             }
         }
+    } else if ([key isEqualToString:@"Notification"]) {
+        [_delegate terminalPostUserNotification:(NSString *)value rich:YES];
     } else if ([key isEqualToString:@"Capabilities"]) {
         if ([_delegate terminalIsTrusted] && [_delegate terminalShouldSendReport]) {
             [_delegate terminalSendCapabilitiesReport];
@@ -4161,9 +4194,29 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
         if ([_delegate terminalIsTrusted]) {
             [_delegate terminalUpdateEnv:value];
         }
+    } else if ([key isEqualToString:@"it2ssh"]) {
+        [_delegate terminalBeginSSHIntegeration:value];
+    } else if ([key isEqualToString:@"SendConductor"]) {
+        [_delegate terminalBeginSSHIntegeration:nil];
     } else if ([key isEqualToString:@"EndSSH"]) {
         if ([_delegate terminalIsTrusted] && value.length > 0) {
             [_delegate terminalEndSSH:value];
+        }
+    } else if ([key isEqualToString:@"OpenURL"]) {
+        if ([_delegate terminalIsTrusted]) {
+            NSInteger colon = [value rangeOfString:@":"].location;
+            if (colon == NSNotFound) {
+                return;
+            }
+
+            NSString *encoded = [value substringFromIndex:colon + 1];
+            NSString *payload = [encoded stringByBase64DecodingStringWithEncoding:NSUTF8StringEncoding];
+            if (payload) {
+                NSURL *url = [NSURL URLWithString:payload];
+                if (url) {
+                    [_delegate terminalOpenURL:url];
+                }
+            }
         }
     }
 }
@@ -4293,9 +4346,10 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             // Sequence marking the start of the command prompt (FTCS_PROMPT_START)
             self.softAlternateScreenMode = NO;  // We can reasonably assume alternate screen mode has ended if there's a prompt. Could be ssh dying, etc.
             self.dirty = YES;
+            const BOOL wasInCommand = inCommand_;
             inCommand_ = NO;  // Issue 7954
             self.alternateScrollMode = NO;  // Avoid leaving it on when ssh dies.
-            [_delegate terminalPromptDidStart];
+            [_delegate terminalPromptDidStart:wasInCommand];
             break;
 
         case 'B':

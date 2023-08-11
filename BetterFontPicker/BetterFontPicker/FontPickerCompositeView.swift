@@ -15,14 +15,18 @@ public protocol FontPickerCompositeViewDelegate: NSObjectProtocol {
 }
 
 @objc(BFPCompositeView)
-public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemberPickerViewDelegate, SizePickerViewDelegate {
+public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemberPickerViewDelegate, SizePickerViewDelegate, OptionsButtonControllerDelegate {
     @objc public weak var delegate: FontPickerCompositeViewDelegate?
     private var accessories: [NSView] = []
     @objc public let affordance = Affordance()
+    private var optionsButtonController: OptionsButtonController? = OptionsButtonController()
     var memberPicker: FontFamilyMemberPickerView? = FontFamilyMemberPickerView()
     var sizePicker: SizePickerView? = SizePickerView()
     @objc private(set) public var horizontalSpacing: SizePickerView? = nil
     @objc private(set) public var verticalSpacing: SizePickerView? = nil
+    @objc var options: Set<Int> {
+        return optionsButtonController?.options ?? Set()
+    }
 
     @objc(BFPCompositeViewMode)
     public enum Mode: Int {
@@ -50,6 +54,8 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
                 affordance.familyName = familyName
                 memberPicker?.set(member: font.fontName)
                 sizePicker?.size = Double(font.pointSize)
+                updateOptionsMenu()
+                optionsButtonController?.set(font: font)
             }
             delegate = temp
         }
@@ -64,8 +70,18 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
             guard let name = memberPicker.selectedFontName else {
                 return nil
             }
-            return NSFont(name: name,
-                          size: CGFloat(sizePicker?.size ?? 12))
+            if options.isEmpty {
+                return NSFont(name: name,
+                              size: CGFloat(sizePicker?.size ?? 12))
+            }
+            let size = CGFloat(sizePicker?.size ?? 12)
+            var descriptor = NSFontDescriptor(name: name, size: size)
+            let settings = Array(options).map {
+                [NSFontDescriptor.FeatureKey.typeIdentifier: kStylisticAlternativesType,
+                 NSFontDescriptor.FeatureKey.selectorIdentifier: $0]
+            }
+            descriptor = descriptor.addingAttributes([.featureSettings: settings])
+            return NSFont(descriptor: descriptor, size: size)
         }
     }
     public init(font: NSFont) {
@@ -121,6 +137,18 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
         }
     }
 
+    @objc public func removeOptionsButton() {
+        optionsButtonController = nil
+    }
+
+    private func temporarilyRemoveOptionsButton() {
+        if let i = indexOfOptionsButton {
+            accessories.remove(at: i)
+            optionsButtonController?.delegate = nil
+            layoutSubviews()
+        }
+    }
+
     private func imageViewForImage(withName name: String) -> NSImageView {
         let bundle = Bundle(for: FontPickerCompositeView.self)
         if let image = bundle.image(forResource: NSImage.Name(name)) {
@@ -164,8 +192,19 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
 
     public func add(accessory view: NSView) {
         accessories.append(view)
+        ensureAccessoryOrder()
         addSubview(view)
         layoutSubviews()
+    }
+
+    private func ensureAccessoryOrder() {
+        guard let i = indexOfOptionsButton, i != accessories.count - 1 else {
+            return
+        }
+        // Move options button to end.
+        let button = accessories[i]
+        accessories.remove(at: i)
+        accessories.append(button)
     }
 
     private func layoutSubviews() {
@@ -188,7 +227,7 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
         if memberPicker != nil {
             numViews += 1
         }
-        let memberPickerWidth: CGFloat = memberPicker == nil ? CGFloat(0) : CGFloat(125.0)
+        let memberPickerWidth: CGFloat = memberPicker == nil ? CGFloat(0) : CGFloat(100.0)
         let width: CGFloat = bounds.size.width
 
         // This would be a let constant but the Swift compiler can't type check it in a reasonable amount of time.
@@ -222,6 +261,33 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
         if let font = font {
             delegate?.fontPickerCompositeView(self, didSelectFont: font)
         }
+        updateOptionsMenu()
+    }
+
+    private var indexOfOptionsButton: Int? {
+        return accessories.firstIndex { view in
+            (view as? AccessoryWrapper)?.subviews.first === optionsButtonController?.optionsButton
+        }
+    }
+
+    private var haveAddedOptionsButton: Bool {
+        return indexOfOptionsButton != nil
+    }
+
+    private func updateOptionsMenu() {
+        guard let optionsButton = optionsButtonController?.optionsButton else {
+            return
+        }
+        if let optionsButtonController, optionsButtonController.set(familyName: affordance.familyName) {
+            if !haveAddedOptionsButton {
+                optionsButton.sizeToFit()
+                optionsButtonController.delegate = self
+                let wrapper = AccessoryWrapper(optionsButton, height: bounds.height)
+                add(accessory: wrapper)
+            }
+            return
+        }
+        temporarilyRemoveOptionsButton()
     }
 
     public func fontFamilyMemberPickerView(_ fontFamilyMemberPickerView: FontFamilyMemberPickerView,
@@ -237,4 +303,11 @@ public class FontPickerCompositeView: NSView, AffordanceDelegate, FontFamilyMemb
             delegate?.fontPickerCompositeView(self, didSelectFont: font)
         }
     }
+
+    func optionsDidChange(_ controller: OptionsButtonController, options: Set<Int>) {
+        if let font = font {
+            delegate?.fontPickerCompositeView(self, didSelectFont: font)
+        }
+    }
 }
+

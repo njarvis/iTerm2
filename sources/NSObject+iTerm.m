@@ -9,6 +9,7 @@
 #import "NSObject+iTerm.h"
 
 #import "iTermWeakProxy.h"
+#import "NSJSONSerialization+iTerm.h"
 
 #import <objc/runtime.h>
 
@@ -221,6 +222,12 @@
     func(self, selector, object);
 }
 
+- (void)it_performNonObjectReturningSelector:(SEL)selector withObject:(id)object1 withObject:(id)object2 {
+    IMP imp = [self methodForSelector:selector];
+    void (*func)(id, SEL, id, id) = (void *)imp;
+    func(self, selector, object1, object2);
+}
+
 - (void)it_performNonObjectReturningSelector:(SEL)selector withObject:(id)object1 object:(id)object2 object:(id)object3 {
     IMP imp = [self methodForSelector:selector];
     void (*func)(id, SEL, id, id, id) = (void *)imp;
@@ -314,6 +321,9 @@
             if (oops) {
                 return oops;
             }
+            if (![key isKindOfClass:[NSString class]]) {
+                return [NSString stringWithFormat:@"key %@ in dictionary at %@ is %@, not NSString", key, path, NSStringFromClass([key class])];
+            }
         }
         return nil;
     }
@@ -335,6 +345,38 @@
 
 - (NSString *)it_addressString {
     return [NSString stringWithFormat:@"%p", self];
+}
+
+- (NSData *)it_keyValueCodedData {
+    NSKeyedArchiver *archiver = [[NSKeyedArchiver alloc] initRequiringSecureCoding:NO];
+    [archiver encodeObject:self forKey:@"root"];
+    [archiver finishEncoding];
+    return [archiver encodedData];
+}
+
++ (instancetype)it_fromKeyValueCodedData:(NSData *)data {
+    NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingFromData:data error:nil];
+    if (!unarchiver) {
+        return nil;
+    }
+    NSArray *classes = @[
+        [NSArray class],
+        [NSDictionary class],
+        [NSString class],
+        [NSNumber class],
+        [NSDate class]
+    ];
+    id object = [self castFrom:[unarchiver decodeObjectOfClasses:[NSSet setWithArray:classes] forKey:@"root"]];
+    [unarchiver finishDecoding];
+    return object;
+}
+
+- (NSString *)jsonEncoded {
+    return [NSJSONSerialization it_jsonStringForObject:self];
+}
+
++ (instancetype)fromJsonEncodedString:(NSString *)string {
+    return [self castFrom:[NSJSONSerialization it_objectForJsonString:string]];
 }
 
 @end

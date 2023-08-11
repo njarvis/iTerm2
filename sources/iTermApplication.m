@@ -212,19 +212,28 @@ static const char *iTermApplicationKVOKey = "iTermApplicationKVOKey";
     }
 }
 
+- (NSEvent *)eventByRemappingEvent:(NSEvent *)event {
+    if (![[iTermModifierRemapper sharedInstance] isAnyModifierRemapped]) {
+        DLog(@"Not remapping modifiers");
+        return event;
+    }
+    CGEventRef maybeRemappedCGEvent = [[iTermModifierRemapper sharedInstance] eventByRemappingEvent:[event CGEvent]
+                                                                                           eventTap:nil];
+    if (!maybeRemappedCGEvent) {
+        return nil;
+    }
+    event = [NSEvent eventWithCGEvent:maybeRemappedCGEvent];
+    DLog(@"Remapped modifiers to %@", event);
+    return event;
+}
+
 - (NSEvent *)eventByRemappingForSecureInput:(NSEvent *)event {
-    if ([[iTermModifierRemapper sharedInstance] isAnyModifierRemapped] &&
-        (IsSecureEventInputEnabled() || ![[iTermModifierRemapper sharedInstance] isRemappingModifiers])) {
+    if (IsSecureEventInputEnabled() || ![[iTermModifierRemapper sharedInstance] isRemappingModifiers]) {
         // The event tap is not working, but we can still remap modifiers for non-system
         // keys. Only things like cmd-tab will not be remapped in this case. Otherwise,
         // the event tap performs the remapping.
-        CGEventRef maybeRemappedCGEvent = [[iTermModifierRemapper sharedInstance] eventByRemappingEvent:[event CGEvent]
-                                                                                               eventTap:nil];
-        if (!maybeRemappedCGEvent) {
-            return nil;
-        }
-        event = [NSEvent eventWithCGEvent:maybeRemappedCGEvent];
-        DLog(@"Remapped modifiers to %@", event);
+        DLog(@"May need remapping because secure input is on or event tap not running");
+        return [self eventByRemappingEvent:event];
     }
     return event;
 }
@@ -528,7 +537,7 @@ static const char *iTermApplicationKVOKey = "iTermApplicationKVOKey";
         return YES;
     }
     if ([self routeEventToShortcutInputView:event]) {
-        [[iTermFlagsChangedEventTap sharedInstance] resetCount];
+        [[iTermFlagsChangedEventTap sharedInstanceCreatingIfNeeded:NO] resetCount];
         return YES;
     }
     DLog(@"Posting flags-changed notification for event %@", event);
@@ -593,35 +602,59 @@ static const char *iTermApplicationKVOKey = "iTermApplicationKVOKey";
 
 // override to catch key press events very early on
 - (void)sendEvent:(NSEvent *)event {
-    if ([event type] == NSEventTypeFlagsChanged) {
-        if (_leader) {
-            [self makeCursorSparkles];
-        }
-        event = [self eventByRemappingForSecureInput:event];
-        if (!event) {
-            DLog(@"Disard event");
-            return;
-        }
-        if ([self handleFlagsChangedEvent:event]) {
-            return;
-        }
-    } else if ([event type] == NSEventTypeKeyDown) {
-        event = [self eventByRemappingForSecureInput:event];
-        if (!event) {
-            DLog(@"Disard event");
-            return;
-        }
-        if ([self handleKeyDownEvent:event]) {
-            return;
-        }
-        DLog(@"NSKeyDown event taking the regular path");
-    } else if (event.type == NSEventTypeKeyUp) {
-        if (_leader) {
-            [self makeCursorSparkles];
-        }
-    } else if (event.type == NSEventTypeScrollWheel && (event.momentumPhase == NSEventPhaseChanged ||
-                                                        event.momentumPhase == NSEventPhaseEnded)) {
-        [self handleScrollWheelEvent:event];
+    switch (event.type) {
+        case NSEventTypeFlagsChanged:
+            if (_leader) {
+                [self makeCursorSparkles];
+            }
+            event = [self eventByRemappingForSecureInput:event];
+            if (!event) {
+                DLog(@"Disard event");
+                return;
+            }
+            if ([self handleFlagsChangedEvent:event]) {
+                return;
+            }
+            break;
+        case NSEventTypeKeyDown:
+            event = [self eventByRemappingForSecureInput:event];
+            if (!event) {
+                DLog(@"Disard event");
+                return;
+            }
+            if ([self handleKeyDownEvent:event]) {
+                return;
+            }
+            DLog(@"NSKeyDown event taking the regular path");
+            break;
+        case NSEventTypeKeyUp:
+            if (_leader) {
+                [self makeCursorSparkles];
+            }
+            break;
+        case NSEventTypeScrollWheel:
+            event = [self eventByRemappingEvent:event];
+            if (event.momentumPhase == NSEventPhaseChanged ||
+                event.momentumPhase == NSEventPhaseEnded) {
+                [self handleScrollWheelEvent:event];
+            }
+            break;
+        case NSEventTypeMouseMoved:
+        case NSEventTypeMouseExited:
+        case NSEventTypeMouseEntered:
+        case NSEventTypeLeftMouseUp:
+        case NSEventTypeLeftMouseDown:
+        case NSEventTypeLeftMouseDragged:
+        case NSEventTypeRightMouseUp:
+        case NSEventTypeRightMouseDown:
+        case NSEventTypeRightMouseDragged:
+        case NSEventTypeOtherMouseUp:
+        case NSEventTypeOtherMouseDown:
+        case NSEventTypeOtherMouseDragged:
+            event = [self eventByRemappingEvent:event];
+            break;
+        default:
+            break;
     }
 
     [super sendEvent:event];
@@ -668,10 +701,10 @@ static const char *iTermApplicationKVOKey = "iTermApplicationKVOKey";
 
         if ([iTermAdvancedSettingsModel statusBarIcon]) {
             NSImage *image = [NSImage it_imageNamed:@"StatusItem" forClass:self.class];
+            image.template = YES;
             self.statusBarItem = [[NSStatusBar systemStatusBar] statusItemWithLength:image.size.width];
             _statusBarItem.button.title = @"";
             _statusBarItem.button.image = image;
-            _statusBarItem.button.alternateImage = [NSImage it_imageNamed:@"StatusItemAlt" forClass:self.class];
             ((NSButtonCell *)_statusBarItem.button.cell).highlightsBy = NSChangeBackgroundCellMask;
 
             _statusBarItem.menu = [(id<iTermApplicationDelegate>)[self delegate] statusBarMenu];
@@ -756,7 +789,9 @@ static const char *iTermApplicationKVOKey = "iTermApplicationKVOKey";
 - (void)toggleLeader {
     if (_leader) {
         DLog(@"leader up");
-        [[NSCursor arrowCursor] set];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.01 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [[NSCursor arrowCursor] set];
+        });
         NSEvent *event = [self currentEvent];
         NSEvent *flagUp = [NSEvent keyEventWithType:NSEventTypeFlagsChanged
                                            location:event.locationInWindow
@@ -830,6 +865,11 @@ static const char *iTermApplicationKVOKey = "iTermApplicationKVOKey";
             [sparkles set];
         });
     }
+}
+
+- (void)reportException:(NSException *)exception {
+    CrashLog(@"reportException: %@", exception.debugDescription);
+    [super reportException:exception];
 }
 
 @end

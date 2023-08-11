@@ -36,8 +36,8 @@ typedef enum {
     // scroll flag
     MOUSE_BUTTON_SCROLL_FLAG = 64,  // this is a scroll event
 
-    // for SGR 1006 style, internal use only
-    MOUSE_BUTTON_SGR_RELEASE_FLAG = 128  // mouse button was released
+    // extra buttons flag
+    MOUSE_BUTTON_EXTRA_FLAG = 128,
 
 } MouseButtonModifierFlag;
 
@@ -70,7 +70,7 @@ typedef enum {
 #define KEY_BACKSPACE        "\010"
 
 // Reporting formats
-#define KEY_FUNCTION_FORMAT  "\033[%d~"
+#define KEY_FUNCTION_FORMAT  @"\033[%d~"
 
 #define REPORT_POSITION      "\033[%d;%dR"
 #define REPORT_POSITION_Q    "\033[?%d;%dR"
@@ -604,6 +604,10 @@ typedef enum {
     return nil;
 }
 
+- (NSData *)dataForStandardFunctionKeyWithCode:(int)code {
+    return [[NSString stringWithFormat:KEY_FUNCTION_FORMAT, code] dataUsingEncoding:NSISOLatin1StringEncoding];
+}
+
 // Reference: http://www.utexas.edu/cc/faqs/unix/VT200-function-keys.html
 // http://www.cs.utk.edu/~shuford/terminal/misc_old_terminals_news.txt
 - (NSData *)keyFunction:(int)no modifiers:(NSEventModifierFlags)modifiers {
@@ -620,35 +624,35 @@ typedef enum {
             return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_F0+no]
                                   length:strlen(_keyStrings[TERMINFO_KEY_F0+no])];
         } else {
-            sprintf(str, KEY_FUNCTION_FORMAT, no + 10);
+            return [self dataForStandardFunctionKeyWithCode:no + 10];
         }
     } else if (no <= 10) {
         if (_keyStrings[TERMINFO_KEY_F0+no]) {
             return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_F0+no]
                                   length:strlen(_keyStrings[TERMINFO_KEY_F0+no])];
         } else {
-            sprintf(str, KEY_FUNCTION_FORMAT, no + 11);
+            return [self dataForStandardFunctionKeyWithCode:no + 11];
         }
     } else if (no <= 14) {
         if (_keyStrings[TERMINFO_KEY_F0+no]) {
             return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_F0+no]
                                   length:strlen(_keyStrings[TERMINFO_KEY_F0+no])];
         } else {
-            sprintf(str, KEY_FUNCTION_FORMAT, no + 12);
+            return [self dataForStandardFunctionKeyWithCode:no + 12];
         }
     } else if (no <= 16) {
         if (_keyStrings[TERMINFO_KEY_F0+no]) {
             return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_F0+no]
                                   length:strlen(_keyStrings[TERMINFO_KEY_F0+no])];
         } else {
-            sprintf(str, KEY_FUNCTION_FORMAT, no + 13);
+            return [self dataForStandardFunctionKeyWithCode:no + 13];
         }
     } else if (no <= 20) {
         if (_keyStrings[TERMINFO_KEY_F0+no]) {
             return [NSData dataWithBytes:_keyStrings[TERMINFO_KEY_F0+no]
                                   length:strlen(_keyStrings[TERMINFO_KEY_F0+no])];
         } else {
-            sprintf(str, KEY_FUNCTION_FORMAT, no + 14);
+            return [self dataForStandardFunctionKeyWithCode:no + 14];
         }
     } else if (no <= 35) {
         if (_keyStrings[TERMINFO_KEY_F0+no]) {
@@ -723,6 +727,10 @@ typedef enum {
 }
 
 - (NSData *)mouseReport:(int)button coord:(VT100GridCoord)coord point:(NSPoint)point {
+    return [self mouseReport:button release:false coord:coord point:point];
+}
+
+- (NSData *)mouseReport:(int)button release:(bool)release coord:(VT100GridCoord)coord point:(NSPoint)point {
     switch (self.mouseFormat) {
         case MOUSE_FORMAT_XTERM_EXT: {
             // TODO: This doesn't handle positions greater than 223 correctly. It should use UTF-8.
@@ -736,10 +744,10 @@ typedef enum {
             return [[NSString stringWithFormat:@"\033[%d;%d;%dM", 32 + button, coord.x, coord.y]  dataUsingEncoding:NSUTF8StringEncoding];
 
         case MOUSE_FORMAT_SGR:
-            return [[self reportForSGRButton:button x:coord.x y:coord.y]  dataUsingEncoding:NSUTF8StringEncoding];
+            return [[self reportForSGRButton:button release:release x:coord.x y:coord.y]  dataUsingEncoding:NSUTF8StringEncoding];
 
         case MOUSE_FORMAT_SGR_PIXEL:
-            return [[self reportForSGRButton:button x:point.x y:point.y]  dataUsingEncoding:NSUTF8StringEncoding];
+            return [[self reportForSGRButton:button release:release x:point.x y:point.y]  dataUsingEncoding:NSUTF8StringEncoding];
 
         case MOUSE_FORMAT_XTERM:
         default:
@@ -748,11 +756,11 @@ typedef enum {
     return [NSData data];
 }
 
-- (NSString *)reportForSGRButton:(int)button x:(int)x y:(int)y {
-    if (button & MOUSE_BUTTON_SGR_RELEASE_FLAG) {
+- (NSString *)reportForSGRButton:(int)button release:(bool)release x:(int)x y:(int)y {
+    if (release) {
         // Mouse release event.
         return [NSString stringWithFormat:@"\033[<%d;%d;%dm",
-                 button ^ MOUSE_BUTTON_SGR_RELEASE_FLAG,
+                 button,
                  x,
                  y];
     }
@@ -786,12 +794,14 @@ static int VT100OutputSafeAddInt(int l, int r) {
 - (NSData *)mousePress:(int)button withModifiers:(unsigned int)modflag at:(VT100GridCoord)coord point:(NSPoint)point {
     int cb;
 
-    cb = button;
-    if (button == MOUSE_BUTTON_SCROLLDOWN || button == MOUSE_BUTTON_SCROLLUP) {
-        // convert x11 scroll button number to terminal button code
-        const int offset = MOUSE_BUTTON_SCROLLDOWN;
-        cb -= offset;
+    // convert x11 button number to terminal button code
+    cb = button & 3;
+    if (button == MOUSE_BUTTON_SCROLLDOWN || button == MOUSE_BUTTON_SCROLLUP ||
+        button == MOUSE_BUTTON_SCROLLLEFT || button == MOUSE_BUTTON_SCROLLRIGHT) {
         cb |= MOUSE_BUTTON_SCROLL_FLAG;
+    }
+    if (button >= MOUSE_BUTTON_BACKWARD) {
+        cb |= MOUSE_BUTTON_EXTRA_FLAG;
     }
     if (modflag & NSEventModifierFlagControl) {
         cb |= MOUSE_BUTTON_CTRL_FLAG;
@@ -812,10 +822,9 @@ static int VT100OutputSafeAddInt(int l, int r) {
 - (NSData *)mouseRelease:(int)button withModifiers:(unsigned int)modflag at:(VT100GridCoord)coord point:(NSPoint)point {
     int cb;
 
-    if (self.mouseFormat == MOUSE_FORMAT_SGR || self.mouseFormat == MOUSE_FORMAT_SGR_PIXEL) {
-        // for SGR 1006 and 1016 modes
-        cb = button | MOUSE_BUTTON_SGR_RELEASE_FLAG;
-    } else {
+    // convert x11 button number to terminal button code
+    cb = button & 3;
+    if (self.mouseFormat != MOUSE_FORMAT_SGR && self.mouseFormat != MOUSE_FORMAT_SGR_PIXEL) {
         // for 1000/1005/1015 mode
         // To quote the xterm docs:
         // The low two bits of C b encode button information:
@@ -823,6 +832,9 @@ static int VT100OutputSafeAddInt(int l, int r) {
         cb = 3;
     }
 
+    if (button >= MOUSE_BUTTON_BACKWARD) {
+        cb |= MOUSE_BUTTON_EXTRA_FLAG;
+    }
     if (modflag & NSEventModifierFlagControl) {
         cb |= MOUSE_BUTTON_CTRL_FLAG;
     }
@@ -833,6 +845,7 @@ static int VT100OutputSafeAddInt(int l, int r) {
         cb |= MOUSE_BUTTON_META_FLAG;
     }
     return [self mouseReport:cb
+                       release:true
                        coord:VT100GridCoordMake(coord.x + 1,
                                                 coord.y + 1)
                        point:NSMakePoint(VT100OutputDoubleToInt(VT100OutputSafeAddInt(point.x, 1)),
@@ -847,8 +860,12 @@ static int VT100OutputSafeAddInt(int l, int r) {
     } else {
         cb = button % 3;
     }
-    if (button > 3) {
+    if (button == MOUSE_BUTTON_SCROLLDOWN || button == MOUSE_BUTTON_SCROLLUP ||
+        button == MOUSE_BUTTON_SCROLLLEFT || button == MOUSE_BUTTON_SCROLLRIGHT) {
         cb |= MOUSE_BUTTON_SCROLL_FLAG;
+    }
+    if (button >= MOUSE_BUTTON_BACKWARD) {
+        cb |= MOUSE_BUTTON_EXTRA_FLAG;
     }
     if (modflag & NSEventModifierFlagControl) {
         cb |= MOUSE_BUTTON_CTRL_FLAG;
@@ -1205,9 +1222,10 @@ static int VT100OutputSafeAddInt(int l, int r) {
                                    length:strlen(_keyStrings[terminfo])];
     } else {
         if (mod) {
-            char buf[20];
-            sprintf(buf, cursorMod, mod);
-            theSuffix = [NSData dataWithBytes:buf length:strlen(buf)];
+            NSString *format = [NSString stringWithCString:cursorMod encoding:NSUTF8StringEncoding];
+            NSString *string = [format stringByReplacingOccurrencesOfString:@"%d"
+                                                                 withString:[@(mod) stringValue]];
+            theSuffix = [string dataUsingEncoding:NSISOLatin1StringEncoding];
         } else {
             if (self.cursorMode) {
                 theSuffix = [NSData dataWithBytes:cursorSet

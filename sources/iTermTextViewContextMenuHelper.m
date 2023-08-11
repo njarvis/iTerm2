@@ -14,6 +14,7 @@
 #import "SmartSelectionController.h"
 #import "VT100RemoteHost.h"
 #import "VT100ScreenMark.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermAPIHelper.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermApplication.h"
@@ -32,7 +33,7 @@
 static const int kMaxSelectedTextLengthForCustomActions = 400;
 
 @interface NSString(ContextMenu)
-- (NSArray<NSString *> *)helpfulSynonyms;
+- (NSArray<iTermTuple<NSString *, NSString *> *> *)helpfulSynonyms;
 @end
 
 @implementation iTermTextViewContextMenuHelper
@@ -91,24 +92,29 @@ static const int kMaxSelectedTextLengthForCustomActions = 400;
     _validationClickPoint = VT100GridCoordMake(-1, -1);
 }
 
+- (id<VT100ScreenMarkReading>)markForClick:(NSEvent *)event {
+    NSPoint locationInWindow = [event locationInWindow];
+    if (locationInWindow.x >= [iTermPreferences intForKey:kPreferenceKeySideMargins]) {
+        return nil;
+    }
+    iTermOffscreenCommandLine *offscreenCommandLine =
+        [self.delegate contextMenu:self offscreenCommandLineForClickAt:event.locationInWindow];
+    if (offscreenCommandLine) {
+        return nil;
+    }
+    const NSPoint clickPoint = [self.delegate contextMenu:self
+                                               clickPoint:event
+                                 allowRightMarginOverflow:NO];
+    const int y = clickPoint.y;
+    return [self.delegate contextMenu:self markOnLine:y];
+}
+
 - (NSMenu *)contextMenuWithEvent:(NSEvent *)event {
     const NSPoint clickPoint = [self.delegate contextMenu:self
                                                clickPoint:event
                                  allowRightMarginOverflow:NO];
     const int x = clickPoint.x;
     const int y = clickPoint.y;
-    NSMenu *markMenu = nil;
-    id<VT100ScreenMarkReading> mark = [self.delegate contextMenu:self markOnLine:y];
-    DLog(@"contextMenuWithEvent:%@ x=%d, mark=%@, mark command=%@", event, x, mark, [mark command]);
-    if (mark && mark.command.length) {
-        NSString *workingDirectory= [self.delegate contextMenu:self
-                                        workingDirectoryOnLine:y];
-        markMenu = [self menuForMark:mark directory:workingDirectory];
-        NSPoint locationInWindow = [event locationInWindow];
-        if (locationInWindow.x < [iTermPreferences intForKey:kPreferenceKeySideMargins]) {
-            return markMenu;
-        }
-    }
 
     const VT100GridCoord coord = VT100GridCoordMake(x, y);
     id<iTermImageInfoReading> imageInfo = [self.delegate contextMenu:self imageInfoAtCoord:coord];
@@ -137,11 +143,26 @@ static const int kMaxSelectedTextLengthForCustomActions = 400;
         _savedSelectedText = [[self.delegate contextMenuSelectedText:self capped:0] copy];
     }
     NSMenu *contextMenu = [self menuAtCoord:coord];
-    if (markMenu) {
+
+    id<VT100ScreenMarkReading> mark = [self.delegate contextMenu:self markOnLine:y];
+    DLog(@"contextMenuWithEvent:%@ x=%d, mark=%@, mark command=%@", event, x, mark, [mark command]);
+    if (mark.name) {
+        NSMenuItem *nameItem = [[NSMenuItem alloc] initWithTitle:mark.name action:nil keyEquivalent:@""];
+
+        NSMenuItem *removeItem = [[NSMenuItem alloc] initWithTitle:@"Remove Named Mark" action:@selector(removeNamedMark:) keyEquivalent:@""];
+        removeItem.target = self;
+        removeItem.representedObject = mark;
+
+        [contextMenu insertItem:nameItem atIndex:0];
+        [contextMenu insertItem:removeItem atIndex:1];
+        [contextMenu insertItem:[NSMenuItem separatorItem] atIndex:2];
+    }
+    if (mark && mark.command.length) {
         NSMenuItem *markItem = [[NSMenuItem alloc] initWithTitle:@"Command Info"
-                                                          action:nil
+                                                          action:@selector(revealCommandInfo:)
                                                    keyEquivalent:@""];
-        markItem.submenu = markMenu;
+        markItem.target = self;
+        markItem.representedObject = mark;
         [contextMenu insertItem:markItem atIndex:0];
         [contextMenu insertItem:[NSMenuItem separatorItem] atIndex:1];
     }
@@ -182,7 +203,9 @@ static const int kMaxSelectedTextLengthForCustomActions = 400;
         [item action] == @selector(inspectImage:) ||
         [item action] == @selector(apiMenuItem:) ||
         [item action] == @selector(copyLinkAddress:) ||
-        [item action] == @selector(copyString:)) {
+        [item action] == @selector(copyString:) ||
+        [item action] == @selector(revealCommandInfo:) ||
+        [item action] == @selector(removeNamedMark:)) {
         return YES;
     }
     if ([item action] == @selector(stopCoprocess:)) {
@@ -199,6 +222,7 @@ static const int kMaxSelectedTextLengthForCustomActions = 400;
         [item action] == @selector(addNote:) ||
         [item action] == @selector(mail:) ||
         [item action] == @selector(browse:) ||
+        [item action] == @selector(quickLook:) ||
         [item action] == @selector(searchInBrowser:) ||
         [item action] == @selector(addTrigger:) ||
         [item action] == @selector(saveSelectionAsSnippet:)) {
@@ -326,11 +350,14 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
         BOOL needSeparator = NO;
         if (haveShortSelection) {
             shortSelectedText = [self.delegate contextMenuSelectedText:self capped:0];
-            NSArray<NSString *> *synonyms = [shortSelectedText helpfulSynonyms];
+            NSArray<iTermTuple<NSString *, NSString *> *> *synonyms = [shortSelectedText helpfulSynonyms];
             needSeparator = synonyms.count > 0;
-            for (NSString *conversion in synonyms) {
+            for (iTermTuple<NSString *, NSString *> *tuple in synonyms) {
                 NSMenuItem *theItem = [[NSMenuItem alloc] init];
-                theItem.title = conversion;
+                theItem.title = tuple.firstObject;
+                theItem.representedObject = tuple.secondObject;
+                theItem.target = self;
+                theItem.action = @selector(copyString:);
                 [theMenu addItem:theItem];
             }
             NSArray *captures = [shortSelectedText captureComponentsMatchedByRegex:@"^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$"];
@@ -469,7 +496,11 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     };
     add(scpTitle, @selector(downloadWithSCP:));
     add(@"Open Selection as URL", @selector(browse:));
+    if (shortSelectedText && [self.delegate contextMenu:self canQuickLookURL:[NSURL URLWithUserSuppliedString:shortSelectedText]]) {
+        add(@"Quick Look Link", @selector(quickLook:));
+    }
     add(@"Search the Web for Selection", @selector(searchInBrowser:));
+
     add(@"Send Email to Selected Address", @selector(mail:));
     add(@"Add Trigger…", @selector(addTrigger:));
 
@@ -810,6 +841,24 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
 
 #pragma mark - Context Menu Actions
 
+- (void)removeNamedMark:(id)sender {
+    id<VT100ScreenMarkReading> mark = [sender representedObject];
+    DLog(@"Remove named mark %@", mark);
+    if (mark.name) {
+        [_delegate contextMenu:self removeNamedMark:mark];
+    }
+}
+
+- (void)revealCommandInfo:(id)sender {
+    id<VT100ScreenMarkReading> mark = [sender representedObject];
+    DLog(@"Reveal command info %@", mark);
+    if (!mark || ![mark conformsToProtocol:@protocol(VT100ScreenMarkReading)]) {
+        DLog(@"Bogus");
+        return;
+    }
+    [_delegate contextMenu:self showCommandInfoForMark:mark];
+}
+
 - (void)contextMenuActionOpenFile:(id)sender {
     DLog(@"Open file: '%@'", [sender representedObject]);
     NSDictionary *dict = [sender representedObject];
@@ -940,6 +989,17 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     [_urlActionHelper findUrlInString:[self.delegate contextMenuSelectedText:self capped:0] andOpenInBackground:NO];
 }
 
+- (void)quickLook:(id)sender {
+    NSString *string = [self.delegate contextMenuSelectedText:self capped:0];
+    NSURL *url = [NSURL URLWithUserSuppliedString:string];
+    if (!url) {
+        return;
+    }
+    [self.delegate contextMenuHandleQuickLook:self
+                                          url:url
+                             windowCoordinate:NSApp.currentEvent.locationInWindow];
+}
+
 - (void)searchInBrowser:(id)sender {
     NSURL *url = [NSURL urlByReplacingFormatSpecifier:@"%@"
                                              inString:[iTermAdvancedSettingsModel searchCommand]
@@ -1049,6 +1109,10 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
 
 - (void)selectCommandOutput:(id)sender {
     id<VT100ScreenMarkReading> mark = [sender representedObject];
+    [self selectOutputOfCommandMark:mark];
+}
+
+- (void)selectOutputOfCommandMark:(id<VT100ScreenMarkReading>)mark {
     VT100GridCoordRange range = [self.delegate contextMenu:self rangeOfOutputForCommandMark:mark];
     if (range.start.x == -1) {
         DLog(@"Beep: can't select output");
@@ -1136,21 +1200,21 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
 
 @implementation NSString(ContextMenu)
 
-- (NSArray<NSString *> *)helpfulSynonyms {
+- (NSArray<iTermTuple<NSString *, NSString *> *> *)helpfulSynonyms {
     NSMutableArray *array = [NSMutableArray array];
-    NSString *hexOrDecimalConversion = [self hexOrDecimalConversionHelp];
+    iTermTuple<NSString *, NSString *> *hexOrDecimalConversion = [self hexOrDecimalConversionHelp];
     if (hexOrDecimalConversion) {
         [array addObject:hexOrDecimalConversion];
     }
-    NSString *scientificNotationConversion = [self scientificNotationConversionHelp];
+    iTermTuple<NSString *, NSString *> *scientificNotationConversion = [self scientificNotationConversionHelp];
     if (scientificNotationConversion) {
         [array addObject:scientificNotationConversion];
     }
-    NSString *timestampConversion = [self timestampConversionHelp];
+    iTermTuple<NSString *, NSString *> *timestampConversion = [self timestampConversionHelp];
     if (timestampConversion) {
         [array addObject:timestampConversion];
     }
-    NSString *utf8Help = [self utf8Help];
+    iTermTuple<NSString *, NSString *> *utf8Help = [self utf8Help];
     if (utf8Help) {
         [array addObject:utf8Help];
     }
@@ -1161,7 +1225,7 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     }
 }
 
-- (NSString *)hexOrDecimalConversionHelp {
+- (iTermTuple<NSString *, NSString *> *)hexOrDecimalConversionHelp {
     unsigned long long value;
     BOOL mustBePositive = NO;
     BOOL decToHex;
@@ -1207,7 +1271,7 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     numberFormatter.numberStyle = NSNumberFormatterDecimalStyle;
 
     NSString *humanReadableSize = [NSString stringWithHumanReadableSize:value];
-    if (humanReadableSize) {
+    if (value >= 1024) {
         humanReadableSize = [NSString stringWithFormat:@" (%@)", humanReadableSize];
     } else {
         humanReadableSize = @"";
@@ -1222,18 +1286,25 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
             if (intValue < 0) {
                 humanReadableSize = @"";
             }
-            return [NSString stringWithFormat:@"%@ = 0x%x%@",
-                       formattedDecimalValue, intValue, humanReadableSize];
+            NSString *converted = [NSString stringWithFormat:@"0x%x%@", intValue, humanReadableSize];
+            NSString *display = [NSString stringWithFormat:@"%@ = %@",
+                                 formattedDecimalValue, converted];
+            return [iTermTuple tupleWithObject:display andObject:converted];
         } else if (intValue >= 0) {
-            return [NSString stringWithFormat:@"0x%x = %@%@",
-                       intValue, formattedDecimalValue, humanReadableSize];
+            NSString *converted = [NSString stringWithFormat:@"%@%@",
+                                   formattedDecimalValue, humanReadableSize];
+            NSString *display = [NSString stringWithFormat:@"0x%x = %@%@",
+                                 intValue, formattedDecimalValue, humanReadableSize];
+            return [iTermTuple tupleWithObject:display andObject:converted];
         } else {
             unsigned int unsignedIntValue = (unsigned int)value;
             NSString *formattedUnsignedDecimalValue =
                 [numberFormatter stringFromNumber:@(unsignedIntValue)];
-            return [NSString stringWithFormat:@"0x%x = %@ or %@%@",
-                       intValue, formattedDecimalValue, formattedUnsignedDecimalValue,
-                       humanReadableSize];
+            NSString *converted = formattedDecimalValue;
+            NSString *display = [NSString stringWithFormat:@"0x%x = %@ or %@%@",
+                                 intValue, formattedDecimalValue, formattedUnsignedDecimalValue,
+                                 humanReadableSize];
+            return [iTermTuple tupleWithObject:display andObject:converted];
         }
     } else {
         // 64-bit value
@@ -1253,11 +1324,16 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
             if (!mustBePositive && signedValue < 0) {
                 humanReadableSize = @"";
             }
-            return [NSString stringWithFormat:@"%@ = 0x%llx%@",
-                       formattedDecimalValue, value, humanReadableSize];
+            NSString *converted = [NSString stringWithFormat:@"0x%llx%@", value, humanReadableSize];
+            NSString *display = [NSString stringWithFormat:@"%@ = 0x%llx%@",
+                                 formattedDecimalValue, value, humanReadableSize];
+            return [iTermTuple tupleWithObject:display andObject:converted];
         } else if (signedValue >= 0) {
-            return [NSString stringWithFormat:@"0x%llx = %@%@",
-                       value, formattedDecimalValue, humanReadableSize];
+            NSString *converted = [NSString stringWithFormat:@"%@%@",
+                                   formattedDecimalValue, humanReadableSize];
+            NSString *display = [NSString stringWithFormat:@"0x%llx = %@%@",
+                                 value, formattedDecimalValue, humanReadableSize];
+            return [iTermTuple tupleWithObject:display andObject:converted];
         } else {
             // Value is negative and converting hex to decimal.
             NSDecimalNumber *unsignedDecimalNumber =
@@ -1266,14 +1342,17 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
                                                 isNegative:NO];
             NSString *formattedUnsignedDecimalValue =
                 [numberFormatter stringFromNumber:unsignedDecimalNumber];
-            return [NSString stringWithFormat:@"0x%llx = %@ or %@%@",
-                       value, formattedDecimalValue, formattedUnsignedDecimalValue,
-                       humanReadableSize];
+            NSString *converted = [NSString stringWithFormat:@"%@",
+                                   formattedDecimalValue];
+            NSString *display = [NSString stringWithFormat:@"0x%llx = %@ or %@%@",
+                                 value, formattedDecimalValue, formattedUnsignedDecimalValue,
+                                 humanReadableSize];
+            return [iTermTuple tupleWithObject:display andObject:converted];
         }
     }
 }
 
-- (NSString *)scientificNotationConversionHelp {
+- (iTermTuple<NSString *, NSString *> *)scientificNotationConversionHelp {
     NSString *scientificNotationRegex = @"^-?(0|[1-9]\\d*)?(\\.\\d+)?[eE][+\\-]?\\d+$";
     const BOOL isScientificNotation = [self isMatchedByRegex:scientificNotationRegex];
     if (!isScientificNotation) {
@@ -1290,10 +1369,11 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     numberFormatter.maximumFractionDigits = 1000;
     NSString *formattedNumber = [numberFormatter stringFromNumber:number];
 
-    return [NSString stringWithFormat:@"%@ = %@", self, formattedNumber];
+    return [iTermTuple tupleWithObject:[NSString stringWithFormat:@"%@ = %@", self, formattedNumber]
+                             andObject:formattedNumber];
 }
 
-- (NSString *)timestampConversionHelp {
+- (iTermTuple<NSString *, NSString *> *)timestampConversionHelp {
     NSDate *date;
     date = [self dateValueFromUnix];
     if (!date) {
@@ -1306,43 +1386,19 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
         } else {
             template = @"yyyyMMMd hh:mm:ss z";
         }
+        NSLocale *currentLocale = [NSLocale currentLocale];
         NSDateFormatter *fmt = [[NSDateFormatter alloc] init];
-        [fmt setDateFormat:[NSDateFormatter dateFormatFromTemplate:template
-                                                           options:0
-                                                            locale:[NSLocale currentLocale]]];
-        return [fmt stringFromDate:date];
+        NSString *dateFormat = [NSDateFormatter dateFormatFromTemplate:template
+                                                               options:0
+                                                                locale:currentLocale];
+        [fmt setDateFormat:dateFormat];
+        return [iTermTuple tupleWithObject:[fmt stringFromDate:date] andObject:[fmt stringFromDate:date]];
     } else {
         return nil;
     }
 }
 
-+ (instancetype)stringWithHumanReadableSize:(unsigned long long)value {
-    if (value < 1024) {
-        return nil;
-    }
-    unsigned long long num = value;
-    int pow = 0;
-    BOOL exact = YES;
-    while (num >= 1024 * 1024) {
-        pow++;
-        if (num % 1024 != 0) {
-            exact = NO;
-        }
-        num /= 1024;
-    }
-    // Show 2 fraction digits, always rounding downwards. Printf rounds floats to the nearest
-    // representable value, so do the calculation with integers until we get 100-fold the desired
-    // value, and then switch to float.
-    if (100 * num % 1024 != 0) {
-        exact = NO;
-    }
-    num = 100 * num / 1024;
-    NSArray *iecPrefixes = @[ @"Ki", @"Mi", @"Gi", @"Ti", @"Pi", @"Ei" ];
-    return [NSString stringWithFormat:@"%@%.2f %@",
-               exact ? @"" :@ "≈", (double)num / 100, iecPrefixes[pow]];
-}
-
-- (NSString *)utf8Help {
+- (iTermTuple<NSString *, NSString *> *)utf8Help {
     if (self.length == 0) {
         return nil;
     }
@@ -1383,7 +1439,8 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     }
     NSString *ucs4String = [ucs4Strings componentsJoinedByString:@" "];
 
-    return [NSString stringWithFormat:@"“%@” = %@ = %@ (UTF-8)", self, ucs4String, utf8String];
+    return [iTermTuple tupleWithObject:[NSString stringWithFormat:@"“%@” = %@ = %@ (UTF-8)", self, ucs4String, utf8String]
+                             andObject:utf8String];
 }
 
 - (NSDate *)dateValueFromUnix {

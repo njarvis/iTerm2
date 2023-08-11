@@ -109,10 +109,14 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 @property (nonatomic, readonly) BOOL terminalAlternateScrollMode;
 @property (nonatomic, readonly) BOOL terminalAutorepeatMode;
 @property (nonatomic, readonly) int terminalCharset;
+@property (nonatomic, readonly) NSDictionary *terminalState;
 
 // Where the next tail-find needs to begin.
 @property (nonatomic) long long savedFindContextAbsPos;
 @property (nonatomic, strong) FindContext *findContext;
+@property (nonatomic, readonly) BOOL sendingIsBlocked;
+
+@property (nonatomic, readonly) BOOL isAtCommandPrompt;
 
 // Indicates if line drawing mode is enabled for any character set, or if the current character set
 // is not G0.
@@ -151,6 +155,7 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 - (id<VT100ScreenMarkReading>)lastPromptMark;
 - (id<VT100RemoteHostReading>)lastRemoteHost;
 - (id<VT100ScreenMarkReading>)promptMarkWithGUID:(NSString *)guid;
+- (id<VT100ScreenMarkReading>)namedMarkWithGUID:(NSString *)guid;
 - (BOOL)markIsValid:(iTermMark *)mark;
 - (VT100GridRange)lineNumberRangeOfInterval:(Interval *)interval;
 - (void)enumeratePromptsFrom:(NSString *)maybeFirst
@@ -242,6 +247,10 @@ typedef NS_ENUM(NSUInteger, VT100ScreenTriggerCheckType) {
                              height:(int)height
                        mutableState:(VT100ScreenMutableState *)mutableState;
 - (NSDictionary<NSString *, NSString *> *)exfiltratedEnvironmentVariables:(NSArray<NSString *> *)names;
+
+// These record the state that should be restored when ssh ends.
+- (void)restoreSavedState:(NSDictionary *)savedState;
+- (NSArray<id<VT100ScreenMarkReading>> *)namedMarks;
 
 @end
 

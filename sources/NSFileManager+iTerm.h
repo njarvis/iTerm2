@@ -26,10 +26,13 @@
 
 @interface NSFileManager (iTerm)
 
+extern NSNotificationName iTermScriptsFolderDidChange;
+
 + (NSString *)pathToSaveFileInFolder:(NSString *)destinationDirectory preferredName:(NSString *)preferredName;
 
 - (NSString *)legacyApplicationSupportDirectory;
 - (NSString *)applicationSupportDirectory;
+- (NSString *)applicationSupportDirectoryWithoutCreating;
 
 // Gives a symlink called ApplicationSupport because pip3 can't handle spaces and this breaks pyenv.
 // Creates the symlink if it doesn't already exist
@@ -52,6 +55,7 @@
 // Directory where scripts live. These are loaded and added to a menu or auto-run at startup.
 - (NSString *)scriptsPath;
 - (NSString *)scriptsPathWithoutSpaces;
+- (BOOL)customScriptsFolderIsValid:(NSString *)candidate;
 
 // Path to special auto-launch script that is run at startup.
 - (NSString *)legacyAutolaunchScriptPath;  // applescript

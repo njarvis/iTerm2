@@ -49,6 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, readonly) BOOL mayHaveDoubleWidthCharacter;
 // Absolute block number of last block.
 @property(nonatomic, readonly) int largestAbsoluteBlockNumber;
+@property(nonatomic, readonly) BOOL dirty;
 // Returns the metadata associated with a line when wrapped to the specified width.
 - (iTermImmutableMetadata)metadataForLineNumber:(int)lineNum width:(int)width;
 
@@ -84,6 +85,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (ScreenCharArray * _Nonnull)wrappedLineAtIndex:(int)lineNum
                                            width:(int)width;
 
+- (ScreenCharArray *)screenCharArrayForLine:(int)line
+                                      width:(int)width
+                                   paddedTo:(int)paddedSize
+                             eligibleForDWC:(BOOL)eligibleForDWC;
 
 - (ScreenCharArray * _Nonnull)rawLineAtWrappedLine:(int)lineNum width:(int)width;
 
@@ -169,9 +174,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Tests only!
 - (LineBlock * _Nonnull)testOnlyBlockAtIndex:(int)i;
 
-- (ScreenCharArray * _Nullable)unwrappedLineAtIndex:(int)i;
 - (unsigned int)numberOfUnwrappedLines;
-
+- (BOOL)isEqual:(LineBuffer *)other;
+- (NSInteger)numberOfCellsUsedInWrappedLineRange:(VT100GridRange)wrappedLineRange width:(int)width;
 
 @end
 
@@ -267,6 +272,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)performBlockWithTemporaryChanges:(void (^ NS_NOESCAPE)(void))block;
 
 - (void)clear;
+
+// Returns YES if all blocks have been compressed.
+- (BOOL)compress;
 
 @end
 

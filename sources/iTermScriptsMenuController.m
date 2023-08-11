@@ -8,6 +8,7 @@
 #import "iTermScriptsMenuController.h"
 
 #import "DebugLogging.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermAPIHelper.h"
 #import "iTermAPIScriptLauncher.h"
 #import "iTermAdvancedSettingsModel.h"
@@ -110,6 +111,7 @@ NS_ASSUME_NONNULL_BEGIN
     BOOL _ranAutoLaunchScript;
     SCEvents *_events;
     NSArray<NSString *> *_allScripts;
+    BOOL _disableEnumeration;
 }
 
 - (instancetype)initWithMenu:(NSMenu *)menu {
@@ -119,6 +121,10 @@ NS_ASSUME_NONNULL_BEGIN
         _scriptsMenu = menu;
         _events = [[SCEvents alloc] init];
         _events.delegate = self;
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(scriptsFolderDidChange:)
+                                                     name:iTermScriptsFolderDidChange
+                                                   object:nil];
         NSString *path = [[NSFileManager defaultManager] scriptsPath];
         [[NSFileManager defaultManager] createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
         [_events startWatchingPaths:@[ path ]];
@@ -132,6 +138,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)scriptsFolderDidChange:(NSNotification *)notification {
+    _disableEnumeration = NO;
+    [_events stopWatchingPaths];
+    NSString *path = [[NSFileManager defaultManager] scriptsPath];
+    [_events startWatchingPaths:@[ path ]];
+    [self build];
 }
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem {
@@ -198,11 +212,18 @@ NS_ASSUME_NONNULL_BEGIN
         path = [fm scriptsPathWithoutSpaces];
     }
     iTermScriptItem *root = [[iTermScriptItem alloc] initFolderWithPath:path parent:nil];
-    [self populateScriptItem:root];
+    [self populateScriptItem:root
+                originalRoot:path
+                clockWatcher:[[iTermClockWatcher alloc] initWithMaxTime:8.0]];
     return root.children;
 }
 
-- (void)populateScriptItem:(iTermScriptItem *)parentFolderItem {
+- (void)populateScriptItem:(iTermScriptItem *)parentFolderItem
+              originalRoot:(NSString *)originalRoot
+              clockWatcher:(iTermClockWatcher *)clockWatcher {
+    if (_disableEnumeration) {
+        return;
+    }
     NSString *root = parentFolderItem.path;
     NSDirectoryEnumerator *directoryEnumerator =
         [[NSFileManager defaultManager] enumeratorAtPath:root];
@@ -210,6 +231,29 @@ NS_ASSUME_NONNULL_BEGIN
     NSSet<NSString *> *scriptExtensions = [NSSet setWithArray:@[ @"scpt", @"app", @"py" ]];
 
     for (NSString *file in directoryEnumerator) {
+        if (clockWatcher.reachedMaxTime) {
+            iTermWarningSelection selection = [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"It is taking a long time to locate all scripts under %@. Avoid storing many files or using network mounts for the scripts folder.\n\nContinue?", originalRoot]
+                                                                         actions:@[ @"Stop", @"Continue"]
+                                                                       accessory:nil
+                                                                      identifier:@"TakingTooLongToEnumerateScripts"
+                                                                     silenceable:kiTermWarningTypePersistent
+                                                                         heading:@"Performance Issue"
+                                                                          window:nil];
+            if (selection == kiTermWarningSelection0) {
+                _disableEnumeration = YES;
+                [iTermWarning showWarningWithTitle:[NSString stringWithFormat:@"Some scripts will not be available until the app has restarted or you change the scripts folder."]
+                                                                             actions:@[ @"OK"]
+                                                                           accessory:nil
+                                                                          identifier:@"TakingTooLongToEnumerateScripts2"
+                                                                         silenceable:kiTermWarningTypePersistent
+                                                                             heading:@"Scripts Disabled"
+                                            window:nil];
+                return;
+            } else {
+                DLog(@"Extend clock watcher maxtime");
+                clockWatcher.maxTime = clockWatcher.elapsedTime + 5.0;
+            }
+        }
         if ([file caseInsensitiveCompare:@".DS_Store"] == NSOrderedSame) {
             continue;
         }
@@ -227,7 +271,10 @@ NS_ASSUME_NONNULL_BEGIN
                 continue;
             }
             iTermScriptItem *folderItem = [[iTermScriptItem alloc] initFolderWithPath:path parent:parentFolderItem];
-            [self populateScriptItem:folderItem];
+            [self populateScriptItem:folderItem originalRoot:originalRoot clockWatcher:clockWatcher];
+            if (_disableEnumeration) {
+                return;
+            }
             if (folderItem.children.count > 0) {
                 [parentFolderItem addChild:folderItem];
             }
@@ -266,6 +313,8 @@ NS_ASSUME_NONNULL_BEGIN
             [iTermScriptImporter importScriptFromURL:url
                                        userInitiated:YES
                                      offerAutoLaunch:autolaunch
+                                       callbackQueue:dispatch_get_main_queue()
+                                             avoidUI:NO
                                           completion:^(NSString * _Nullable errorMessage, BOOL quiet, NSURL *location) {
                                               if (quiet) {
                                                   return;
@@ -347,23 +396,29 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 - (void)chooseAndExportScript {
-    [iTermScriptChooser chooseWithValidator:^BOOL(NSURL *url) {
+    [iTermScriptChooser chooseMultipleWithValidator:^BOOL(NSURL *url) {
         return [iTermScriptExporter urlIsScript:url];
-    } completion:^(NSURL *url, SIGIdentity *signingIdentity) {
-        if (!url) {
+    } completion:^(NSArray<NSURL *> *urls, SIGIdentity *signingIdentity) {
+        if (!urls) {
             return;
         }
-        [iTermScriptExporter exportScriptAtURL:url signingIdentity:signingIdentity completion:^(NSString *errorMessage, NSURL *zipURL) {
-            if (errorMessage || !zipURL) {
-                NSAlert *alert = [[NSAlert alloc] init];
-                alert.messageText = @"Export Failed";
-                alert.informativeText = errorMessage ?: @"Failed to create archive";
-                [alert runModal];
-                return;
-            }
+        for (NSURL *url in urls) {
+            [iTermScriptExporter exportScriptAtURL:url
+                                   signingIdentity:signingIdentity
+                                     callbackQueue:dispatch_get_main_queue()
+                                       destination:nil
+                                        completion:^(NSString *errorMessage, NSURL *zipURL) {
+                if (errorMessage || !zipURL) {
+                    NSAlert *alert = [[NSAlert alloc] init];
+                    alert.messageText = @"Export Failed";
+                    alert.informativeText = errorMessage ?: @"Failed to create archive";
+                    [alert runModal];
+                    return;
+                }
 
-            [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ zipURL ]];
-        }];
+                [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ zipURL ]];
+            }];
+        }
     }];
 }
 
@@ -373,10 +428,13 @@ NS_ASSUME_NONNULL_BEGIN
     }
     NSOpenPanel *panel = [[NSOpenPanel alloc] init];
     panel.allowedFileTypes = @[ @"zip", @"its", @"py" ];
+    panel.allowsMultipleSelection = YES;
     if ([panel runModal] == NSModalResponseOK) {
-        NSURL *url = panel.URL;
+        NSArray<NSURL *> *urls = [panel.URLs copy];
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self importFromURL:url];
+            for (NSURL *url in urls) {
+                [self importFromURL:url];
+            }
         });
     }
 }
@@ -388,6 +446,8 @@ NS_ASSUME_NONNULL_BEGIN
     [iTermScriptImporter importScriptFromURL:url
                                userInitiated:YES
                              offerAutoLaunch:NO
+                               callbackQueue:dispatch_get_main_queue()
+                                     avoidUI:NO
                                   completion:^(NSString * _Nullable errorMessage, BOOL quiet, NSURL *location) {
                                       // Mojave deadlocks if you do this without the dispatch_async
                                       dispatch_async(dispatch_get_main_queue(), ^{

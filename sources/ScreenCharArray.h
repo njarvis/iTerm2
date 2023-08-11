@@ -20,6 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) screen_char_t continuation;
 @property (nonatomic, readonly) iTermImmutableMetadata metadata;
 @property (nonatomic, readonly) NSDictionary *dictionaryValue;
+@property (nonatomic, readonly) NSString *stringValue;
+
+@property (nonatomic, readonly) NSInteger lengthExcludingTrailingWhitespaceAndNulls;
 
 + (instancetype)emptyLineOfLength:(int)length;
 
@@ -74,6 +77,15 @@ NS_ASSUME_NONNULL_BEGIN
 - (ScreenCharArray *)paddedToLength:(int)length eligibleForDWC:(BOOL)eligibleForDWC;
 
 - (ScreenCharArray *)copyByZeroingRange:(NSRange)range;
+- (ScreenCharArray *)paddedOrTruncatedToLength:(NSUInteger)newLength;
+- (ScreenCharArray *)paddedToAtLeastLength:(NSUInteger)newLength;
+- (NSMutableData *)mutableLineData;
+- (ScreenCharArray *)screenCharArrayBySettingCharacterAtIndex:(int)i
+                                                           to:(screen_char_t)c;
+// Ensures that if this object outlives the raw pointer it was initialized with that there won't be a dangling pointer.
+- (void)makeSafe;
+
+- (NSAttributedString *)attributedStringValueWithAttributeProvider:(NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProvider;
 
 @end
 

@@ -8,13 +8,16 @@
 #import "iTermEncoderGraphRecord.h"
 
 #import "DebugLogging.h"
+#import "iTermChangeTrackingDictionary.h"
 #import "iTermTuple.h"
 #import "NSArray+iTerm.h"
 #import "NSData+iTerm.h"
 #import "NSDictionary+iTerm.h"
 #import "NSObject+iTerm.h"
 
-@implementation iTermEncoderGraphRecord
+@implementation iTermEncoderGraphRecord {
+    NSMutableDictionary<iTermTuple<NSString *, NSString *> *, iTermEncoderGraphRecord *> *_index;
+}
 
 + (instancetype)withPODs:(NSDictionary<NSString *, id> *)pod
                   graphs:(NSArray<iTermEncoderGraphRecord *> *)graphRecords
@@ -144,10 +147,32 @@
 
 - (iTermEncoderGraphRecord * _Nullable)childRecordWithKey:(NSString *)key
                                                identifier:(NSString *)identifier {
+    if (_index) {
+        iTermTuple<NSString *, NSString *> *tuple = [iTermTuple tupleWithObject:key
+                                                                      andObject:identifier];
+        return _index[tuple];
+    }
     return [_graphRecords objectPassingTest:^BOOL(iTermEncoderGraphRecord *element, NSUInteger index, BOOL *stop) {
         return ([element.key isEqualToString:key] &&
                 [identifier isEqualToString:element.identifier]);
     }];
+}
+
+- (NSMutableDictionary<iTermTuple<NSString *, NSString *> *, iTermEncoderGraphRecord *> *)index {
+    [self ensureIndexOfGraphRecords];
+    return _index;
+}
+
+- (void)ensureIndexOfGraphRecords {
+    if (_index) {
+        return;
+    }
+    _index = [NSMutableDictionary dictionary];
+    for (iTermEncoderGraphRecord *element in _graphRecords) {
+        iTermTuple<NSString *, NSString *> *key = [iTermTuple tupleWithObject:element.key
+                                                                    andObject:element.identifier];
+        _index[key] = element;
+    }
 }
 
 - (iTermEncoderGraphRecord * _Nullable)childArrayWithKey:(NSString *)key {

@@ -42,6 +42,9 @@ NSString *const PTYSessionSlownessEventExecute = @"execute";
 }
 
 - (void)clearTriggerLine {
+    if (self.disableExecution) {
+        return;
+    }
     if ([_triggers count] || _expect.maybeHasExpectations) {
         [self checkTriggers];
         _triggerLineNumber = -1;
@@ -63,6 +66,9 @@ NSString *const PTYSessionSlownessEventExecute = @"execute";
 }
 
 - (void)checkPartialLineTriggers {
+    if (self.disableExecution) {
+        return;
+    }
     if (_triggerLineNumber == -1) {
         return;
     }
@@ -160,6 +166,9 @@ NSString *const PTYSessionSlownessEventExecute = @"execute";
 }
 
 - (void)appendStringToTriggerLine:(NSString *)s {
+    if (self.disableExecution) {
+        return;
+    }
     if (_triggerLineNumber == -1) {
         _triggerLineNumber = _dataSource.numberOfScrollbackLines + _dataSource.cursorY - 1 + _dataSource.totalScrollbackOverflow;
     }
@@ -174,21 +183,28 @@ NSString *const PTYSessionSlownessEventExecute = @"execute";
 }
 
 - (void)loadFromProfileArray:(NSArray *)array {
+    DLog(@"%@", [NSThread callStackSymbols]);
     NSMutableDictionary<NSDictionary *, NSArray<Trigger *> *> *table = [[_triggers classifyWithBlock:^id(Trigger *trigger) {
         return [trigger dictionaryValue];
     }] mutableCopy];
     _triggers = [array mapWithBlock:^Trigger *(NSDictionary *profileDict) {
+        DLog(@"%@", profileDict);
         NSDictionary *dict = [Trigger triggerNormalizedDictionary:profileDict];
         NSArray<Trigger *> *triggers = table[dict];
         if (!triggers.count) {
+            DLog(@"This is a new trigger");
             return [Trigger triggerFromDict:profileDict];
         }
+        DLog(@"Use second trigger from %@", triggers);
         table[dict] = [triggers arrayByRemovingFirstObject];
         return triggers[0];
     }];
 }
 
 - (void)checkIdempotentTriggersIfAllowed {
+    if (self.disableExecution) {
+        return;
+    }
     if (![self.delegate triggerEvaluatorShouldUseTriggers:self] && [iTermAdvancedSettingsModel allowIdempotentTriggers]) {
         const NSTimeInterval interval = [iTermAdvancedSettingsModel idempotentTriggerModeRateLimit];
         if (!_idempotentTriggerRateLimit) {
@@ -238,6 +254,9 @@ NSString *const PTYSessionSlownessEventExecute = @"execute";
 }
 
 - (NSString *)appendAsciiDataToCurrentLine:(AsciiData *)asciiData {
+    if (self.disableExecution) {
+        return nil;
+    }
     if (![_triggers count] && !_expect.expectations.count) {
         return nil;
     }
@@ -249,6 +268,9 @@ NSString *const PTYSessionSlownessEventExecute = @"execute";
 }
 
 - (void)forceCheck {
+    if (self.disableExecution) {
+        return;
+    }
     _lastPartialLineTriggerCheck = 0;
     [self clearTriggerLine];
 }

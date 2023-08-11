@@ -15,7 +15,7 @@ class iTermProcessInfo: NSObject {
     @objc let dataSource: ProcessDataSource
     private var childProcessIDs = IndexSet()
     private var buildingTreeString = false
-    @objc var parent: iTermProcessInfo?
+    @objc weak var parent: iTermProcessInfo?
 
     @objc(initWithPid:ppid:collection:dataSource:)
     init(processID: pid_t,
@@ -150,7 +150,7 @@ class iTermProcessInfo: NSObject {
 
     @objc(descendantsSkippingLevels:)
     func descendants(skipping levels: Int) -> [iTermProcessInfo] {
-        if levels <= 0 {
+        if levels < 0 {
             return flattenedTree
         }
         return children.flatMap {

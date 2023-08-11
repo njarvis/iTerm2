@@ -299,29 +299,29 @@ typedef struct screen_char_t {
 
 
 // Standard unicode replacement string. Is a double-width character.
-static inline NSString* ReplacementString() {
+static inline NSString* ReplacementString(void) {
     const unichar kReplacementCharacter = UNICODE_REPLACEMENT_CHAR;
     return [NSString stringWithCharacters:&kReplacementCharacter length:1];
 }
 
-static inline BOOL ScreenCharacterAttributesEqual(const screen_char_t *c1, const screen_char_t *c2) {
-    return (c1->foregroundColor == c2->foregroundColor &&
-            c1->fgGreen == c2->fgGreen &&
-            c1->fgBlue == c2->fgBlue &&
-            c1->backgroundColor == c2->backgroundColor &&
-            c1->bgGreen == c2->bgGreen &&
-            c1->bgBlue == c2->bgBlue &&
-            c1->foregroundColorMode == c2->foregroundColorMode &&
-            c1->backgroundColorMode == c2->backgroundColorMode &&
-            c1->bold == c2->bold &&
-            c1->faint == c2->faint &&
-            c1->italic == c2->italic &&
-            c1->blink == c2->blink &&
-            c1->invisible == c2->invisible &&
-            c1->underline == c2->underline &&
-            c1->underlineStyle == c2->underlineStyle &&
-            c1->strikethrough == c2->strikethrough &&
-            c1->image == c2->image);
+static inline BOOL ScreenCharacterAttributesEqual(const screen_char_t c1, const screen_char_t c2) {
+    return (c1.foregroundColor == c2.foregroundColor &&
+            c1.fgGreen == c2.fgGreen &&
+            c1.fgBlue == c2.fgBlue &&
+            c1.backgroundColor == c2.backgroundColor &&
+            c1.bgGreen == c2.bgGreen &&
+            c1.bgBlue == c2.bgBlue &&
+            c1.foregroundColorMode == c2.foregroundColorMode &&
+            c1.backgroundColorMode == c2.backgroundColorMode &&
+            c1.bold == c2.bold &&
+            c1.faint == c2.faint &&
+            c1.italic == c2.italic &&
+            c1.blink == c2.blink &&
+            c1.invisible == c2.invisible &&
+            c1.underline == c2.underline &&
+            c1.underlineStyle == c2.underlineStyle &&
+            c1.strikethrough == c2.strikethrough &&
+            c1.image == c2.image);
 }
 
 // Copy foreground color from one char to another.
@@ -423,9 +423,6 @@ NSString* CharToStr(unichar code, BOOL isComplex);
 // This is a faster version of ScreenCharToStr if what you want is an array of
 // unichars. Returns the number of code points appended to dest.
 int ExpandScreenChar(const screen_char_t *sct, unichar* dest);
-
-// Convert a code into a utf-32 char.
-UTF32Char CharToLongChar(unichar code, BOOL isComplex);
 
 // Add a code point to the end of an existing complex char. A replacement key is
 // returned.

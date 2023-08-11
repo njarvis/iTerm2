@@ -21,9 +21,6 @@ extern unichar iTermMinimumDefaultEmojiPresentationCodePoint;
 // Ambiguous-width characters.
 + (instancetype)ambiguousWidthCharacterSetForUnicodeVersion:(NSInteger)version;
 
-// Zero-width spaces.
-+ (instancetype)zeroWidthSpaceCharacterSetForUnicodeVersion:(NSInteger)version;
-
 // Characters with the Default_Ignorable_Code_Point derived property.
 // Includes things like zero-width spaces.
 // See issue 9368.
@@ -39,5 +36,6 @@ extern unichar iTermMinimumDefaultEmojiPresentationCodePoint;
 + (NSCharacterSet *)filenameCharacterSet;
 + (NSCharacterSet *)emojiWithDefaultEmojiPresentation;
 + (NSCharacterSet *)emojiWithDefaultTextPresentation;
++ (NSCharacterSet *)flagCharactersForUnicodeVersion:(NSInteger)version;
 
 @end

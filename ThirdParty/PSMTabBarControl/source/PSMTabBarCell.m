@@ -12,6 +12,8 @@
 #import "PSMProgressIndicator.h"
 #import "PSMTabDragAssistant.h"
 
+extern void AppendPinnedDebugLogMessage(NSString *key, NSString *value, ...);
+
 @interface PSMTabBarCell()<PSMProgressIndicatorDelegate>
 - (NSView<PSMTabBarControlProtocol> *)psmTabControlView;
 @end
@@ -181,6 +183,8 @@ static NSRect PSMConvertAccessibilityFrameToScreen(NSView *view, NSRect frame) {
     NSAccessibilityElement *_element;
     NSMutableArray<PSMCachedTitle *> *_titleCache;
     NSMutableArray<PSMCachedTitle *> *_subtitleCache;
+    NSTrackingArea *_cellTrackingArea;
+    NSTrackingArea *_closeButtonTrackingArea;
 }
 
 #pragma mark - Creation/Destruction
@@ -219,8 +223,6 @@ static NSRect PSMConvertAccessibilityFrameToScreen(NSView *view, NSRect frame) {
             }
         }
         [self setFrame:frame];
-        _closeButtonTrackingTag = 0;
-        _cellTrackingTag = 0;
         _closeButtonOver = NO;
         _closeButtonPressed = NO;
         _indicator = nil;
@@ -479,10 +481,10 @@ static NSRect PSMConvertAccessibilityFrameToScreen(NSView *view, NSRect frame) {
 
 - (void)mouseEntered:(NSEvent *)theEvent {
     // check for which tag
-    if ([theEvent trackingNumber] == _closeButtonTrackingTag) {
+    if (theEvent.trackingArea == _closeButtonTrackingArea) {
         _closeButtonOver = YES;
     }
-    if ([theEvent trackingNumber] == _cellTrackingTag) {
+    if (theEvent.trackingArea == _cellTrackingArea) {
         [self setHighlighted:YES];
         [[self psmTabControlView] setNeedsDisplay:NO];
     }
@@ -493,17 +495,70 @@ static NSRect PSMConvertAccessibilityFrameToScreen(NSView *view, NSRect frame) {
 
 - (void)mouseExited:(NSEvent *)theEvent {
     // check for which tag
-    if ([theEvent trackingNumber] == _closeButtonTrackingTag) {
+    if (theEvent.trackingArea == _closeButtonTrackingArea) {
         _closeButtonOver = NO;
     }
 
-    if ([theEvent trackingNumber] == _cellTrackingTag) {
+    if (theEvent.trackingArea == _cellTrackingArea) {
         [self setHighlighted:NO];
         [[self psmTabControlView] setNeedsDisplay:NO];
     }
 
     //tell the control we only need to redraw the affected tab
     [[self psmTabControlView] setNeedsDisplayInRect:NSInsetRect([self frame], -2, -2)];
+}
+
+- (void)removeCloseButtonTrackingRectFrom:(NSView *)view {
+    [self removeTrackingArea:&_closeButtonTrackingArea from:view];
+}
+
+- (void)removeCellTrackingRectFrom:(NSView *)view {
+    [self removeTrackingArea:&_cellTrackingArea from:view];
+}
+
+- (void)removeTrackingArea:(NSTrackingArea * __strong *)areaPtr from:(NSView *)view {
+    NSTrackingArea *area = *areaPtr;
+    if (!area) {
+        return;
+    }
+    if (![view.trackingAreas containsObject:area]) {
+        return;
+    }
+    @try {
+        [view removeTrackingArea:area];
+    } @catch (NSException *exception) {
+    }
+    *areaPtr = nil;
+}
+
+- (void)setCellTrackingRect:(NSRect)rect
+                   userData:(NSDictionary *)userData
+               assumeInside:(BOOL)flag
+                       view:(NSView *)view {
+    const NSTrackingAreaOptions options = (NSTrackingMouseEnteredAndExited |
+                                           NSTrackingActiveAlways |
+                                           NSTrackingCursorUpdate);
+    NSTrackingArea *area = [[NSTrackingArea alloc] initWithRect:rect
+                                                        options:options
+                                                          owner:self
+                                                       userInfo:userData];
+    [view addTrackingArea:area];
+    _cellTrackingArea = area;
+}
+
+- (void)setCloseButtonTrackingRect:(NSRect)rect
+                          userData:(NSDictionary *)userData
+                      assumeInside:(BOOL)flag
+                              view:(NSView *)view {
+    const NSTrackingAreaOptions options = (NSTrackingMouseEnteredAndExited |
+                                           NSTrackingActiveAlways |
+                                           NSTrackingCursorUpdate);
+    NSTrackingArea *area = [[NSTrackingArea alloc] initWithRect:rect
+                                                        options:options
+                                                          owner:self
+                                                       userInfo:userData];
+    [view addTrackingArea:area];
+    _closeButtonTrackingArea = area;
 }
 
 #pragma mark - Drag Support
@@ -551,8 +606,6 @@ static NSRect PSMConvertAccessibilityFrameToScreen(NSView *view, NSRect frame) {
         [aCoder encodeInt:_currentStep forKey:@"currentStep"];
         [aCoder encodeBool:_isPlaceholder forKey:@"isPlaceholder"];
         [aCoder encodeInt:_tabState forKey:@"tabState"];
-        [aCoder encodeInt:_closeButtonTrackingTag forKey:@"closeButtonTrackingTag"];
-        [aCoder encodeInt:_cellTrackingTag forKey:@"cellTrackingTag"];
         [aCoder encodeBool:_closeButtonOver forKey:@"closeButtonOver"];
         [aCoder encodeBool:_closeButtonPressed forKey:@"closeButtonPressed"];
         [aCoder encodeObject:_indicator forKey:@"indicator"];
@@ -574,8 +627,6 @@ static NSRect PSMConvertAccessibilityFrameToScreen(NSView *view, NSRect frame) {
             _currentStep = [aDecoder decodeIntForKey:@"currentStep"];
             _isPlaceholder = [aDecoder decodeBoolForKey:@"isPlaceholder"];
             _tabState = [aDecoder decodeIntForKey:@"tabState"];
-            _closeButtonTrackingTag = [aDecoder decodeIntForKey:@"closeButtonTrackingTag"];
-            _cellTrackingTag = [aDecoder decodeIntForKey:@"cellTrackingTag"];
             _closeButtonOver = [aDecoder decodeBoolForKey:@"closeButtonOver"];
             _closeButtonPressed = [aDecoder decodeBoolForKey:@"closeButtonPressed"];
             _indicator = [aDecoder decodeObjectForKey:@"indicator"];

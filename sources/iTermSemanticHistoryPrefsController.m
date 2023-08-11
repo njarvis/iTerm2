@@ -30,10 +30,13 @@ NSString *kTextmate2Identifier = @"com.macromates.TextMate.preview";
 NSString *kBBEditIdentifier = @"com.barebones.bbedit";
 NSString *kAtomIdentifier = @"com.github.atom";
 NSString *kVSCodeIdentifier = @"com.microsoft.VSCode";
-NSString *kVSCodiumIdentifier = @"com.visualstudio.code.oss";
+NSString *kVSCodiumIdentifier1 = @"com.visualstudio.code.oss";
+NSString *kVSCodiumIdentifier2 = @"com.vscodium";
 NSString *kVSCodeInsidersIdentifier = @"com.microsoft.VSCodeInsiders";
 NSString *kEmacsAppIdentifier = @"org.gnu.Emacs";
 NSString *kIntelliJIDEAIdentifier = @"com.jetbrains.intellij.ce";
+NSString *kWebStormIdentifier = @"com.jetbrains.WebStorm";
+NSString *kRiderIdentifier = @"com.jetbrains.rider";
 NSString *kNovaAppIdentifier = @"com.panic.Nova";
 
 NSString *kSemanticHistoryBestEditorAction = @"best editor";
@@ -82,9 +85,13 @@ enum {
     kVSCodeTag,
     kVSCodeInsidersTag,
     kEmacsAppTag,
-    kVSCodiumTag,
+    kVSCodium1Tag,
     kIntelliJTag,
-    kNovaTag
+    kWebStormTag,
+    kRiderTag,
+    kNovaTag,
+    kVSCodium2Tag,
+
     // Only append to the end of the list; never delete or change.
 };
 
@@ -129,10 +136,13 @@ enum {
                                kBBEditIdentifier: @"txmt",
                                kAtomIdentifier: @"atom",
                                kVSCodeIdentifier: @"vscode",
-                               kVSCodiumIdentifier: @"vscodium",
+                               kVSCodiumIdentifier1: @"vscodium",
+                               kVSCodiumIdentifier2: @"vscodium",
                                kVSCodeInsidersIdentifier: @"vscode",
                                kEmacsAppIdentifier: @"",
                                kIntelliJIDEAIdentifier: @"",
+                               kWebStormIdentifier: @"",
+                               kRiderIdentifier: @"",
                                kNovaAppIdentifier: @""
     };
     return schemes[editor];
@@ -150,10 +160,13 @@ enum {
               kNovaAppIdentifier,
               kAtomIdentifier,
               kVSCodeIdentifier,
-              kVSCodiumIdentifier,
+              kVSCodiumIdentifier1,
+              kVSCodiumIdentifier2,
               kVSCodeInsidersIdentifier,
               kEmacsAppIdentifier,
-              kIntelliJIDEAIdentifier ];
+              kIntelliJIDEAIdentifier,
+              kWebStormIdentifier,
+              kRiderIdentifier ];
 }
 
 + (NSString *)bestEditor {
@@ -175,10 +188,13 @@ enum {
                                   kBBEditIdentifier,
                                   kAtomIdentifier,
                                   kVSCodeIdentifier,
-                                  kVSCodiumIdentifier,
+                                  kVSCodiumIdentifier1,
+                                  kVSCodiumIdentifier2,
                                   kVSCodeInsidersIdentifier,
                                   kEmacsAppIdentifier,
                                   kIntelliJIDEAIdentifier,
+                                  kWebStormIdentifier,
+                                  kRiderIdentifier,
                                   kNovaAppIdentifier ];
     return [editorBundleIds containsObject:bundleId];
 }
@@ -193,10 +209,13 @@ enum {
                                   kBBEditIdentifier: @(kBBEditTag),
                                     kAtomIdentifier: @(kAtomTag),
                                   kVSCodeIdentifier: @(kVSCodeTag),
-                                kVSCodiumIdentifier: @(kVSCodiumTag),
+                               kVSCodiumIdentifier1: @(kVSCodium1Tag),
+                               kVSCodiumIdentifier2: @(kVSCodium2Tag),
                           kVSCodeInsidersIdentifier: @(kVSCodeInsidersTag),
                                 kEmacsAppIdentifier: @(kEmacsAppTag),
                             kIntelliJIDEAIdentifier: @(kIntelliJTag),
+                                kWebStormIdentifier: @(kWebStormTag),
+                                   kRiderIdentifier: @(kRiderTag),
                                  kNovaAppIdentifier: @(kNovaTag)
     };
     return tags;
@@ -235,10 +254,13 @@ enum {
                                    kBBEditIdentifier: @"BBEdit",
                                      kAtomIdentifier: @"Atom",
                                    kVSCodeIdentifier: @"VS Code",
-                                 kVSCodiumIdentifier: @"VS Codium",
+                                kVSCodiumIdentifier1: @"VS Codium (Flatpak)",
+                                kVSCodiumIdentifier2: @"VS Codium",
                            kVSCodeInsidersIdentifier: @"VS Code Insiders",
                                  kEmacsAppIdentifier: @"Emacs.app",
                              kIntelliJIDEAIdentifier: @"IntelliJ IDEA",
+                                 kWebStormIdentifier: @"WebStorm",
+                                    kRiderIdentifier: @"Rider",
                                   kNovaAppIdentifier: @"Nova"
     };
 
@@ -305,10 +327,13 @@ enum {
                                  @(kBBEditTag): kBBEditIdentifier,
                                    @(kAtomTag): kAtomIdentifier,
                                  @(kVSCodeTag): kVSCodeIdentifier,
-                               @(kVSCodiumTag): kVSCodiumIdentifier,
+                              @(kVSCodium1Tag): kVSCodiumIdentifier1,
+                              @(kVSCodium2Tag): kVSCodiumIdentifier2,
                          @(kVSCodeInsidersTag): kVSCodeInsidersIdentifier,
                                @(kEmacsAppTag): kEmacsAppIdentifier,
                                @(kIntelliJTag): kIntelliJIDEAIdentifier,
+                               @(kWebStormTag): kWebStormIdentifier,
+                                  @(kRiderTag): kRiderIdentifier,
                                    @(kNovaTag): kNovaAppIdentifier
     };
     return map[@([[editors_ selectedItem] tag])];
