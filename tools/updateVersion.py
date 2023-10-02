@@ -1,4 +1,5 @@
-#!/Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+#!/usr/local/bin/python3
+# /Library/Frameworks/Python.framework/Versions/3.9/bin/python3
 # Get it from:
 # https://www.python.org/ftp/python/3.9.13/python-3.9.13-macos11.pkg
 # Install the package and then do
