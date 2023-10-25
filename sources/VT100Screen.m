@@ -602,7 +602,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     if (!mark.hasCode) {
         return nil;
     }
-    const long long absLine = [_state absCoordRangeForInterval:mark.entry.interval].start.y;
+    const long long absLine = mark.commandRange.start.y;
     if (absLine >= _state.totalScrollbackOverflow + _state.numberOfScrollbackLines) {
         return nil;
     }
@@ -627,6 +627,14 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
                                                absoluteLineNumber:absLine
                                                              date:date
                                                              mark:mark] autorelease];
+}
+
+- (NSArray<iTermTerminalButtonPlace *> *)buttonsInRange:(VT100GridRange)range {
+    return [_state buttonsInRange:range];
+}
+
+- (VT100GridCoordRange)rangeOfBlockWithID:(NSString *)blockID {
+    return [_state rangeOfBlockWithID:blockID];
 }
 
 - (NSInteger)numberOfCellsUsedInRange:(VT100GridRange)range {
@@ -887,24 +895,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 }
 
 - (id<VT100ScreenMarkReading>)screenMarkBeforeAbsLine:(long long)absLine {
-    const long long overflow = self.totalScrollbackOverflow;
-    const long long line = absLine - overflow;
-    if (line < 0 || line > INT_MAX) {
-        return nil;
-    }
-    Interval *interval = [_state intervalForGridCoordRange:VT100GridCoordRangeMake(0, line, 0, line)];
-    NSEnumerator *enumerator = [_state.intervalTree reverseLimitEnumeratorAt:interval.limit];
-    NSArray *objects = [enumerator nextObject];
-    while (objects) {
-        for (id object in objects) {
-            if ([object isKindOfClass:[VT100ScreenMark class]]) {
-                id<VT100ScreenMarkReading> mark = object;
-                return mark;
-            }
-        }
-        objects = [enumerator nextObject];
-    }
-    return nil;
+    Interval *interval = [_state intervalForGridAbsCoordRange:VT100GridAbsCoordRangeMake(0, absLine, 0, absLine)];
+    return (id<VT100ScreenMarkReading>)[[_state.markCache findAtOrBeforeLocation:interval.location] objectPassingTest:^BOOL(id<iTermMark> element, NSUInteger index, BOOL *stop) {
+        return [element isKindOfClass:[VT100ScreenMark class]];
+    }];
 }
 
 - (long long)lineNumberOfMarkBeforeAbsLine:(long long)absLine {
@@ -1010,22 +1004,17 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 }
 
 - (VT100GridCoordRange)rangeOfOutputForCommandMark:(id<VT100ScreenMarkReading>)mark {
-    NSEnumerator *enumerator = [_state.intervalTree forwardLimitEnumeratorAt:mark.entry.interval.limit];
-    NSArray *objects;
-    do {
-        objects = [enumerator nextObject];
-        objects = [objects objectsOfClasses:@[ [VT100ScreenMark class] ]];
-        for (id<VT100ScreenMarkReading> nextMark in objects) {
-            if (nextMark.isPrompt) {
-                VT100GridCoordRange range;
-                range.start = [_state coordRangeForInterval:mark.entry.interval].end;
-                range.start.x = 0;
-                range.start.y++;
-                range.end = [_state coordRangeForInterval:nextMark.entry.interval].start;
-                return range;
-            }
+    NSEnumerator *enumerator = [_state.markCache enumerateFrom:mark.entry.interval.limit];
+    for (id<VT100ScreenMarkReading> nextMark in enumerator) {
+        if (nextMark.isPrompt) {
+            VT100GridCoordRange range;
+            range.start = [_state coordRangeForInterval:mark.entry.interval].end;
+            range.start.x = 0;
+            range.start.y++;
+            range.end = [_state coordRangeForInterval:nextMark.entry.interval].start;
+            return range;
         }
-    } while (objects && !objects.count);
+    }
 
     // Command must still be running with no subsequent prompt.
     VT100GridCoordRange range;
@@ -1186,6 +1175,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
                kScreenStateAlternateGridStateKey: _state.altGrid.dictionaryValue ?: [NSNull null],
                kScreenStateProtectedMode: @(_state.protectedMode),
                kScreenStatePromptStateKey: _state.promptStateDictionary,
+               kScreenStateBlockStartAbsLineKey: _state.blockStartAbsLine
             };
             dict = [dict dictionaryByRemovingNullValues];
             [encoder mergeDictionary:dict];
@@ -1519,6 +1509,14 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (NSArray<id<VT100ScreenMarkReading>> *)namedMarks {
     return _state.namedMarks.strongObjects;
+}
+
+- (long long)startAbsLineForBlock:(NSString *)blockID {
+    NSNumber *line = _state.blockStartAbsLine[blockID];
+    if (!line) {
+        return -1;
+    }
+    return line.longLongValue;
 }
 
 #pragma mark - Accessors

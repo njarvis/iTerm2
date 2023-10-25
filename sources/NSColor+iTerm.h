@@ -56,6 +56,9 @@ iTermSRGBColor iTermCompressRGB(iTermRGBColor rgb);
 iTermLABColor iTermLABFromSRGB(iTermSRGBColor srgb);
 iTermSRGBColor iTermSRGBFromLAB(iTermLABColor lab);
 
+// Based on Rec. 709 standard
+CGFloat iTermPerceptualBrightnessSRGB(iTermSRGBColor srgb);
+
 // Distance will be in 0-1. Warning: this doesn't work very well. For example,
 // ((l=15.6, a=29.6, b=24.0) = srgb (.31,.05,0) has a distance from pure black of .41
 CGFloat iTermLABDistance(iTermLABColor lhs, iTermLABColor rhs);
@@ -69,6 +72,7 @@ CGFloat iTermLABDistance(iTermLABColor lhs, iTermLABColor rhs);
 @property(nonatomic, readonly) NSDictionary *dictionaryValue;
 @property(nonatomic, readonly) NSString *stringValue;
 
+// This is some janky NTSC shit
 CGFloat PerceivedBrightness(CGFloat r, CGFloat g, CGFloat b);
 
 // This will return the color in the app's standard colorspace.
@@ -136,6 +140,8 @@ CGFloat PerceivedBrightness(CGFloat r, CGFloat g, CGFloat b);
 - (BOOL)isApproximatelyEqualToColor:(NSColor *)other epsilon:(double)e;
 - (NSColor *)blendedWithColor:(NSColor *)color weight:(CGFloat)weight;
 @property (nonatomic, readonly) vector_float4 vector;
+
++ (instancetype)colorWithVector:(vector_float4)vector colorSpace:(NSColorSpace *)colorSpace;
 
 @end
 

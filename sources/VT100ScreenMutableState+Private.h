@@ -46,6 +46,7 @@ iTermTriggerScopeProvider> {
     _Atomic int _pendingReportCount;
     BOOL _compressionScheduled;
     iTermPromptStateMachine *_promptStateMachine;
+    NSString *_currentBlockID;;
 }
 
 @property (atomic) BOOL hadCommand;
@@ -81,5 +82,6 @@ iTermTriggerScopeProvider> {
 - (void)executePostTriggerActions;
 - (void)performBlockWithoutTriggers:(void (^)(void))block;
 - (void)movePromptUnderComposerIfNeeded;
+- (iTermBlockMark *)mutableBlockMarkWithID:(NSString *)blockID;
 
 @end

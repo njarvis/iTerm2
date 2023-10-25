@@ -19,15 +19,27 @@
             </dict>  
         </dict> 
 	<key>CFBundleIconFile</key>
-	<string>AppIcon-Beta</string>
+	<string>AppIcon-Nightly</string>
 	<key>CFBundleIconName</key>
-	<string>AppIcon-Beta</string>
+	<string>AppIcon-Nightly</string>
         <key>NSHumanReadableCopyright</key>
         <string>GPL v2</string>
         <key>CFBundleDevelopmentRegion</key>
         <string>English</string>
         <key>CFBundleDocumentTypes</key>
         <array>
+                <dict>
+                        <key>CFBundleTypeExtensions</key>
+                        <array>
+                                <string>itermtab</string>
+                        </array>
+                        <key>CFBundleTypeIconFile</key>
+                        <string>iTerm2.icns</string>
+                        <key>CFBundleTypeName</key>
+                        <string>Create iTerm2 Tab</string>
+                        <key>CFBundleTypeRole</key>
+                        <string>Editor</string>
+                </dict>
                 <dict>
                         <key>CFBundleTypeExtensions</key>
                         <array>
@@ -142,6 +154,8 @@
         <string>An application in iTerm2 wants to use speech recognition.</string>
         <key>NSRemindersUsageDescription</key>
         <string>An application in iTerm2 wants to use your reminders.</string>
+        <key>NSPhotoLibraryUsageDescription</key>
+        <string>An application in iTerm2 wants to use the photo library.</string>
         <key>NSServices</key>
         <array>
                 <dict>
@@ -342,17 +356,15 @@
         <string>MainMenu</string>
         <key>NSPrincipalClass</key>
         <string>iTermApplication</string>
-        <key>SUPublicDSAKeyFile</key>
-        <string>dsa_pub.pem</string>
-        <key>SUPublicEDKey</key>
-        <string>xdqAa0KXBPhMbUrutVTe87i6U7yWf7WKaCeRG7AAZ0w=</string>
         <key>NSSupportsAutomaticGraphicsSwitching</key>
         <true/>
+        <key>SUPublicEDKey</key>
+        <string>xdqAa0KXBPhMbUrutVTe87i6U7yWf7WKaCeRG7AAZ0w=</string>
         <key>SUFeedURLForTesting</key>
-        <string>https://iterm2.com/appcasts/testing_modern.xml</string>
+        <string>https://iterm2.com/appcasts/nightly_modern.xml</string>
         <key>SUFeedURLForFinal</key>
-        <string>https://iterm2.com/appcasts/final_modern.xml</string>
+        <string>https://iterm2.com/appcasts/nightly_modern.xml</string>
         <key>SUFeedURL</key>
-        <string>https://iterm2.com/appcasts/final_modern.xml</string>
+        <string>https://iterm2.com/appcasts/nightly_modern.xml</string>
 </dict>
 </plist>

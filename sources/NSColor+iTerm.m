@@ -39,6 +39,11 @@ CGFloat PerceivedBrightness(CGFloat r, CGFloat g, CGFloat b) {
             kBlueComponentBrightness * b);
 }
 
+CGFloat iTermPerceptualBrightnessSRGB(iTermSRGBColor srgb) {
+    iTermRGBColor linearColor = iTermLinearizeSRGB(srgb);
+    return 0.2126 * linearColor.r + 0.7152 * linearColor.g + 0.0722 * linearColor.b;
+}
+
 typedef struct {
     CGFloat x;
     CGFloat y;
@@ -173,6 +178,11 @@ CGFloat iTermLABDistance(iTermLABColor lhs, iTermLABColor rhs) {
 }
 
 @implementation NSColor (iTerm)
+
++ (instancetype)colorWithVector:(vector_float4)vector colorSpace:(NSColorSpace *)colorSpace {
+    CGFloat components[4] = { vector.x, vector.y, vector.z, vector.w };
+    return [NSColor colorWithColorSpace:colorSpace components:components count:4];
+}
 
 - (iTermLABColor)labColor {
     NSColor *color = [self colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
@@ -685,7 +695,7 @@ CGFloat iTermLABDistance(iTermLABColor lhs, iTermLABColor rhs) {
         return self;
     }
     ciBlendedColor = [[[CIColor alloc] initWithColor:[NSColor colorWithCGColor:cgColor]] autorelease];
-
+    CGColorRelease(cgColor);
     CGColorSpaceRelease(labColorSpace);
 
     // Convert the blended LAB color to NSColor object for display

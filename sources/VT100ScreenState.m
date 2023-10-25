@@ -45,6 +45,7 @@ NSString *const kScreenStateCursorCoord = @"Cursor Coord";
 NSString *const kScreenStateProtectedMode = @"Protected Mode";
 NSString *const kScreenStateExfiltratedEnvironmentKey = @"Client Environment";
 NSString *const kScreenStatePromptStateKey = @"Prompt State";
+NSString *const kScreenStateBlockStartAbsLineKey = @"Block start lines";
 
 NSString *VT100ScreenTerminalStateKeyVT100Terminal = @"VT100Terminal";
 NSString *VT100ScreenTerminalStateKeySavedColors = @"SavedColors";
@@ -132,6 +133,8 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
 @synthesize exfiltratedEnvironment = _exfiltratedEnvironment;
 @synthesize promptStateDictionary = _promptStateDictionary;
 @synthesize namedMarks = _namedMarks;
+@synthesize blockStartAbsLine = _blockStartAbsLine;
+@synthesize blocksGeneration = _blocksGeneration;
 
 - (instancetype)initForMutationOnQueue:(dispatch_queue_t)queue {
     self = [super init];
@@ -149,6 +152,7 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
         _colorMap = [[iTermColorMap alloc] init];
         _temporaryDoubleBuffer = [[iTermTemporaryDoubleBufferedGridController alloc] initWithQueue:queue];
         _namedMarks = [[iTermAtomicMutableArrayOfWeakObjects alloc] init];
+        _blockStartAbsLine = [NSMutableDictionary dictionary];
         _fakePromptDetectedAbsLine = -1;
     }
     return self;
@@ -226,6 +230,10 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
     _config = source.config;
     _exfiltratedEnvironment = [source.exfiltratedEnvironment copy];
     _promptStateDictionary = [source.promptStateDictionary copy];
+    if (source.blocksGeneration > _blocksGeneration) {
+        _blocksGeneration = source.blocksGeneration;
+        _blockStartAbsLine = [source.blockStartAbsLine copy];
+    }
     if (source.namedMarksDirty) {
         _namedMarks = [source.namedMarks compactMap:^id _Nonnull(id<VT100ScreenMarkReading>  _Nonnull mark) {
             return [mark doppelganger];
@@ -532,6 +540,64 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
     return (id<VT100RemoteHostReading>)[self objectOnOrBeforeLine:line ofClass:[VT100RemoteHost class]];
 }
 
+- (NSArray<iTermTerminalButtonPlace *> *)buttonsInRange:(VT100GridRange)range {
+    NSMutableArray<iTermTerminalButtonPlace *> *places = [NSMutableArray array];
+    const long long offset = self.cumulativeScrollbackOverflow;
+    Interval *interval = 
+    [self intervalForGridCoordRange:VT100GridCoordRangeMake(0,
+                                                            range.location + offset,
+                                                            0,
+                                                            range.location + offset)];
+    for (NSArray *objects in [self.intervalTree forwardLimitEnumeratorAt:interval.location]) {
+        for (id<IntervalTreeObject> obj in objects) {
+            VT100GridAbsCoordRange objRange = [self absCoordRangeForInterval:obj.entry.interval];
+            if (objRange.start.y >= range.location + range.length) {
+                return places;
+            }
+            if ([obj isKindOfClass:[iTermButtonMark class]]) {
+                iTermButtonMark *buttonMark = (iTermButtonMark *)obj;
+                iTermTerminalButtonPlace *place = [[iTermTerminalButtonPlace alloc] initWithMark:buttonMark coord:objRange.start];
+                [places addObject:place];
+            }
+        }
+    }
+    return places;
+}
+
+- (VT100GridCoordRange)rangeOfBlockWithID:(NSString *)blockID {
+    id<iTermBlockMarkReading> mark = [self blockMarkWithID:blockID];
+    if (!mark) {
+        return VT100GridCoordRangeMake(-1, -1, -1, -1);
+    }
+    return [self coordRangeForInterval:mark.entry.interval];
+}
+
+- (iTermBlockMark *)blockMarkWithID:(NSString *)blockID {
+    NSNumber *n = self.blockStartAbsLine[blockID];
+    if (!n) {
+        return nil;
+    }
+    const long long line = n.longLongValue;
+    Interval *interval = [self intervalForGridAbsCoordRange:VT100GridAbsCoordRangeMake(0, line, 0, line)];
+    BOOL foundBlock = NO;
+    for (NSArray *objects in [self.intervalTree forwardLocationEnumeratorAt:interval.limit]) {
+        for (id<IntervalTreeObject> obj in objects) {
+            iTermBlockMark *candidate = [iTermBlockMark castFrom:obj];
+            if (!candidate) {
+                continue;
+            }
+            if ([candidate.blockID isEqualToString:blockID]) {
+                return candidate;
+            }
+            foundBlock = YES;
+        }
+        if (foundBlock) {
+            // Already found a different block.
+            break;
+        }
+    }
+    return nil;
+}
 
 #pragma mark - Combined Grid And Scrollback
 
@@ -739,7 +805,7 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
         return VT100GridCoordRangeMake(self.commandStartCoord.x,
                                        MAX(0, self.commandStartCoord.y - offset),
                                        self.currentGrid.cursorX,
-                                       self.currentGrid.cursorY + self.numberOfScrollbackLines - offset);
+                                       self.currentGrid.cursorY + self.numberOfScrollbackLines);
     }
 }
 
@@ -961,7 +1027,8 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
     if (string.length) {
         for (int i = 0; i < lines.count; i++) {
             NSString *ito = [self debugStringForIntervalTreeObjectsOnLine:i];
-            lines[i] = [NSString stringWithFormat:@"%8lld:        %@%@", absoluteLineNumber++, lines[i], ito];
+            NSString *ea = [self debugStringForExtendedAttributesOnLine:i];
+            lines[i] = [NSString stringWithFormat:@"%8lld:        %@%@%@", absoluteLineNumber++, lines[i], ito, ea];
         }
 
         [lines addObject:@"- end of history -"];
@@ -970,7 +1037,8 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
     NSArray *gridLines = [gridDump componentsSeparatedByString:@"\n"];
     for (int i = 0; i < gridLines.count; i++) {
         NSString *ito = [self debugStringForIntervalTreeObjectsOnLine:i + self.numberOfScrollbackLines];
-        [lines addObject:[NSString stringWithFormat:@"%8lld (%04d): %@%@", absoluteLineNumber++, i, gridLines[i], ito]];
+        NSString *ea = [self debugStringForExtendedAttributesOnLine:i + self.numberOfScrollbackLines];
+        [lines addObject:[NSString stringWithFormat:@"%8lld (%04d): %@%@%@", absoluteLineNumber++, i, gridLines[i], ito, ea]];
     }
     return [lines componentsJoinedByString:@"\n"];
 }
@@ -987,6 +1055,14 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
         return @"";
     }
     return [NSString stringWithFormat:@"ITOs: %@", [strings componentsJoinedByString:@", "]];
+}
+
+- (NSString *)debugStringForExtendedAttributesOnLine:(int)line {
+    iTermExternalAttributeIndex *eaindex = [self externalAttributeIndexForLine:line];
+    if (!eaindex) {
+        return @"";
+    }
+    return [@" " stringByAppendingString:eaindex.description];
 }
 
 #pragma mark - iTermTextDataSource
@@ -1058,7 +1134,7 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
 - (void)gridCursorDidMove {
 }
 
-- (void)gridCursorDidChangeLine {
+- (void)gridCursorDidChangeLineFrom:(int)previous {
 }
 
 - (void)gridDidResize {

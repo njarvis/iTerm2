@@ -6522,6 +6522,14 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     return _textview.findOnPageHelper.currentIndex;
 }
 
+- (void)copyTextFromBlockWithID:(NSString *)blockID {
+    const long long absLine = [_screen startAbsLineForBlock:blockID];
+    if (absLine < 0) {
+        return;
+    }
+    [_textview copyBlock:blockID includingAbsLine:absLine];
+}
+
 #pragma mark - Metal Support
 
 #pragma mark iTermMetalGlueDelegate
@@ -7896,6 +7904,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 // opened. Initial window opening is always blocked on establishing the server version.
 - (void)kickOffTmux {
     _haveKickedOffTmux = YES;
+    [_tmuxController sendControlC];
     [_tmuxController ping];
     [_tmuxController validateOptions];
     [_tmuxController checkForUTF8];
@@ -8489,6 +8498,10 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
         [self sendKeystrokeNotificationForEvent:event advanced:YES];
     }
     // Change of cmd modifier means we need mouseMoved events to highlight/unhighlight URLs.
+    [self.view updateTrackingAreas];
+}
+
+- (void)textViewHaveVisibleBlocksDidChange {
     [self.view updateTrackingAreas];
 }
 
@@ -11881,7 +11894,12 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     // Put a zero-width space in between \ and ( to avoid interpolated strings coming from the server.
     theName = [theName stringByReplacingOccurrencesOfString:@"\\(" withString:@"\\\u200B("];
     [self setIconName:theName];
-    [self enableSessionNameTitleComponentIfPossible];
+    __weak __typeof(self) weakSelf = self;
+    // Avoid changing the profile in a side-effect.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        DLog(@"Deferred enableSessionNameTitleComponentIfPossible");
+        [weakSelf enableSessionNameTitleComponentIfPossible];
+    });
 }
 
 - (void)screenSetSubtitle:(NSString *)subtitle {
@@ -12616,7 +12634,12 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
                 }
             }];
         } else {
-            [self writeTaskNoBroadcast:@"abort\n" encoding:NSISOLatin1StringEncoding forceEncoding:YES reporting:NO];
+            // Send a Control-C to cancel the command. The protocol calls to send "abort\n" but this
+            // introduces a security risk because reports must not contain newlines.
+            [self writeTaskNoBroadcast:[NSString stringWithLongCharacter:3]
+                              encoding:NSISOLatin1StringEncoding
+                         forceEncoding:YES
+                             reporting:NO];
         }
     }];
 }
@@ -13060,6 +13083,56 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     [self screenSendReportData:data];
 }
 
+// Convert a title into a string that is safe to transmit in a report.
+// The goal is to make it hard for an attacker to issue a report that could be part of a command.
+- (NSString *)reportSafeTitle:(NSString *)unsafeTitle {
+    NSCharacterSet *unsafeSet = [NSCharacterSet characterSetWithCharactersInString:@"|;\r\n\e"];
+    NSString *result = unsafeTitle;
+    NSRange range;
+    range = [result rangeOfCharacterFromSet:unsafeSet];
+    while (range.location != NSNotFound) {
+        result = [result stringByReplacingCharactersInRange:range withString:@" "];
+        range = [result rangeOfCharacterFromSet:unsafeSet];
+    }
+    return result;
+}
+
+- (BOOL)allowTitleReporting {
+    return [iTermProfilePreferences boolForKey:KEY_ALLOW_TITLE_REPORTING
+                                     inProfile:self.profile];
+}
+
+- (BOOL)terminalIsTrusted {
+    const BOOL result = ![iTermAdvancedSettingsModel disablePotentiallyInsecureEscapeSequences];
+    DLog(@"terminalIsTrusted returning %@", @(result));
+    return result;
+}
+
+- (void)screenReportIconTitle {
+    if (self.isTmuxClient) {
+        return;
+    }
+    if (!self.screenAllowTitleSetting || !self.terminalIsTrusted) {
+        return;
+    }
+    NSString *title = [self screenIconTitle] ?: @"";
+    NSString *s = [NSString stringWithFormat:@"\033]L%@\033\\",
+                   [self reportSafeTitle:title]];
+    [self screenSendReportData:[s dataUsingEncoding:NSUTF8StringEncoding]];
+}
+
+- (void)screenReportWindowTitle {
+    if (self.isTmuxClient) {
+        return;
+    }
+    if (!self.screenAllowTitleSetting || !self.terminalIsTrusted) {
+        return;
+    }
+    NSString *s = [NSString stringWithFormat:@"\033]l%@\033\\",
+                   [self reportSafeTitle:[self windowTitle]]];
+    [self screenSendReportData:[s dataUsingEncoding:NSUTF8StringEncoding]];
+}
+
 - (void)screenReportCapabilities {
     if (self.isTmuxClient) {
         return;
@@ -13202,8 +13275,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
                                                  toConnectionKey:key];
         }
     }];
-
-    [_composerManager reset];
+    if ([iTermPreferences boolForKey:kPreferenceAutoComposer]) {
+        [_composerManager reset];
+    }
 }
 
 - (void)screenCommandDidExitWithCode:(int)code mark:(id<VT100ScreenMarkReading>)maybeMark {
@@ -13303,7 +13377,8 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
         dirty = YES;
     }
     const BOOL darkMode = (self.view.effectiveAppearance ?: [NSApp effectiveAppearance]).it_isDark;
-    if (_config.darkMode != darkMode) {
+    const BOOL darkModeDidChange = (_config.darkMode != darkMode);
+    if (darkModeDidChange) {
         _config.darkMode = darkMode;
         dirty = YES;
     }
@@ -13334,7 +13409,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
         _config.publishing = publishing;
         dirty = YES;
     }
-    if (_profileDidChange) {
+    if (_profileDidChange || darkModeDidChange) {
         _config.shouldPlacePromptAtFirstColumn = [iTermProfilePreferences boolForKey:KEY_PLACE_PROMPT_AT_FIRST_COLUMN
                                                                            inProfile:_profile];
         _config.enableTriggersInInteractiveApps = [iTermProfilePreferences boolForKey:KEY_ENABLE_TRIGGERS_IN_INTERACTIVE_APPS
@@ -15275,6 +15350,19 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     [_textview.window makeFirstResponder:_textview];
 }
 
+- (void)textViewDisableOffscreenCommandLine {
+    if (self.isDivorced) {
+        [self setSessionSpecificProfileValues:@{
+            KEY_SHOW_OFFSCREEN_COMMANDLINE: @NO
+        }];
+        return;
+    }
+    [iTermProfilePreferences setBool:NO
+                              forKey:KEY_SHOW_OFFSCREEN_COMMANDLINE
+                           inProfile:self.profile
+                               model:[ProfileModel sharedInstance]];
+}
+
 #pragma mark - iTermHotkeyNavigableSession
 
 - (void)sessionHotkeyDidNavigateToSession:(iTermShortcut *)shortcut {
@@ -15494,6 +15582,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 #pragma mark - iTermUpdateCadenceController
 
 - (void)updateCadenceControllerUpdateDisplay:(iTermUpdateCadenceController *)controller {
+    DLog(@"Cadence controller requests display");
     [self updateDisplayBecause:nil];
 }
 

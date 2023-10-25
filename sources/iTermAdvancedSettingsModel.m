@@ -8,6 +8,10 @@
 
 #import <Foundation/Foundation.h>
 
+#if ITERM2_SHARED_ARC
+#import "iTerm2SharedARC-Swift.h"
+#endif
+
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermUserDefaultsObserver.h"
 #import "NSApplication+iTerm.h"
@@ -19,6 +23,8 @@ NSString *const kAdvancedSettingIdentifier = @"kAdvancedSettingIdentifier";
 NSString *const kAdvancedSettingType = @"kAdvancedSettingType";
 NSString *const kAdvancedSettingDefaultValue = @"kAdvancedSettingDefaultValue";
 NSString *const kAdvancedSettingDescription = @"kAdvancedSettingDescription";
+NSString *const kAdvancedSettingSetter = @"kAdvancedSettingSetter";
+NSString *const kAdvancedSettingGetter = @"kAdvancedSettingGetter";
 
 NSString *const iTermAdvancedSettingsDidChange = @"iTermAdvancedSettingsDidChange";
 
@@ -120,6 +126,54 @@ DEFINE_BOILERPLATE(name, podtype, type, default, description, transformation, in
     sAdvancedSetting_##name = inverseTransformation(newValue); \
     [[NSUserDefaults standardUserDefaults] setObject:sAdvancedSetting_##name forKey:@#capitalizedName]; \
 }
+
+#if ITERM2_SHARED_ARC
+
+#define DEFINE_SECURE_BOILERPLATE(name, capitalizedName, podtype, type, description, transformation, inverseTransformation) \
+static podtype sAdvancedSetting_##name; \
++ (NSDictionary *)advancedSettingsModelDictionary_##name { \
+    podtype defaultValue = iTermSecureUserDefaults.instance.defaultValue_##name; \
+    return @{ kAdvancedSettingIdentifier: [@#name stringByCapitalizingFirstLetter], \
+              kAdvancedSettingType: @(type), \
+              kAdvancedSettingDefaultValue: inverseTransformation(defaultValue) ?: [NSNull null], \
+              kAdvancedSettingDescription: description, \
+              kAdvancedSettingSetter: [NSString stringWithFormat:@"setFromObject_%s:", #capitalizedName], \
+              kAdvancedSettingGetter: [NSString stringWithFormat:@"object_%s", #name], \
+            }; \
+} \
++ (NSString *)name##UserDefaultsKey { \
+    NSString *theIdentifier = [@#name stringByCapitalizingFirstLetter]; \
+    return theIdentifier; \
+} \
++ (NSString *)load_##name { \
+    NSString *key = [self name##UserDefaultsKey]; \
+    podtype valueFromUserDefaults = [[iTermSecureUserDefaults instance] name]; \
+    sAdvancedSetting_##name = valueFromUserDefaults; \
+    return key; \
+} \
++ (podtype)name { \
+    return sAdvancedSetting_##name; \
+} \
++ (id)object_##name { \
+    return inverseTransformation(sAdvancedSetting_##name); \
+} \
++ (void)set##capitalizedName :(podtype)newValue { \
+    [[iTermSecureUserDefaults instance] set##capitalizedName :newValue]; \
+    [self load_##name]; \
+} \
++ (id)setFromObject_##capitalizedName :(id)newValue { \
+    [[iTermSecureUserDefaults instance] set##capitalizedName :transformation(newValue)]; \
+    [self load_##name]; \
+    return inverseTransformation(sAdvancedSetting_##name); \
+}
+
+
+#define DEFINE_SECURE_BOOL(name, capitalizedName, theDescription) \
+DEFINE_SECURE_BOILERPLATE(name, capitalizedName, BOOL, kiTermAdvancedSettingTypeBoolean, theDescription, iTermAdvancedSettingsModelTransformBool, iTermAdvancedSettingsModelInverseTransformBool)
+// NOTE: To add more secure types, you'll need to modify iTermAdvancedSettingsViewController.m to
+// call the appropriate getter & setter and, afterwards, update the UI with the return value of the setter
+// since setting can fail.
+#endif  // ITERM2_SHARED_ARC
 
 #define DEFINE_BOOL(name, theDefault, theDescription) \
 DEFINE_BOILERPLATE(name, BOOL, kiTermAdvancedSettingTypeBoolean, theDefault, theDescription, iTermAdvancedSettingsModelTransformBool, iTermAdvancedSettingsModelInverseTransformBool)
@@ -250,6 +304,10 @@ DEFINE_STRING(tabColorMenuOptions, @"#fb6b62 #f6ac47 #f0dc4f #b5d749 #5fa3f8 #c1
 DEFINE_BOOL(removeAddTabButton, NO, SECTION_TABS @"Remove the “new tab” button from horizontal tab bars?");
 DEFINE_FLOAT(lightModeInactiveTabDarkness, 0.07, SECTION_TABS @"Darkness (in [0…1]) for non-selected tabs in non-Minimal theme in light mode.");
 DEFINE_FLOAT(darkModeInactiveTabDarkness, 0.5, SECTION_TABS @"Darkness (in [0…1]) for non-selected tabs in non-Minimal theme in dark mode.");
+DEFINE_BOOL(saveProfilesToRecentDocuments, YES, SECTION_TABS @"Add items to Recents (in the dock icon's menu) to reopen recently used profiles as tabs?")
+DEFINE_BOOL(placeTabsInTitlebarAccessoryInFullScreen, YES, SECTION_TABS @"Place the tabbar in the window's titlebar in full screen mode (macOS 13+ only)?\nThis can be disabled to work around a bug in macOS where tabs may not be visible in full screen.");
+DEFINE_BOOL(defaultIconsUsingLetters, YES, SECTION_TABS @"Use the running command's first letter as the tab's default icon if there isn't a built in one.\nThis takes effect when tabs are configured to use built-in icons.");
+
 #pragma mark Mouse
 
 #define SECTION_MOUSE @"Mouse: "
@@ -337,6 +395,12 @@ DEFINE_BOOL(p3, YES, SECTION_TERMINAL @"Use P3 as default color space? If No, sR
 DEFINE_STRING(fileDropCoprocess, @"", SECTION_TERMINAL @"When files are dropped into a terminal window, execute a silent coprocess.\nThis is an interpolated string. Use \\(filenames) to reference the shell-quoted, space-delimited full paths to the dropped files. If this preference is empty, the filenames get pasted instead.")
 DEFINE_INT(maxURLLength, 2097152, SECTION_TERMINAL @"Maximum length for OSC 8 URLs");
 DEFINE_BOOL(defaultWideMode, NO, SECTION_TERMINAL @"When rendering natively, use wide mode by default?");
+
+#if ITERM2_SHARED_ARC
+
+DEFINE_SECURE_BOOL(enableSecureKeyboardEntryAutomatically, EnableSecureKeyboardEntryAutomatically, SECTION_TERMINAL @"Automatically enable secure keyboard entry at password prompts?");
+#endif  // ITERM2_SHARED_ARC
+
 
 #pragma mark Hotkey
 
@@ -691,7 +755,7 @@ DEFINE_BOOL(fastTriggerRegexes, YES, SECTION_EXPERIMENTAL @"Fast regular express
 DEFINE_BOOL(postFakeFlagsChangedEvents, NO, SECTION_EXPERIMENTAL @"Post fake flags-changed events when remapping modifiers with an event tap.\nThis is an attempt to work around incompatibilities with AltTab in issue 10220.");
 DEFINE_BOOL(fullWidthFlags, YES, SECTION_EXPERIMENTAL @"Flag emoji render full-width");
 DEFINE_INT(aiMaxTokens, 80, SECTION_EXPERIMENTAL @"Maximum tokens for OpenAI");
-DEFINE_STRING(aiModel, @"text-davinci-003", SECTION_EXPERIMENTAL @"OpenAI Model name");
+DEFINE_STRING(aiModel, @"gpt-3.5-turbo", SECTION_EXPERIMENTAL @"OpenAI Model name");
 DEFINE_BOOL(addUtilitiesToPATH, YES, SECTION_EXPERIMENTAL @"Add path to iTerm2 utilities to $PATH for new sessions?");
 
 #pragma mark - Scripting

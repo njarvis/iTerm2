@@ -81,6 +81,7 @@
 #import "SmartSelectionController.h"
 #import "SolidColorView.h"
 #import "ThreeFingerTapGestureRecognizer.h"
+#import "ToastWindowController.h"
 #import "VT100RemoteHost.h"
 #import "VT100ScreenMark.h"
 #import "WindowControllerInterface.h"
@@ -178,6 +179,10 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     NSMutableArray<PTYNoteViewController *> *_notes;
     iTermScrollAccumulator *_horizontalScrollAccumulator;
     BOOL _cursorVisible;
+    BOOL _haveVisibleBlock;
+
+    iTermTerminalCopyButton *_hoverBlockCopyButton NS_AVAILABLE_MAC(11);
+    NSMutableArray<iTermTerminalButton *> *_buttons NS_AVAILABLE_MAC(11);
 }
 
 
@@ -336,6 +341,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         _notes = [[NSMutableArray alloc] init];
         _portholes = [[NSMutableArray alloc] init];
         _trackingChildWindows = [[NSMutableArray alloc] init];
+        _buttons = [[NSMutableArray alloc] init];
         [self initARC];
     }
     return self;
@@ -394,6 +400,8 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     [_portholes release];
     [_portholesNeedUpdatesJoiner release];
     [_trackingChildWindows release];
+    [_hoverBlockCopyButton release];
+    [_buttons release];
 
     [super dealloc];
 }
@@ -1034,17 +1042,46 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         DLog(@"have underline so track mouse moved");
         return YES;
     }
-    return [_mouseHandler wantsMouseMovementEvents];
+    if (_haveVisibleBlock) {
+        DLog(@"Have visible blocks");
+        return YES;
+    }
+    return [_mouseHandler wantsMouseMovementEvents] || [self hasTerminalButtons];
+}
+
+- (BOOL)hasTerminalButtons {
+    if (@available(macOS 11, *)) {
+        return _buttons.count > 0 || _hoverBlockCopyButton != nil;
+    }
+    return NO;
+}
+
+- (BOOL)mouseIsOverButtonInEvent:(NSEvent *)event {
+    if (@available(macOS 11, *)) {
+        const NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
+        DLog(@"%@", NSStringFromPoint(point));
+        NSArray<iTermTerminalButton *> *buttons = _buttons;
+        if (_hoverBlockCopyButton) {
+            buttons = [buttons arrayByAddingObject:_hoverBlockCopyButton];
+        }
+        return [buttons anyWithBlock:^BOOL(iTermTerminalButton *button) {
+            return NSPointInRect(point, button.desiredFrame);
+        }];
+    }
+    return NO;
 }
 
 // If this changes also update -wantsMouseMovementEvents.
 - (void)mouseMoved:(NSEvent *)event {
     [self resetMouseLocationToRefuseFirstResponderAt];
     [self updateUnderlinedURLs:event];
+    [self updateButtonHover:event.locationInWindow pressed:!!([NSEvent pressedMouseButtons] & 1)];
+    [self updateCursor:event];
     [_mouseHandler mouseMoved:event];
 }
 
 - (void)mouseDragged:(NSEvent *)event {
+    [self updateButtonHover:event.locationInWindow pressed:YES];
     [_mouseHandler mouseDragged:event];
 }
 
@@ -1129,12 +1166,16 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         DLog(@"Ignore mouse exited because app is not active");
     }
     [self updateUnderlinedURLs:event];
+
+    [_hoverBlockCopyButton autorelease];
+    _hoverBlockCopyButton = nil;
     [_delegate textViewShowHoverURL:nil
                              anchor:VT100GridWindowedRangeMake(VT100GridCoordRangeMake(-1, -1, -1, -1), -1, -1)];
 }
 
 - (void)mouseEntered:(NSEvent *)event {
     DLog(@"Mouse entered %@", self);
+    [_mouseHandler mouseEntered:event];
     if ([iTermAdvancedSettingsModel stealKeyFocus] &&
         [iTermPreferences boolForKey:kPreferenceKeyFocusFollowsMouse]) {
         DLog(@"Trying to steal key focus");
@@ -1313,11 +1354,20 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         [NSGraphicsContext saveGraphicsState];
         [_drawingHelper drawTextViewContentInRect:virtualRect rectsPtr:rectArray rectCount:rectCount virtualOffset:virtualOffset];
 
-        [_indicatorsHelper drawInFrame:NSRectSubtractingVirtualOffset(_drawingHelper.indicatorFrame, MAX(0, virtualOffset))];
         [NSGraphicsContext restoreGraphicsState];
+        const NSRect indicatorsRect = NSRectSubtractingVirtualOffset(_drawingHelper.indicatorFrame, MAX(0, virtualOffset));
+
+        if (!_drawingHelper.offscreenCommandLine) {
+            // Draw indicators under timestamps since they take precedence.
+            [_indicatorsHelper drawInFrame:indicatorsRect];
+        }
         [_drawingHelper drawTimestampsWithVirtualOffset:virtualOffset];
         [_drawingHelper drawOffscreenCommandLineWithVirtualOffset:virtualOffset];
-        
+        if (_drawingHelper.offscreenCommandLine) {
+            // Draw indicators over offscreen command line so it isn't completely obscured.
+            [_indicatorsHelper drawInFrame:indicatorsRect];
+        }
+
         // Not sure why this is needed, but for some reason this view draws over its subviews.
         for (NSView *subview in [self subviews]) {
             [subview setNeedsDisplay:YES];
@@ -1338,6 +1388,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 // sometimes decide to draw subviews of alpha=0 views, it doesn't always! So we make ourselves
 // alpha=1 but clear when an annotation is visible.
 - (void)drawRect:(NSRect)rect {
+    rect = NSIntersectionRect(rect, self.bounds);
     [[NSColor clearColor] set];
     NSRectFillUsingOperation(rect, NSCompositingOperationCopy);
 }
@@ -1471,6 +1522,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     const BOOL autoComposerOpen = [self.delegate textViewIsAutoComposerOpen];
     _drawingHelper.isCursorVisible = _cursorVisible && !autoComposerOpen;
     _drawingHelper.linesToSuppress = self.delegate.textViewLinesToSuppressDrawing;
+    [_drawingHelper updateButtonFrames];
     
     const VT100GridRange range = [self rangeOfVisibleLines];
     if ([_delegate textViewShouldShowOffscreenCommandLine]) {
@@ -1488,6 +1540,22 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     _drawingHelper.indicatorFrame = [self configureIndicatorsHelperWithRightMargin:rightMargin];
 
     return _drawingHelper;
+}
+
+- (NSPoint)currentMouseCursorCoordinate:(out BOOL *)validPtr {
+    NSEvent *currentEvent = [NSApp currentEvent];
+    if (!currentEvent || !self.window) {
+        *validPtr = NO;
+        return NSZeroPoint;
+    }
+    NSPoint mouseLocationInWindow = [currentEvent locationInWindow];
+    NSPoint mouseLocationInScreen = [[self window] convertPointToScreen:mouseLocationInWindow];
+
+    NSRect viewFrameInWindow = [self frame];
+    NSRect viewFrameInScreen = [[self window] convertRectToScreen:viewFrameInWindow];
+
+    *validPtr = NSPointInRect(mouseLocationInScreen, viewFrameInScreen);
+    return mouseLocationInWindow;
 }
 
 - (NSColor *)defaultBackgroundColor {
@@ -2119,6 +2187,17 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         }
     }
 
+    BOOL hadVisibleBlock = _haveVisibleBlock;
+    _haveVisibleBlock = NO;
+    for (int y = lineStart; y < lineEnd; y++) {
+        NSDictionary<NSNumber *, iTermExternalAttribute *> *attrs = [[self.dataSource externalAttributeIndexForLine:y] attributes];
+        if (attrs[@0].blockID != nil) {
+            _haveVisibleBlock = YES;
+        }
+    }
+    if (hadVisibleBlock != _haveVisibleBlock) {
+        [self.delegate textViewHaveVisibleBlocksDidChange];
+    }
     // Always mark the IME as needing to be drawn to keep things simple.
     if ([self hasMarkedText]) {
         [self invalidateInputMethodEditorRect];
@@ -4862,6 +4941,84 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     return NO;
 }
 
+- (NSArray<iTermTerminalButton *> *)drawingHelperTerminalButtons  API_AVAILABLE(macos(11)){
+    return [self terminalButtons];
+}
+
+// Does not include hover buttons.
+- (NSArray<iTermTerminalButton *> *)terminalButtons NS_AVAILABLE_MAC(11) {
+    NSMutableArray<iTermTerminalButton *> *buttons = [NSMutableArray array];
+    if (_hoverBlockCopyButton) {
+        [buttons addObject:_hoverBlockCopyButton];
+    }
+    NSArray<iTermTerminalButtonPlace *> *places = [self.dataSource buttonsInRange:self.rangeOfVisibleLines];
+    NSMutableArray<iTermTerminalButton *> *updated = [NSMutableArray array];
+    __weak __typeof(self) weakSelf = self;
+    [places enumerateObjectsUsingBlock:^(iTermTerminalButtonPlace * _Nonnull place, NSUInteger idx, BOOL * _Nonnull stop) {
+        NSInteger i = [_buttons indexOfObjectPassingTest:^BOOL(iTermTerminalButton * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+            return (obj.id == place.id);
+        }];
+        if (i == NSNotFound || !VT100GridAbsCoordEquals(_buttons[i].absCoord, place.coord)) {
+            if (place.mark.copyBlockID) {
+                iTermTerminalButton *button = [[iTermTerminalCopyButton alloc] initWithID:place.id 
+                                                                                  blockID:place.mark.copyBlockID
+                                                                                 absCoord:place.coord];
+                NSString *blockID = [[place.mark.copyBlockID copy] autorelease];
+
+                button.action = ^(NSPoint locationInWindow) {
+                    [weakSelf copyBlock:blockID
+                                absLine:-1
+                       screenCoordinate:[weakSelf.window convertPointToScreen:locationInWindow]];
+                };
+                [updated addObject:button];
+            }
+        } else {
+            [updated addObject:_buttons[i]];
+        }
+    }];
+    [_buttons autorelease];
+    _buttons = [updated retain];
+    return _buttons;
+}
+
+- (void)copyBlock:(NSString *)block absLine:(long long)absLine screenCoordinate:(NSPoint)screenCoordinate {
+    if ([self copyBlock:block includingAbsLine:absLine]) {
+        [ToastWindowController showToastWithMessage:@"Copied"
+                                           duration:1.5
+                            topLeftScreenCoordinate:screenCoordinate
+                                          pointSize:12];
+    }
+}
+
+- (void)updateButtonHover:(NSPoint)locationInWindow pressed:(BOOL)pressed {
+    NSPoint point = [self convertPoint:locationInWindow fromView:nil];
+    if (@available(macOS 11, *)) {
+        BOOL changed = NO;
+        for (iTermTerminalButton *button in self.terminalButtons) {
+            if (NSPointInRect(point, button.desiredFrame)) {
+                // Mouse over button
+                if (pressed) {
+                    changed = [button mouseDownInside] || changed;
+                } else if (button.pressed) {
+                    [button mouseUpWithLocationInWindow:locationInWindow];
+                    changed = YES;
+                }
+            } else {
+                // Mouse not over button
+                if (pressed) {
+                    changed = [button mouseDownOutside] || changed;
+                } else if (button.pressed) {
+                    [button mouseUpWithLocationInWindow:locationInWindow];
+                    changed = YES;
+                }
+            }
+        }
+        if (changed) {
+            [self setNeedsDisplay:YES];
+        }
+    }
+}
+
 #pragma mark - Accessibility
 
 // See WebCore's FrameSelectionMac.mm for the inspiration.
@@ -5329,6 +5486,82 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     }];
 }
 
+- (VT100GridCoordRange)rangeOfBlockIncludingLine:(long long)absLine
+                          blockID:(NSString *)block {
+    int start;
+    const long long offset = self.dataSource.totalScrollbackOverflow;
+    if (absLine < offset) {
+        start = 0;
+        if (![[self blockIDForLine:start] isEqualToString:block]) {
+            DLog(@"Start line is not the same block");
+            return VT100GridCoordRangeMake(-1, -1, -1, -1);
+        }
+    } else {
+        start = absLine - offset;
+    }
+    
+    while (start - 1 >= 0 && [[self blockIDForLine:start - 1] isEqualToString:block]) {
+        start -= 1;
+    }
+    int end = start;
+    const int count = [self.dataSource numberOfLines];
+    while (end + 1 < count && [[self blockIDForLine:end + 1] isEqualToString:block]) {
+        end += 1;
+    }
+    
+    return VT100GridCoordRangeMake(0,
+                                     start,
+                                     self.dataSource.width,
+                                     end);
+}
+
+- (BOOL)copyBlock:(NSString *)block includingAbsLine:(long long)absLine {
+    if (absLine < 0) {
+        const VT100GridCoordRange range = [self.dataSource rangeOfBlockWithID:block];
+        if (range.start.x < 0) {
+            return NO;
+        }
+        return [self copyTextInRange:range];
+    }
+    const VT100GridCoordRange range = [self rangeOfBlockIncludingLine:absLine blockID:block];
+    if (range.start.x < 0) {
+        return NO;
+    }
+    return [self copyTextInRange:range];
+}
+
+- (BOOL)copyTextInRange:(VT100GridCoordRange)range {
+    NSString *string = [self stringForPortholeInRange:range];
+    if (!string) {
+        iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:_dataSource];
+        const VT100GridWindowedRange windowedRange = VT100GridWindowedRangeMake(range, 0, 0);
+        string = [extractor contentInRange:windowedRange
+                         attributeProvider:nil
+                                nullPolicy:kiTermTextExtractorNullPolicyMidlineAsSpaceIgnoreTerminal
+                                       pad:NO
+                        includeLastNewline:YES
+                    trimTrailingWhitespace:YES
+                              cappedAtSize:-1
+                              truncateTail:YES
+                         continuationChars:nil
+                                    coords:nil];
+    }
+    if (string.length > 0) {
+        [self copyString:string];
+        return YES;
+    }
+    return NO;
+}
+
+- (NSString *)blockIDForLine:(int)line {
+    id<iTermExternalAttributeIndexReading> eaIndex = [_dataSource externalAttributeIndexForLine:line];
+    if (!eaIndex) {
+        return nil;
+    }
+    NSString *block = eaIndex.attributes[@0].blockID;
+    return block;
+}
+
 @end
 
 @implementation PTYTextView(MouseHandler)
@@ -5759,6 +5992,84 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
                                modifiers:modifiers
                              sideEffects:sideEffects
                                    state:state];
+}
+
+- (void)mouseHandlerRedraw:(PTYMouseHandler *)mouseHandler {
+    [self setNeedsDisplay:YES];
+}
+
+- (void)makeBlockCopyButtonForLine:(int)line block:(NSString *)block NS_AVAILABLE_MAC(11) {
+    int i = line;
+    while (i > 0 && [[self blockIDForLine:i - 1] isEqualToString:block]) {
+        i -= 1;
+    }
+    _hoverBlockCopyButton = [[iTermTerminalCopyButton alloc] initWithID:-1
+                                                                blockID:block
+                                                               absCoord:VT100GridAbsCoordMake(self.dataSource.width - 1, i + _dataSource.totalScrollbackOverflow)];
+    __weak __typeof(self) weakSelf = self;
+    const long long offset = _dataSource.totalScrollbackOverflow;
+    _hoverBlockCopyButton.action = ^(NSPoint locationInWindow) {
+        [weakSelf copyBlock:block absLine:line+offset screenCoordinate:[NSEvent mouseLocation]];
+    };
+}
+
+- (NSString *)mouseHandler:(PTYMouseHandler *)mouseHandler blockIDOnLine:(int)line {
+    if (line < 0) {
+        return nil;
+    }
+    NSDictionary<NSNumber *, iTermExternalAttribute *> *attrs = [[self.dataSource externalAttributeIndexForLine:line] attributes];
+    NSString *block = attrs[@0].blockID;
+
+    // As a side effect update the current blockCopyButton.
+    if (@available(macOS 11, *)) {
+        if (!block) {
+            _hoverBlockCopyButton = nil;
+        } else if (![_hoverBlockCopyButton.blockID isEqualToString:block]) {
+            [self makeBlockCopyButtonForLine:line block:block];
+        }
+    }
+    return block;
+}
+
+// Return yes to short-circuit
+- (BOOL)mouseHandlerMouseDownAt:(NSPoint)locationInWindow {
+    NSPoint point = [self convertPoint:locationInWindow fromView:nil];
+    if (!NSPointInRect(point, self.bounds)) {
+        return NO;
+    }
+    if (@available(macOS 11, *)) {
+        for (iTermTerminalButton *button in self.terminalButtons) {
+            if (NSPointInRect(point, button.desiredFrame)) {
+                if ([button mouseDownInside]) {
+                    [self setNeedsDisplay:YES];
+                }
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+- (BOOL)mouseHandlerMouseUpAt:(NSPoint)locationInWindow {
+    NSPoint point = [self convertPoint:locationInWindow fromView:nil];
+    if (!NSPointInRect(point, self.bounds)) {
+        return NO;
+
+    }
+    BOOL clicked = NO;
+    if (@available(macOS 11, *)) {
+        [self updateButtonHover:locationInWindow pressed:NO];
+        for (iTermTerminalButton *button in self.terminalButtons) {
+            if (!button.pressed) {
+                continue;
+            }
+            clicked = clicked || button.pressed;
+            if ([button mouseUpWithLocationInWindow:locationInWindow]) {
+                [self setNeedsDisplay:YES];
+            }
+        }
+    }
+    return clicked;
 }
 
 #pragma mark - iTermSecureInputRequesting

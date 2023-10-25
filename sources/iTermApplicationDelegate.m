@@ -625,6 +625,10 @@ static BOOL hasBecomeActive = NO;
                                       }];
         return YES;
     }
+    if ([[filename pathExtension] isEqualToString:@"itermtab"]) {
+        [ProfileDocument openWithFilename:filename];
+        return YES;
+    }
     if ([filename hasSuffix:@".itermcolors"]) {
         DLog(@"Importing color presets from %@", filename);
         if ([iTermColorPresets importColorPresetFromFile:filename]) {
@@ -1436,6 +1440,25 @@ void TurnOnDebugLoggingAutomatically(void) {
     if ([components.path isEqualToString:@"explain"]) {
         [[iTermCommandExplainer instance] explainWithURL:url];
         return;
+    }
+    if ([components.path isEqualToString:@"copy-block"]) {
+        NSString *guid = [components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
+            return [element.name isEqualToString:@"guid"];
+        }].value;
+        if (!guid) {
+            guid = [[[iTermController sharedInstance] currentTerminal] currentSession].guid;
+        }
+        NSString *blockID = [components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
+            return [element.name isEqualToString:@"block"];
+        }].value;
+        if (guid && blockID) {
+            PTYSession *session = [[iTermController sharedInstance] sessionWithGUID:guid];
+            if (!session) {
+                DLog(@"No session with guid %@", guid);
+                return;
+            }
+            [session copyTextFromBlockWithID:blockID];
+        }
     }
 }
 
@@ -2291,6 +2314,10 @@ void TurnOnDebugLoggingAutomatically(void) {
                                                           didMakeSession:nil
                                                               completion:nil];
     }];
+}
+
+- (IBAction)removeRecentProfilesFromDockMenu:(id)sender {
+    [ProfileDocument removeAllRecents];
 }
 
 - (IBAction)openDependencyEditor:(id)sender {

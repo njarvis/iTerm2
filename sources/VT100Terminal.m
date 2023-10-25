@@ -104,6 +104,7 @@ NSString *const kTerminalStateAlternateScrollMode = @"Alternate Scroll Mode";
 NSString *const kTerminalStateSGRStack = @"SGR Stack";
 NSString *const kTerminalStateDECSACE = @"DECSACE";
 NSString *const kTerminalStateProtectedMode = @"Protected Mode";
+NSString *const kTerminalStateBlockID = @"Block ID";
 
 static const size_t VT100TerminalMaxSGRStackEntries = 10;
 
@@ -658,12 +659,18 @@ static const int kMaxScreenRows = 4096;
 }
 
 - (void)updateExternalAttributes {
-    if (!graphicRendition_.hasUnderlineColor && _currentURLCode == 0) {
+    if (!graphicRendition_.hasUnderlineColor && _currentURLCode == 0 && self.currentBlockID == nil) {
         _externalAttributes = nil;
         return;
     }
     _externalAttributes = [[iTermExternalAttribute alloc] initWithUnderlineColor:graphicRendition_.underlineColor
-                                                                         urlCode:_currentURLCode];
+                                                                         urlCode:_currentURLCode
+                                                                         blockID:self.currentBlockID];
+}
+
+- (void)setCurrentBlockID:(NSString *)currentBlockID {
+    _currentBlockID = [currentBlockID copy];
+    [self updateExternalAttributes];
 }
 
 - (screen_char_t)foregroundColorCode {
@@ -1865,6 +1872,7 @@ static const int kMaxScreenRows = 4096;
     self.url = nil;
     self.urlParams = nil;
     _currentURLCode = 0;
+    self.currentBlockID = nil;
 
     // (Not supported: Reset INVISIBLE)
 
@@ -2800,18 +2808,14 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             break;
         }
         case XTERMCC_REPORT_ICON_TITLE: {
-            NSString *s = [NSString stringWithFormat:@"\033]L%@\033\\",
-                           [_delegate terminalIconTitle]];
-            [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
+            [_delegate terminalReportIconTitle];
             break;
         }
         case XTERMCC_REPORT_WIN_TITLE: {
             // NOTE: In versions prior to 2.9.20150415, we used "L" as the leader here, not "l".
             // That was wrong and may cause bug reports due to breaking bugward compatibility.
             // (see xterm docs)
-            NSString *s = [NSString stringWithFormat:@"\033]l%@\033\\",
-                           [_delegate terminalWindowTitle]];
-            [_delegate terminalSendReport:[s dataUsingEncoding:NSUTF8StringEncoding]];
+            [_delegate terminalReportWindowTitle];
             break;
         }
         case XTERMCC_PUSH_TITLE: {
@@ -3463,14 +3467,6 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     return [@(height) stringValue];
  }
 
-- (NSString *)decrqssDECSCPP {
-    return self.columnMode ? @"132" : @"80";
-}
-
-- (NSString *)decrqssDECNLS {
-    return [@([self.delegate terminalSizeInCells].height) stringValue];
-}
-
 - (iTermPromise<NSString *> *)decrqssPayloadPromise:(NSString *)pt {
     if ([pt isEqualToString:@"m"]) {
         return [iTermPromise promiseValue:[self decrqssSGR]];
@@ -3493,12 +3489,7 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
     if ([pt isEqualToString:@"t"]) {
         return [iTermPromise promiseValue:[self decrqssDECSLPP]];
     }
-    if ([pt isEqualToString:@"$|"]) {
-        return [iTermPromise promiseValue:[self decrqssDECSCPP]];
-    }
-    if ([pt isEqualToString:@"*|"]) {
-        return [iTermPromise promiseValue:[self decrqssDECNLS]];
-    }
+    // DECSCPP and DECNLS not supported for security reasons.
 
     return [iTermPromise promiseDefaultError];
 }
@@ -4022,6 +4013,22 @@ static BOOL VT100TokenIsTmux(VT100Token *token) {
             // Enter multitoken mode to avoid showing the base64 gubbins of the image.
             receivingFile_ = YES;
             [_delegate terminalAppendString:[NSString stringWithLongCharacter:0x1F6AB]];
+        }
+    } else if ([key isEqualToString:@"Block"]) {
+        NSDictionary<NSString *, NSString *> *dict = [value it_keyValuePairsSeparatedBy:@";"];
+        NSString *blockID = dict[@"id"];
+        if (blockID) {
+            if ([dict[@"attr"] isEqualToString:@"start"]) {
+                [_delegate terminalBlock:blockID start:YES type:dict[@"type"] render:NO];
+            } else if ([dict[@"attr"] isEqualToString:@"end"]) {
+                [_delegate terminalBlock:blockID start:NO type:nil render:[dict[@"render"] isEqual:@"1"]];
+            }
+        }
+    } else if ([key isEqualToString:@"Button"]) {
+        NSDictionary<NSString *, NSString *> *dict = [value it_keyValuePairsSeparatedBy:@";"];
+        NSString *type = dict[@"type"];
+        if ([type isEqualToString:@"copy"] && dict[@"block"]) {
+            [_delegate terminalInsertCopyButtonForBlock:dict[@"block"]];
         }
     } else if ([key isEqualToString:@"FilePart"]) {
         if ([_delegate terminalIsTrusted]) {
@@ -5207,6 +5214,7 @@ static iTermPromise<NSNumber *> *VT100TerminalPromiseOfDECRPMSettingFromBoolean(
            kTerminalStatePreserveScreenOnDECCOLM: @(self.preserveScreenOnDECCOLM),
            kTerminalStateSavedColors: _savedColors.plist,
            kTerminalStateProtectedMode: @(_protectedMode),
+           kTerminalStateBlockID: self.currentBlockID ?: [NSNull null]
         };
     return [dict dictionaryByRemovingNullValues];
 }
@@ -5250,6 +5258,7 @@ static iTermPromise<NSNumber *> *VT100TerminalPromiseOfDECRPMSettingFromBoolean(
     self.preserveScreenOnDECCOLM = [dict[kTerminalStatePreserveScreenOnDECCOLM] boolValue];
     _savedColors = [VT100SavedColors fromData:[NSData castFrom:dict[kTerminalStateSavedColors]]] ?: [[VT100SavedColors alloc] init];
     self.protectedMode = [dict[kTerminalStateProtectedMode] unsignedIntegerValue];
+    self.currentBlockID = [NSString castFrom:dict[kTerminalStateBlockID]];
 
     if (!_sendModifiers) {
         self.sendModifiers = [@[ @-1, @-1, @-1, @-1, @-1 ] mutableCopy];
@@ -5308,6 +5317,7 @@ static iTermPromise<NSNumber *> *VT100TerminalPromiseOfDECRPMSettingFromBoolean(
     return [title substringFromIndex:NSMaxRange(newlineRange)];
 }
 
+// This is used for titles received from the remote host.
 - (NSString *)sanitizedTitle:(NSString *)unsafeTitle {
     // Very long titles are slow to draw in the tabs. Limit their length and
     // cut off anything after newline since it wouldn't be visible anyway.

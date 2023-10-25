@@ -350,7 +350,7 @@ static int VT100GridIndex(int screenTop, int lineNumber, int height) {
     cursor_.y = MIN(size_.height - 1, MAX(0, cursorY));
     if (cursorY != prev) {
         DLog(@"Move cursor y to %d (requested %d)", cursor_.y, cursorY);
-        [delegate_ gridCursorDidChangeLine];
+        [delegate_ gridCursorDidChangeLineFrom:prev];
         [delegate_ gridCursorDidMove];
     }
 }
@@ -876,12 +876,29 @@ makeCursorLineSoft:(BOOL)makeCursorLineSoft {
         [eaIndex mutateAttributesFrom:from.x to:to.x block:^iTermExternalAttribute * _Nullable(iTermExternalAttribute * _Nullable old) {
             return [iTermExternalAttribute attributeHavingUnderlineColor:old.hasUnderlineColor
                                                           underlineColor:old.underlineColor
-                                                                 urlCode:code];
+                                                                 urlCode:code
+                                                                 blockID:old.blockID];
         }];
         [self markCharsDirty:YES
                   inRectFrom:VT100GridCoordMake(from.x, y)
                           to:VT100GridCoordMake(to.x, y)];
     }
+}
+
+- (void)setBlockID:(NSString *)blockID onLine:(int)line {
+    VT100LineInfo *info = [self lineInfoAtLineNumber:line];
+    iTermExternalAttributeIndex *eaIndex = [info externalAttributesCreatingIfNeeded:blockID != nil];
+    [eaIndex mutateAttributesFrom:0
+                               to:self.size.width - 1
+                            block:^iTermExternalAttribute * _Nullable(iTermExternalAttribute * _Nullable old) {
+        return [iTermExternalAttribute attributeHavingUnderlineColor:old.hasUnderlineColor
+                                                      underlineColor:old.underlineColor
+                                                             urlCode:old.urlCode
+                                                             blockID:blockID];
+    }];
+    [self markCharsDirty:YES
+              inRectFrom:VT100GridCoordMake(0, line)
+                      to:VT100GridCoordMake(self.size.width - 1, line)];
 }
 
 - (void)copyDirtyFromGrid:(VT100Grid *)otherGrid  didScroll:(BOOL)didScroll {
@@ -1567,50 +1584,51 @@ externalAttributeIndex:(iTermExternalAttributeIndex *)ea {
 - (NSString *)debugString {
     NSMutableString* result = [NSMutableString stringWithString:@""];
     int x, y;
-    char line[1000];
-    char dirtyline[1000];
     for (y = 0; y < size_.height; ++y) {
-        int ox = 0;
         screen_char_t* p = [self screenCharsAtLineNumber:y];
         if (y == screenTop_) {
             [result appendString:@"--- top of buffer ---\n"];
         }
-        for (x = 0; x < size_.width; ++x, ++ox) {
+        NSMutableString *lineString = [[NSMutableString alloc] init];
+        NSMutableString *dirtyLineString = [[NSMutableString alloc] init];
+        for (x = 0; x < size_.width; ++x) {
+            unichar c = 0;
+            unichar d = 0;
             if ([self isCharDirtyAt:VT100GridCoordMake(x, y)]) {
-                dirtyline[ox] = '-';
+                d = '-';
             } else {
-                dirtyline[ox] = '.';
+                d = '.';
             }
             if (y == cursor_.y && x == cursor_.x) {
-                if (dirtyline[ox] == '-') {
-                    dirtyline[ox] = '=';
+                if (d == '-') {
+                    d = '=';
                 }
-                if (dirtyline[ox] == '.') {
-                    dirtyline[ox] = ':';
+                if (d == '.') {
+                    d = ':';
                 }
             }
             if (p[x].image) {
-                line[ox] = 'I';
+                c = 'I';
             } else if (p[x].code && !p[x].complexChar) {
                 if (p[x].code > 0 && p[x].code < 128) {
-                    line[ox] = p[x].code;
+                    c = p[x].code;
                 } else if (ScreenCharIsDWC_RIGHT(p[x])) {
-                    line[ox] = '-';
+                    c = '-';
                 } else if (ScreenCharIsTAB_FILLER(p[x])) {
-                    line[ox] = ' ';
+                    c = ' ';
                 } else if (ScreenCharIsDWC_SKIP(p[x])) {
-                    line[ox] = '>';
+                    c = '>';
                 } else {
-                    line[ox] = '?';
+                    c = '?';
                 }
             } else {
-                line[ox] = '.';
+                c = '.';
             }
+            [lineString appendCharacter:c];
+            [dirtyLineString appendCharacter:d];
         }
-        line[x] = 0;
-        dirtyline[x] = 0;
-        [result appendFormat:@"%04d: %s %@\n", y, line, [self stringForContinuationMark:p[size_.width].code]];
-        [result appendFormat:@"dirty %s%@\n", dirtyline, y == cursor_.y ? @" -cursor-" : @""];
+        [result appendFormat:@"%04d: %@ %@\n", y, lineString, [self stringForContinuationMark:p[size_.width].code]];
+        [result appendFormat:@"dirty %@%@\n", dirtyLineString, y == cursor_.y ? @" -cursor-" : @""];
     }
     return result;
 }

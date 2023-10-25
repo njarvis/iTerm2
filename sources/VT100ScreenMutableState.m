@@ -557,6 +557,7 @@ static _Atomic int gPerformingJoinedBlock;
     if (overflowCount == 0) {
         return;
     }
+
     DLog(@"Increment overflow by %d", overflowCount);
     self.scrollbackOverflow += overflowCount;
     assert(self.cumulativeScrollbackOverflow >= 0);
@@ -572,6 +573,9 @@ static _Atomic int gPerformingJoinedBlock;
     if (noScrollback) {
         // In alt grid but saving to scrollback in alt-screen is off, so pass in a nil linebuffer.
         lineBufferToUse = nil;
+    }
+    if (_currentBlockID) {
+        [self.currentGrid setBlockID:_currentBlockID onLine:self.currentGrid.cursor.y];
     }
     [self incrementOverflowBy:[self.currentGrid moveCursorDownOneLineScrollingIntoLineBuffer:lineBufferToUse
                                                                          unlimitedScrollback:self.unlimitedScrollback
@@ -1265,7 +1269,8 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     if ((*eaOut).urlCode) {
         *eaOut = [iTermExternalAttribute attributeHavingUnderlineColor:(*eaOut).hasUnderlineColor
                                                         underlineColor:(*eaOut).underlineColor
-                                                               urlCode:0];
+                                                               urlCode:0
+                                                               blockID:nil];
     }
 }
 
@@ -1431,7 +1436,12 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 
     DLog(@"Erase interval tree objects above grid");
     // Erase interval tree objects above grid.
-    [self removeIntervalTreeObjectsInAbsRange:VT100GridAbsCoordRangeMake(0, 0, self.width, self.numberOfScrollbackLines + self.cumulativeScrollbackOverflow)
+    VT100GridAbsCoordRange absRangeToClear = VT100GridAbsCoordRangeMake(0, 0, self.width, self.numberOfScrollbackLines + self.cumulativeScrollbackOverflow);
+    Interval *intervalToClear = [self intervalForGridAbsCoordRange:absRangeToClear];
+    DLog(@"BEFORE: %@", self.markCache.description);
+    [self.markCache eraseUpToLocation:intervalToClear.limit - 1];
+    DLog(@"AFTER: %@", self.markCache.description);
+    [self removeIntervalTreeObjectsInAbsRange:absRangeToClear
                           exceptAbsCoordRange:VT100GridAbsCoordRangeMake(-1, -1, -1, -1)];
 
     // Clear the grid by scrolling it up into history.
@@ -2251,6 +2261,21 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 }
 
 - (id<iTermMark>)addMarkStartingAtAbsoluteLine:(long long)line
+                                        column:(int)column
+                                       oneLine:(BOOL)oneLine
+                                       ofClass:(Class)markClass {
+    return [self addMarkStartingAtAbsoluteLine:line column:column oneLine:oneLine ofClass:markClass modifier:nil];
+}
+
+- (id<iTermMark>)addMarkStartingAtAbsoluteLine:(long long)line
+                                       oneLine:(BOOL)oneLine
+                                       ofClass:(Class)markClass
+                                      modifier:(void (^ NS_NOESCAPE)(id<iTermMark>))modifier {
+    return [self addMarkStartingAtAbsoluteLine:line column:-1 oneLine:oneLine ofClass:markClass modifier:modifier];
+}
+
+- (id<iTermMark>)addMarkStartingAtAbsoluteLine:(long long)line
+                                        column:(int)column
                                        oneLine:(BOOL)oneLine
                                        ofClass:(Class)markClass
                                       modifier:(void (^ NS_NOESCAPE)(id<iTermMark>))modifier {
@@ -2258,10 +2283,14 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     if (modifier) {
         modifier(mark);
     }
-    return [self addMark:mark onLine:line singleLine:oneLine];
+    return [self addMark:mark onLine:line column:column singleLine:oneLine];
 }
 
 - (id<iTermMark>)addMark:(iTermMark *)mark onLine:(long long)line singleLine:(BOOL)oneLine {
+    return [self addMark:mark onLine:line column:-1 singleLine:oneLine];
+}
+
+- (id<iTermMark>)addMark:(iTermMark *)mark onLine:(long long)line column:(int)column singleLine:(BOOL)oneLine {
     if ([mark isKindOfClass:[VT100ScreenMark class]]) {
         VT100ScreenMark *screenMark = (VT100ScreenMark *)mark;
         screenMark.delegate = self;
@@ -2275,19 +2304,24 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     if (oneLine) {
         absRange = VT100GridAbsCoordRangeMake(0, line, self.width, line);
     } else {
-        // Interval is whole screen
         long long absLimit = line + self.height - 1;
         const long long maxAbsLimit = self.cumulativeScrollbackOverflow + self.numberOfScrollbackLines + [self.currentGrid numberOfLinesUsed];
         if (absLimit >= maxAbsLimit) {
             absLimit = maxAbsLimit - 1;
         }
-        absRange = VT100GridAbsCoordRangeMake(0, line, self.width, absLimit);
-    }
-    if ([mark isKindOfClass:[VT100ScreenMark class]]) {
-        self.markCache[absRange.end.y] = mark;
+        if (column < 0) {
+            // Interval is whole screen
+            absRange = VT100GridAbsCoordRangeMake(0, line, self.width, absLimit);
+        } else {
+            // Interval is one cell
+            absRange = VT100GridAbsCoordRangeMake(column, line, column + 1, absLimit);
+        }
     }
     DLog(@"addMarkStartingAtAbsoluteLine: %@", mark);
     [self.mutableIntervalTree addObject:mark withInterval:[self intervalForGridAbsCoordRange:absRange]];
+    if ([mark isKindOfClass:[VT100ScreenMark class]]) {
+        self.markCache[absRange.end.y] = mark;
+    }
 
     const iTermIntervalTreeObjectType objectType = iTermIntervalTreeObjectTypeForObject(mark);
     const long long absLine = absRange.start.y;
@@ -2304,6 +2338,12 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     }
     return mark;
 }
+// Remove screen mark from mark cache
+// If there is a screen mark, reset lastCommandMark
+// If mark is named, remove from namedMarks and set namedMarkDirty
+// Call willRemove on annotations
+// Remove from the interval tree
+// For minimap marks, call observer methods
 
 - (BOOL)removeObjectFromIntervalTree:(id<IntervalTreeObject>)obj {
     DLog(@"Remove %@", obj);
@@ -2311,7 +2351,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     if ([obj isKindOfClass:[VT100ScreenMark class]]) {
         long long theKey = (totalScrollbackOverflow +
                             [self coordRangeForInterval:obj.entry.interval].end.y);
-        [self.markCache remove:theKey];
+        [self.markCache removeMark:(VT100ScreenMark *)obj onLine:theKey];
         self.lastCommandMark = nil;
         VT100ScreenMark *screenMark = [VT100ScreenMark castFrom:obj];
         if (screenMark.name) {
@@ -2348,13 +2388,22 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 
 - (NSMutableArray<id<IntervalTreeObject>> *)removeIntervalTreeObjectsInRange:(VT100GridCoordRange)coordRange
                                                             exceptCoordRange:(VT100GridCoordRange)coordRangeToSave {
+    const VT100GridAbsCoordRange absCoordRangeToClear =
+    VT100GridAbsCoordRangeFromCoordRange(coordRange,
+                                         self.cumulativeScrollbackOverflow);
+
     VT100GridAbsCoordRange absCoordRangeToSave;
     if (coordRangeToSave.start.x < 0) {
         absCoordRangeToSave = VT100GridAbsCoordRangeMake(-1, -1, -1, -1);
+        if (absCoordRangeToClear.start.y == 0 &&
+            absCoordRangeToClear.start.x == 0) {
+            Interval *interval = [self intervalForGridAbsCoordRange:absCoordRangeToClear];
+            [self.markCache eraseUpToLocation:interval.location];
+        }
     } else {
         absCoordRangeToSave = VT100GridAbsCoordRangeFromCoordRange(coordRangeToSave, self.cumulativeScrollbackOverflow);
     }
-    return [self removeIntervalTreeObjectsInAbsRange:VT100GridAbsCoordRangeFromCoordRange(coordRange, self.cumulativeScrollbackOverflow)
+    return [self removeIntervalTreeObjectsInAbsRange:absCoordRangeToClear
                                  exceptAbsCoordRange:absCoordRangeToSave];
 }
 
@@ -2436,6 +2485,9 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         return;
     }
     DLog(@"Begin");
+    DLog(@"BEFORE: %@", self.markCache);
+    [self.markCache eraseUpToLocation:lastDeadLocation - 1];
+    DLog(@"AFTER: %@", self.markCache);
     Interval *deadInterval = [Interval intervalWithLocation:0 length:lastDeadLocation + 1];
     for (id<IntervalTreeObject> obj in [self.intervalTree objectsInInterval:deadInterval]) {
         if ([obj.entry.interval limit] <= lastDeadLocation) {
@@ -2445,6 +2497,10 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         }
     }
     DLog(@"End");
+}
+
+- (iTermBlockMark *)mutableBlockMarkWithID:(NSString *)blockID {
+    return (iTermBlockMark *)[super blockMarkWithID:blockID];
 }
 
 #pragma mark - Shell Integration
@@ -2464,9 +2520,14 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 }
 
 - (id<iTermMark>)addMarkOnLine:(int)line ofClass:(Class)markClass {
+    return [self addMarkOnLine:line column:-1 ofClass:markClass];
+}
+
+- (id<iTermMark>)addMarkOnLine:(int)line column:(int)column ofClass:(Class)markClass {
     DLog(@"addMarkOnLine:%@ ofClass:%@", @(line), markClass);
     id<iTermMark> newMark = [self addMarkStartingAtAbsoluteLine:self.cumulativeScrollbackOverflow + line
-                                                        oneLine:YES
+                                                         column:column
+                                                        oneLine:column < 0
                                                         ofClass:markClass];
     if (_alertOnNextMark) {
         _alertOnNextMark = NO;
@@ -2491,7 +2552,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     }];
     self.namedMarksDirty = YES;
     if (self.markCache[range.end.y] == mark) {
-        [self.markCache remove:range.end.y];
+        [self.markCache removeMark:mark onLine:range.end.y];
     }
 }
 
@@ -2821,9 +2882,11 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     }];
 }
 
-- (void)setRemoteHostFromString:(NSString *)remoteHost {
-    DLog(@"Set remote host to %@ %@", remoteHost, self);
+- (void)setRemoteHostFromString:(NSString *)unsafeRemoteHost {
+    DLog(@"Set remote host to %@ %@", unsafeRemoteHost, self);
     // Search backwards because Windows UPN format includes an @ in the user name. I don't think hostnames would ever have an @ sign.
+    NSCharacterSet *controlCharacters = [NSCharacterSet controlCharacterSet];
+    NSString *remoteHost = [[unsafeRemoteHost componentsSeparatedByCharactersInSet:controlCharacters] componentsJoinedByString:@""];
     NSRange atRange = [remoteHost rangeOfString:@"@" options:NSBackwardsSearch];
     NSString *user = nil;
     NSString *host = nil;
@@ -3922,6 +3985,11 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
 }
 
 - (void)compressAndRescheduleIfNeeded {
+    if (![iTermPreferences boolForKey:kPreferenceKeyCompressHistory]) {
+        DLog(@"History compression disabled");
+        return;
+    }
+    DLog(@"History compression enabled");
     if ([self.linebuffer compress]) {
         return;
     }
@@ -4157,6 +4225,8 @@ basedAtAbsoluteLineNumber:(long long)absoluteLineNumber
     }
 
     if (screenState) {
+        [self.blockStartAbsLine it_mergeFrom:[NSDictionary castFrom:screenState[kScreenStateBlockStartAbsLineKey]] ?: @{}];
+        self.blocksGeneration = 1;
         self.protectedMode = [screenState[kScreenStateProtectedMode] unsignedIntegerValue];
         [_promptStateMachine loadPromptStateDictionary:screenState[kScreenStatePromptStateKey]];
         [self.tabStops removeAllObjects];
@@ -4990,28 +5060,29 @@ launchCoprocessWithCommand:(NSString *)command
         [self setReturnCodeOfLastCommand:0];
     }
 
-
-    // Insert an empty line above the prompt.
-    if (range.start.y == self.numberOfLines + self.cumulativeScrollbackOverflow - 1) {
-        // Make room at the bottom of the grid.
-        [self incrementOverflowBy:
-         [self.currentGrid scrollWholeScreenUpIntoLineBuffer:self.linebuffer
-                                         unlimitedScrollback:self.unlimitedScrollback]];
-    } else {
-        // The prompt will be one line lower so move the cursor to stay with it.
-        [self.currentGrid moveCursorDown:1];
+    if (self.config.useLineStyleMarks) {
+        // Insert an empty line above the prompt.
+        if (range.start.y == self.numberOfLines + self.cumulativeScrollbackOverflow - 1) {
+            // Make room at the bottom of the grid.
+            [self incrementOverflowBy:
+             [self.currentGrid scrollWholeScreenUpIntoLineBuffer:self.linebuffer
+                                             unlimitedScrollback:self.unlimitedScrollback]];
+        } else {
+            // The prompt will be one line lower so move the cursor to stay with it.
+            [self.currentGrid moveCursorDown:1];
+        }
+        // Move the prompt and anything below it down by 1
+        const int scrollbackLines = self.numberOfScrollbackLines;
+        const int gridRow = range.start.y - scrollbackLines - self.cumulativeScrollbackOverflow;
+        [self.currentGrid scrollRect:VT100GridRectMake(0,
+                                                       gridRow,
+                                                       self.width,
+                                                       self.height - gridRow)
+                              downBy:1
+                           softBreak:NO];
+        range.start.y += 1;
+        range.end.y += 1;
     }
-    // Move the prompt and anything below it down by 1
-    const int scrollbackLines = self.numberOfScrollbackLines;
-    const int gridRow = range.start.y - scrollbackLines - self.cumulativeScrollbackOverflow;
-    [self.currentGrid scrollRect:VT100GridRectMake(0,
-                                                   gridRow,
-                                                   self.width,
-                                                   self.height - gridRow)
-                          downBy:1
-                       softBreak:NO];
-    range.start.y += 1;
-    range.end.y += 1;
 
     // Use 0 here to avoid the screen inserting a newline.
     range.start.x = 0;
@@ -5155,7 +5226,7 @@ launchCoprocessWithCommand:(NSString *)command
     return [self.terminal backgroundColorCodeReal];
 }
 
-- (void)gridCursorDidChangeLine {
+- (void)gridCursorDidChangeLineFrom:(int)previous {
     if (!self.trackCursorLineMovement) {
         return;
     }
@@ -5493,6 +5564,9 @@ launchCoprocessWithCommand:(NSString *)command
 }
 
 - (void)promptStateMachineDismissComposer {
+    if (!self.config.autoComposerEnabled) {
+        return;
+    }
     [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         [delegate screenDismissComposer];
         [unpauser unpause];

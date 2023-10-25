@@ -5,6 +5,7 @@
 
 #import "DebugLogging.h"
 #import "FutureMethods.h"
+#import "iTerm2SharedARC-Swift.h"
 #import "iTermAdvancedSettingsModel.h"
 #import "iTermASCIITexture.h"
 #import "iTermAlphaBlendingHelper.h"
@@ -133,6 +134,8 @@ typedef struct {
     iTermCursorRenderer *_keyCursorRenderer;
     iTermImageRenderer *_imageRenderer;
     iTermCopyToDrawableRenderer *_copyToDrawableRenderer;
+    iTermBlockRenderer *_blockRenderer;
+    iTermTerminalButtonRenderer *_terminalButtonRenderer NS_AVAILABLE_MAC(11);
 
     // This one is special because it's debug only
     iTermCopyOffscreenRenderer *_copyOffscreenRenderer;
@@ -216,6 +219,10 @@ typedef struct {
         _copyBackgroundRenderer = [[iTermCopyBackgroundRenderer alloc] initWithDevice:device];
         if (iTermTextIsMonochrome()) {} else {
             _copyToDrawableRenderer = [[iTermCopyToDrawableRenderer alloc] initWithDevice:device];
+        }
+        _blockRenderer = [[iTermBlockRenderer alloc] initWithDevice:device];
+        if (@available(macOS 11, *)) {
+            _terminalButtonRenderer = [[iTermTerminalButtonRenderer alloc] initWithDevice:device];
         }
 
         _commandQueue = [device newCommandQueue];
@@ -345,6 +352,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
 
 // Called whenever the view needs to render a frame
 - (void)drawInMTKView:(nonnull MTKView *)view {
+    DLog(@"Draw metal");
     const NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     const NSTimeInterval dt = now - _lastFrameStartTime;
     _lastFrameStartTime = now;
@@ -688,6 +696,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
         iTermMarkStyle markStyle;
         BOOL lineStyleMark = NO;
         NSDate *date;
+        BOOL belongsToBlock;
         [frameData.perFrameState metalGetGlyphKeys:glyphKeys
                                         attributes:rowData.attributesData.mutableBytes
                                          imageRuns:rowData.imageRuns
@@ -698,10 +707,12 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
                                                row:y
                                              width:columns
                                     drawableGlyphs:&drawableGlyphs
-                                              date:&date];
+                                              date:&date
+                                    belongsToBlock:&belongsToBlock];
         rowData.backgroundColorRLEData.length = rles * sizeof(iTermMetalBackgroundColorRLE);
         rowData.date = date;
         rowData.numberOfBackgroundRLEs = rles;
+        rowData.belongsToBlock = belongsToBlock;
         rowData.numberOfDrawableGlyphs = drawableGlyphs;
         ITConservativeBetaAssert(drawableGlyphs <= rowData.keysData.length / sizeof(iTermMetalGlyphKey),
                                  @"Have %@ drawable glyphs with %@ glyph keys",
@@ -791,6 +802,10 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
     [self populateFlashRendererTransientStateWithFrameData:frameData];
     [self populateImageRendererTransientStateWithFrameData:frameData];
     [self populateBackgroundImageRendererTransientStateWithFrameData:frameData];
+    [self populateBlockRendererTransientStateWithFrameData:frameData];
+    if (@available(macOS 11, *)) {
+        [self populateTerminalButtonRendererTransientStateWithFrameData:frameData];
+    }
 }
 
 - (id<MTLTexture>)destinationTextureForFrameData:(iTermMetalFrameData *)frameData {
@@ -928,13 +943,19 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
 
     [self drawCursorAfterTextWithFrameData:frameData];
 
-    [self drawRenderer:_indicatorRenderer
-             frameData:frameData
-                  stat:iTermMetalFrameDataStatPqEnqueueDrawIndicators];
+    if (!frameData.perFrameState.haveOffscreenCommandLine) {
+        [self drawRenderer:_indicatorRenderer
+                 frameData:frameData
+                      stat:iTermMetalFrameDataStatPqEnqueueDrawIndicators];
+    }
 
     [self drawCellRenderer:_timestampsRenderer
                  frameData:frameData
                       stat:iTermMetalFrameDataStatPqEnqueueDrawTimestamps];
+
+    [self drawCellRenderer:_terminalButtonRenderer
+                 frameData:frameData
+                      stat:iTermMetalFrameDataStatPqEnqueueDrawButtons];
 
     [self drawRenderer:_flashRenderer
              frameData:frameData
@@ -947,6 +968,12 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
     [self drawRenderer:_offscreenCommandLineBackgroundRenderer
              frameData:frameData
                   stat:iTermMetalFrameDataStatPqEnqueueDrawOffscreenCommandLineBg];
+
+    if (	frameData.perFrameState.haveOffscreenCommandLine) {
+        [self drawRenderer:_indicatorRenderer
+                 frameData:frameData
+                      stat:iTermMetalFrameDataStatPqEnqueueDrawIndicators];
+    }
 
 
     [self drawCellRenderer:_offscreenCommandLineTextRenderer
@@ -1468,6 +1495,34 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
     [tState setColor:color];
 }
 
+- (void)populateBlockRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData {
+    iTermBlockRendererTransientState *tState = [frameData transientStateForRenderer:_blockRenderer];
+    vector_float4 color = frameData.perFrameState.processedDefaultTextColor;
+    [tState setColor:color];
+    [frameData.rows enumerateObjectsUsingBlock:^(iTermMetalRowData * _Nonnull rowData, NSUInteger idx, BOOL * _Nonnull stop) {
+        if (rowData.belongsToBlock) {
+            [tState addRow:idx];
+        }
+    }];
+}
+
+- (void)populateTerminalButtonRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData NS_AVAILABLE_MAC(11) {
+    iTermTerminalButtonRendererTransientState *tState = [frameData transientStateForRenderer:_terminalButtonRenderer];
+
+    const long long firstLine = frameData.perFrameState.firstVisibleAbsoluteLineNumber;
+    for (iTermTerminalButton *button in frameData.perFrameState.terminalButtons) {
+        if (button.absCoord.y < firstLine ||
+            button.absCoord.y >= firstLine + frameData.perFrameState.gridSize.height) {
+            continue;
+        }
+        [tState addButton:button
+             onScreenLine:button.absCoord.y - firstLine
+                   column:button.absCoord.x
+          foregroundColor:frameData.perFrameState.processedDefaultTextColor
+          backgroundColor:frameData.perFrameState.processedDefaultBackgroundColor];
+    }
+}
+
 - (void)populateImageRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData {
     iTermImageRendererTransientState *tState = [frameData transientStateForRenderer:_imageRenderer];
     tState.firstVisibleAbsoluteLineNumber = frameData.perFrameState.firstVisibleAbsoluteLineNumber;
@@ -1755,6 +1810,10 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
                  frameData:frameData
                       stat:iTermMetalFrameDataStatPqEnqueueDrawMarks];
 
+    [self drawCellRenderer:_blockRenderer
+                 frameData:frameData
+                      stat:iTermMetalFrameDataStatPqEnqueueDrawBlocks];
+    
     [self drawRenderer:_badgeRenderer
              frameData:frameData
                   stat:iTermMetalFrameDataStatPqEnqueueBadge];
@@ -2044,7 +2103,9 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
               _frameCursorRenderer,
               _copyModeCursorRenderer,
               _keyCursorRenderer,
-              _timestampsRenderer ];
+              _timestampsRenderer,
+              _blockRenderer,
+              _terminalButtonRenderer];
 }
 
 - (NSArray<id<iTermMetalRenderer>> *)nonCellRenderers {

@@ -334,6 +334,15 @@
 
 - (NSString *)validatedAndShellEscapedHostname:(NSString *)hostname {
     DLog(@"validate %@", hostname);
+    {
+        NSCharacterSet *legalInitialCharacters = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"];
+        NSCharacterSet *illegalInitialCharacters = [legalInitialCharacters invertedSet];
+        NSRange range = [hostname rangeOfCharacterFromSet:illegalInitialCharacters];
+        if (range.location == 0) {
+            ELog(@"Hostname %@ starts with an illegal character", hostname);
+            return nil;
+        }
+    }
     NSCharacterSet *legalCharacters = [NSCharacterSet characterSetWithCharactersInString:@":abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-."];
     NSCharacterSet *illegalCharacters = [legalCharacters invertedSet];
     NSRange range = [hostname rangeOfCharacterFromSet:illegalCharacters];
@@ -342,6 +351,16 @@
         return nil;
     }
     return [hostname stringWithEscapedShellCharactersIncludingNewlines:YES];
+}
+
+- (NSString *)sanitizedCommand:(NSString *)unsafeCommand {
+    NSMutableCharacterSet *separators = [NSMutableCharacterSet whitespaceAndNewlineCharacterSet];
+    [separators formUnionWithCharacterSet:[NSCharacterSet characterSetWithCharactersInString:@";<>&!#$*()\'\"`"]];
+    const NSRange range = [unsafeCommand rangeOfCharacterFromSet:separators];
+    if (range.location == NSNotFound) {
+        return unsafeCommand;
+    }
+    return [unsafeCommand substringToIndex:range.location];
 }
 
 - (Profile *)profileByModifyingProfile:(NSDictionary *)prototype toShowManPage:(NSURL *)url {
@@ -356,19 +375,19 @@
         // Apropos
         command = [NSString stringWithFormat:@"login -pfq %@ /usr/bin/man -P cat -k %@",
                    NSUserName(),
-                   [parts[0] stringByRemovingPrefix:@"/"]];
+                   [self sanitizedCommand:[parts[0] stringByRemovingPrefix:@"/"]]];
     } else {
         if (url.host.length) {
             // x-man-page://<section>/<command>
             command = [NSString stringWithFormat:@"login -pfq %@ /usr/bin/man -P ul -S %@ %@",
                        NSUserName(),
-                       url.host,
-                       url.path];
+                       [self sanitizedCommand:url.host],
+                       [self sanitizedCommand:url.path]];
         } else {
             // x-man-page:///<command>
             command = [NSString stringWithFormat:@"login -pfq %@ /usr/bin/man -P ul %@",
                        NSUserName(),
-                       url.path];
+                       [self sanitizedCommand:url.path]];
         }
     }
     return [prototype dictionaryByMergingDictionary:@{ KEY_COMMAND_LINE: command,

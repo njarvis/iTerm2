@@ -13,6 +13,7 @@
 @class iTermExternalAttributeIndex;
 @protocol iTermMark;
 @class iTermOffscreenCommandLine;
+@class iTermTerminalButtonPlace;
 @protocol IntervalTreeImmutableObject;
 @class PTYAnnotation;
 @protocol PTYAnnotationReading;
@@ -150,5 +151,7 @@
 - (VT100GridCoordRange)coordRangeOfPorthole:(id<Porthole>)porthole;
 - (iTermOffscreenCommandLine *)offscreenCommandLineBefore:(int)line;
 - (NSInteger)numberOfCellsUsedInRange:(VT100GridRange)range;
+- (NSArray<iTermTerminalButtonPlace *> *)buttonsInRange:(VT100GridRange)range;
+- (VT100GridCoordRange)rangeOfBlockWithID:(NSString *)blockID;
 
 @end

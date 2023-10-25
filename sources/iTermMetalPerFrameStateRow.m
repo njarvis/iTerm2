@@ -28,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
     self = [super init];
     if (self) {
         _date = source->_date;
+        _belongsToBlock = source->_belongsToBlock;
         _screenCharLine = [ScreenCharArray emptyLineOfLength:source->_screenCharLine.length];
         _selectedIndexSet = [NSIndexSet indexSet];
         _markStyle = @(iTermMarkStyleNone);
@@ -50,6 +51,12 @@ NS_ASSUME_NONNULL_BEGIN
             _date = [textView drawingHelperTimestampForLine:i];
         }
         _screenCharLine = [[screen screenCharArrayForLine:i] paddedOrTruncatedToLength:width];
+#if DEBUG
+        assert(_screenCharLine != nil);
+#endif
+        if (!_screenCharLine) {
+            _screenCharLine = [[[ScreenCharArray alloc] init] paddedOrTruncatedToLength:width];
+        }
         [_screenCharLine makeSafe];
 
         _selectedIndexSet = [textView.selection selectedIndexesIncludingTabFillersInAbsoluteLine:totalScrollbackOverflow + i];
@@ -59,6 +66,7 @@ NS_ASSUME_NONNULL_BEGIN
             _matches = findMatches;
         }
         _eaIndex = [[screen externalAttributeIndexForLine:i] copy];
+        _belongsToBlock = _eaIndex.attributes[@0].blockID != nil;
 
         const long long absoluteLine = totalScrollbackOverflow + i;
         _underlinedRange = [drawingHelper underlinedRangeOnLine:absoluteLine];

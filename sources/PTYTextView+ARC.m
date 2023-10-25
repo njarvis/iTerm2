@@ -446,6 +446,8 @@ iTermCommandInfoViewControllerDelegate>
         changed = [self setCursor:[iTermMouseCursor mouseCursorOfType:iTermMouseCursorTypeIBeamWithCircle]];
     } else if ([self contextMenu:_contextMenuHelper offscreenCommandLineForClickAt:event.locationInWindow]) {
         changed = [self setCursor:[NSCursor arrowCursor]];
+    } else if ([self mouseIsOverButtonInEvent:event]) {
+        changed = [self setCursor:[NSCursor arrowCursor]];
     } else {
         changed = [self setCursor:[iTermMouseCursor mouseCursorOfType:iTermMouseCursorTypeIBeam]];
     }
@@ -1780,6 +1782,10 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
 
 - (void)commandInfoSelectOutput:(id<VT100ScreenMarkReading>)mark {
     [_contextMenuHelper selectOutputOfCommandMark:mark];
+}
+
+- (void)commandInfoDisable {
+    [self.delegate textViewDisableOffscreenCommandLine];
 }
 
 @end

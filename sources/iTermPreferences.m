@@ -192,6 +192,7 @@ NSString *const kPreferenceKeyNeverBlockSystemShutdown = @"NeverBlockSystemShutd
 NSString *const kPreferenceKeyOpenAIAPIKey = @"NoSyncOpenAIAPIKey";
 NSString *const kPreferenceKeyAIPrompt = @"AI Prompt";
 NSString *const kPreferenceKeyAlertOnMarksInOffscreenSessions = @"Alert On Marks in Offscreen Sessions";
+NSString *const kPreferenceKeyCompressHistory = @"Compress History";
 
 NSString *const iTermDefaultAIPrompt =
 @"#!/usr/bin/\\(shell)\n"
@@ -488,7 +489,8 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyHTMLTabTitles: @NO,
 
                   kPreferenceKeyDisableTransparencyForKeyWindow: @NO,
-                  kPreferenceKeyNeverBlockSystemShutdown: @NO
+                  kPreferenceKeyNeverBlockSystemShutdown: @NO,
+                  kPreferenceKeyCompressHistory: @YES
               };
     }
     return dict;

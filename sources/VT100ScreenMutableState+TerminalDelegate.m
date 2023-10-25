@@ -562,7 +562,10 @@
 - (void)terminalSetWindowTitle:(NSString *)title {
     DLog(@"begin %@", title);
 
-    [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
+    // Use a deferred side effect because we don't want to redraw at this moment.
+    // It is often while/just after drawing a prompt and users hate when it draws
+    // twice either during the prompt or just after entering a command at th eprompt.
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
         DLog(@"begin side-effect");
         if ([delegate screenAllowTitleSetting]) {
             DLog(@"calling screenSetWindowTitle:%@", title);
@@ -592,25 +595,27 @@
 
 - (void)terminalSetIconTitle:(NSString *)title {
     DLog(@"begin %@", title);
-    // Pause because this changes the profile
-    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
+    // Use a deferred side effect because we don't want to redraw at this moment.
+    // It is often while/just after drawing a prompt and users hate when it draws
+    // twice either during the prompt or just after entering a command at th eprompt.
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
         DLog(@"begin side-effect");
         if ([delegate screenAllowTitleSetting]) {
             [delegate screenSetIconName:title];
         }
-        [unpauser unpause];
     }];
 }
 
 - (void)terminalSetSubtitle:(NSString *)subtitle {
     DLog(@"begin %@", subtitle);
-    // Paused because it can change the profile.
-    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
+    // Use a deferred side effect because we don't want to redraw at this moment.
+    // It is often while/just after drawing a prompt and users hate when it draws
+    // twice either during the prompt or just after entering a command at th eprompt.
+    [self addDeferredSideEffect:^(id<VT100ScreenDelegate> delegate) {
         DLog(@"begin side-effect");
         if ([delegate screenAllowTitleSetting]) {
             [delegate screenSetSubtitle:subtitle];
         }
-        [unpauser unpause];
     }];
 }
 
@@ -672,7 +677,6 @@
             }
 
             if (string) {
-                NSLog(@"string=%@", string);
                 [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
                     DLog(@"begin side-effect");
                     [delegate screenCopyStringToPasteboard:string];
@@ -875,24 +879,24 @@
     return self.config.theoreticalGridSize.width;
 }
 
-- (NSString *)terminalIconTitle {
+- (void)terminalReportIconTitle {
     DLog(@"begin");
-    if (self.allowTitleReporting && [self terminalIsTrusted]) {
-        return self.config.iconTitle ?: @"";
-    } else {
-        DLog(@"not allowed");
-        return @"";
-    }
+    [self willSendReport];
+    __weak __typeof(self) weakSelf = self;
+    [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        [delegate screenReportIconTitle];
+        [weakSelf didSendReport:delegate];
+    }];
 }
 
-- (NSString *)terminalWindowTitle {
+- (void)terminalReportWindowTitle {
     DLog(@"begin");
-    if (self.allowTitleReporting && [self terminalIsTrusted]) {
-        return self.config.windowTitle ?: @"";
-    } else {
-        DLog(@"not allowed");
-        return @"";
-    }
+    [self willSendReport];
+    __weak __typeof(self) weakSelf = self;
+    [self addSideEffect:^(id<VT100ScreenDelegate>  _Nonnull delegate) {
+        [delegate screenReportWindowTitle];
+        [weakSelf didSendReport:delegate];
+    }];
 }
 
 - (void)terminalPushCurrentTitleForWindow:(BOOL)isWindow {
@@ -2717,4 +2721,57 @@
     }];
 }
 
+- (void)terminalBlock:(NSString *)blockID
+                start:(BOOL)start
+                 type:(NSString *)type
+               render:(BOOL)render {
+    DLog(@"start=%@ blockID=%@", @(start), blockID);
+
+    iTermBlockMark *mark;
+    VT100GridAbsCoordRange range;
+    if (!start && [_currentBlockID isEqualToString:blockID]) {
+        mark = [self mutableBlockMarkWithID:blockID];
+        if (!mark) {
+            return;
+        }
+    }
+    const long long absY = self.cumulativeScrollbackOverflow + self.numberOfScrollbackLines + self.currentGrid.cursor.y;
+    if (mark) {
+        range = [self absCoordRangeForInterval:mark.entry.interval];
+        [self.mutableIntervalTree removeObject:mark];
+    } else if (start) {
+        range.start = VT100GridAbsCoordMake(0, absY);
+        mark = [[iTermBlockMark alloc] init];
+        mark.blockID = blockID;
+        mark.type = type;
+    }
+    range.end = VT100GridAbsCoordMake(self.width, absY);
+    [self.mutableIntervalTree addObject:mark withInterval:[self intervalForGridAbsCoordRange:range]];
+    if (!render) {
+        self.terminal.currentBlockID = start ? blockID : nil;
+    }
+    _currentBlockID = (!render && start) ? blockID : nil;
+    if (start) {
+        self.blockStartAbsLine[blockID] = @(absY);
+        self.blocksGeneration += 1;
+    } else if (render) {
+        [self inlineImageDidCreateTextDocumentInRange:[self absCoordRangeForInterval:mark.entry.interval]
+                                                 type:mark.type
+                                             filename:nil
+                                            forceWide:NO];
+    }
+}
+
+- (void)terminalInsertCopyButtonForBlock:(NSString *)blockID {
+    iTermButtonMark *mark = (iTermButtonMark *)[self addMarkOnLine:self.numberOfScrollbackLines + self.currentGrid.cursorY
+                                                            column:self.currentGrid.cursorX
+                                                           ofClass:[iTermButtonMark class]];
+    [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
+        iTermButtonMark *mark = (iTermButtonMark *)obj;
+        mark.copyBlockID = blockID;
+    }];
+    [self appendStringAtCursor:@"  "];
+}
+
 @end
+
