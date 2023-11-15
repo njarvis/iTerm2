@@ -17,6 +17,7 @@
 @protocol PTYTrackingChildWindow;
 @class URLAction;
 @protocol iTermContentNavigationShortcutView;
+@class iTermProgress;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -67,11 +68,14 @@ iTermURLActionHelperDelegate>
 
 - (iTermOffscreenCommandLine *)offscreenCommandLineForClickAt:(NSPoint)windowPoint;
 - (void)presentCommandInfoForOffscreenCommandLine:(iTermOffscreenCommandLine *)offscreenCommandLine
-                                            event:(NSEvent *)event;
+                                            event:(NSEvent *)event
+                         fromOffscreenCommandLine:(BOOL)fromOffscreenCommandLine;
 - (void)presentCommandInfoForMark:(id<VT100ScreenMarkReading>)mark
                absoluteLineNumber:(long long)absoluteLineNumber
                              date:(NSDate *)date
-                            event:(NSEvent *)event;
+                            point:(NSPoint)locationInWindow
+         fromOffscreenCommandLine:(BOOL)fromOffscreenCommandLine;
+
 #pragma mark - Mouse Cursor
 
 // Returns whether any change was made.
@@ -89,6 +93,9 @@ iTermURLActionHelperDelegate>
 - (NSDictionary *)charAttributes:(screen_char_t)c
               externalAttributes:(iTermExternalAttribute *)ea
                        processed:(BOOL)processed;
+
+- (iTermRenegablePromise<NSString *> *)promisedOutputForMark:(id<VT100ScreenMarkReading>)mark
+                                                    progress:(iTermProgress * _Nullable)outputProgress;
 
 #pragma mark - Install Shell Integration
 

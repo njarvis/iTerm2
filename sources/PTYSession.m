@@ -624,6 +624,9 @@ typedef NS_ENUM(NSUInteger, iTermSSHState) {
     iTermLocalFileChecker *_localFileChecker;
     BOOL _needsComposerColorUpdate;
     BOOL _textViewShouldTakeFirstResponder;
+
+    // Run this when the composer connects.
+    void (^_pendingConductor)(PTYSession *);
 }
 
 @synthesize isDivorced = _divorced;
@@ -1053,7 +1056,7 @@ ITERM_WEAKLY_REFERENCEABLE
     [_pendingPublishRequests release];
     [_desiredComposerPrompt release];
     [_localFileChecker release];
-
+    [_pendingConductor release];
     [super dealloc];
 }
 
@@ -2753,7 +2756,13 @@ ITERM_WEAKLY_REFERENCEABLE
     }];
 }
 
+// This can be called twice when using ssh; once before the conductor is ready and then again after
+// it has logged in.
 - (void)sendInitialText {
+    if ([_profile[KEY_CUSTOM_COMMAND] isEqual:kProfilePreferenceCommandTypeSSHValue] && !_conductor) {
+        DLog(@"Not sending initial text because ssh");
+        return;
+    }
     NSString *initialText = _profile[KEY_INITIAL_TEXT];
     if (![initialText length]) {
         return;
@@ -3873,6 +3882,46 @@ ITERM_WEAKLY_REFERENCEABLE
     return output;
 }
 
+- (void)pasteCommand:(NSString *)text {
+    PasteEvent *event = [_pasteHelper pasteEventWithString:text
+                                                    slowly:NO
+                                          escapeShellChars:NO
+                                                  isUpload:NO
+                                           allowBracketing:YES
+                                              tabTransform:NO
+                                              spacesPerTab:0
+                                                  progress:^(NSInteger progress) {}];
+    event.defaultChunkSize = 80;
+    event.defaultDelay = 0.02;
+    event.chunkKey = @"";
+    event.delayKey = @"";
+    event.flags = kPasteFlagsDisableWarnings | kPasteFlagsCommands;
+    [_pasteHelper tryToPasteEvent:event];
+}
+
+- (void)runCommand:(NSString *)command
+       inDirectory:(NSString *)directory
+            onHost:(NSString *)hostname
+            asUser:(NSString *)username {
+    if (hostname) {
+        NSString *ssh;
+        if (username) {
+            ssh = [NSString stringWithFormat:@"it2ssh %@@%@\n", username, hostname];
+        } else {
+            ssh = [NSString stringWithFormat:@"it2ssh %@\n", hostname];
+        }
+        [self pasteCommand:ssh];
+        [_pendingConductor autorelease];
+        _pendingConductor = [^(PTYSession *session) {
+            [session runCommand:command inDirectory:directory onHost:nil asUser:nil];
+        } copy];
+    } else {
+        NSString *escapedDirectory = [directory stringWithEscapedShellCharactersIncludingNewlines:YES];
+        NSString *text = [NSString stringWithFormat:@"cd %@ && %@\n", escapedDirectory, command];
+        [self pasteCommand:text];
+    }
+}
+
 - (void)pasteString:(NSString *)aString {
     [self pasteString:aString flags:0];
 }
@@ -4495,6 +4544,9 @@ ITERM_WEAKLY_REFERENCEABLE
         const BOOL profileWantsTickit = [iTermProfilePreferences boolForKey:KEY_USE_LIBTICKIT_PROTOCOL
                                                                   inProfile:aDict];
         self.keyMappingMode = profileWantsTickit ? iTermKeyMappingModeCSIu : iTermKeyMappingModeStandard;
+        if (profileWantsTickit) {
+            [_screen ensureDisambiguateEscapeInStack];
+        }
     }
 
     if (self.isTmuxClient) {
@@ -8638,30 +8690,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 }
 
 + (void)reportFunctionCallError:(NSError *)error forInvocation:(NSString *)invocation origin:(NSString *)origin window:(NSWindow *)window {
-    NSString *message = [NSString stringWithFormat:@"Error running “%@”:\n%@",
-                         invocation, error.localizedDescription];
-    NSString *traceback = error.localizedFailureReason;
-    NSArray *actions = @[ @"OK" ];
-    if (traceback) {
-        actions = [actions arrayByAddingObject:@"Reveal in Script Console"];
-    }
-    NSString *connectionKey = error.userInfo[iTermAPIHelperFunctionCallErrorUserInfoKeyConnection];
-    iTermScriptHistoryEntry *entry = [[iTermScriptHistory sharedInstance] entryWithIdentifier:connectionKey];
-    [entry addOutput:[NSString stringWithFormat:@"An error occurred while running the function invocation “%@”:\n%@\n\nTraceback:\n%@",
-                      invocation,
-                      error.localizedDescription,
-                      traceback]
-          completion:^{}];
-    iTermWarningSelection selection = [iTermWarning showWarningWithTitle:message
-                                                                 actions:actions
-                                                               accessory:nil
-                                                              identifier:@"NoSyncFunctionCallError"
-                                                             silenceable:kiTermWarningTypeTemporarilySilenceable
-                                                                 heading:[NSString stringWithFormat:@"%@ Function Call Failed", origin]
-                                                                  window:window];
-    if (selection == kiTermWarningSelection1) {
-        [[iTermScriptConsole sharedInstance] revealTailOfHistoryEntry:entry];
-    }
+    [iTermAPIHelper reportFunctionCallError:error forInvocation:invocation origin:origin window:window];
 }
 
 - (void)invokeFunctionCall:(NSString *)invocation
@@ -10606,9 +10635,12 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 - (void)updateAppearanceForMinimalTheme {
     const BOOL minimal = [iTermPreferences intForKey:kPreferenceKeyTabStyle] == TAB_STYLE_MINIMAL;
     if (minimal) {
-        _view.appearance = [_screen.colorMap colorForKey:kColorMapBackground].isDark ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua] : [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        NSAppearance *appearance = [_screen.colorMap colorForKey:kColorMapBackground].isDark ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua] : [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+        _view.appearance = appearance;
+        self.statusBarViewController.view.appearance = appearance;
     } else {
         _view.appearance = nil;
+        self.statusBarViewController.view.appearance = nil;
     }
 }
 
@@ -11906,7 +11938,11 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     DLog(@"screenSetSubtitle:%@", subtitle);
     // Put a zero-width space in between \ and ( to avoid interpolated strings coming from the server.
     NSString *safeSubtitle = [subtitle stringByReplacingOccurrencesOfString:@"\\(" withString:@"\\\u200B("];
-    [self setSessionSpecificProfileValues:@{ KEY_SUBTITLE: safeSubtitle }];
+    __weak __typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        DLog(@"Really set subtitle of %@ to %@", weakSelf, safeSubtitle);
+        [weakSelf setSessionSpecificProfileValues:@{ KEY_SUBTITLE: safeSubtitle }];
+    });
 }
 
 - (void)enableSessionNameTitleComponentIfPossible {
@@ -15025,6 +15061,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
 - (void)sessionViewDimmingAmountDidChange:(CGFloat)newDimmingAmount {
     [self sync];
+    [_textview setNeedsDisplay:YES];
 }
 
 - (BOOL)sessionViewIsVisible {
@@ -15361,6 +15398,22 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
                               forKey:KEY_SHOW_OFFSCREEN_COMMANDLINE
                            inProfile:self.profile
                                model:[ProfileModel sharedInstance]];
+}
+
+- (void)textViewSaveScrollPositionForMark:(id<VT100ScreenMarkReading>)mark withName:(NSString *)name {
+    [_screen performBlockWithJoinedThreads:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
+        [mutableState setName:name forMark:(VT100ScreenMark *)mark.progenitor];
+    }];
+}
+
+- (void)textViewRemoveBookmarkForMark:(id<VT100ScreenMarkReading>)mark {
+    [_screen performBlockWithJoinedThreads:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
+        [mutableState setName:nil forMark:(VT100ScreenMark *)mark.progenitor];
+    }];
+}
+
+- (BOOL)textViewEnclosingTabHasMultipleSessions {
+    return [[self.delegate sessions] count] > 1;
 }
 
 #pragma mark - iTermHotkeyNavigableSession
@@ -17171,7 +17224,11 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
         [_composerManager setPrefix:nil userData:nil];
         [_screen mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
             DLog(@"willSendCommand:%@", command);
-            [mutableState composerWillSendCommand];
+            const VT100GridAbsCoord start = 
+            VT100GridAbsCoordMake(mutableState.currentGrid.cursor.x,
+                                  mutableState.currentGrid.cursor.y + mutableState.numberOfScrollbackLines + mutableState.cumulativeScrollbackOverflow);
+            [mutableState composerWillSendCommand:command
+                                       startingAt:start];
             if (detectedByTrigger) {
                 [mutableState didSendCommand];
             }
@@ -17962,6 +18019,16 @@ getOptionKeyBehaviorLeft:(iTermOptionKeyBehavior *)left
 - (void)conductorWriteString:(NSString *)string {
     DLog(@"Conductor write: %@", string);
     [self writeTaskNoBroadcast:string];
+}
+
+- (void)conductorSendInitialText {
+    [self sendInitialText];
+    if (_pendingConductor) {
+        void (^pendingComposer)(PTYSession *) = [[_pendingConductor retain] autorelease];
+        [_pendingConductor autorelease];
+        _pendingConductor = nil;
+        pendingComposer(self);
+    }
 }
 
 - (void)conductorWillDie {

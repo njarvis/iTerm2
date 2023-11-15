@@ -343,7 +343,7 @@ iTermCommandInfoViewControllerDelegate>
     if (offscreenCommandLine) {
         return nil;
     }
-    if ([_contextMenuHelper markForClick:event]) {
+    if ([_contextMenuHelper markForClick:event requireMargin:YES]) {
         return nil;
     }
 
@@ -371,55 +371,81 @@ iTermCommandInfoViewControllerDelegate>
 }
 
 - (void)presentCommandInfoForOffscreenCommandLine:(iTermOffscreenCommandLine *)offscreenCommandLine
-                                            event:(NSEvent *)event {
+                                            event:(NSEvent *)event
+                         fromOffscreenCommandLine:(BOOL)fromOffscreenCommandLine {
     [self presentCommandInfoForMark:offscreenCommandLine.mark
                  absoluteLineNumber:offscreenCommandLine.absoluteLineNumber
                                date:offscreenCommandLine.date
-                              event:event];
+                              event:event
+           fromOffscreenCommandLine:fromOffscreenCommandLine];
 }
 
 - (void)presentCommandInfoForMark:(id<VT100ScreenMarkReading>)mark
                absoluteLineNumber:(long long)absoluteLineNumber
                              date:(NSDate *)date
-                            event:(NSEvent *)event {
-    [self presentCommandInfoForMark:mark absoluteLineNumber:absoluteLineNumber date:date point:event.locationInWindow];
+                            event:(NSEvent *)event 
+         fromOffscreenCommandLine:(BOOL)fromOffscreenCommandLine {
+    [self presentCommandInfoForMark:mark
+                 absoluteLineNumber:absoluteLineNumber
+                               date:date
+                              point:event.locationInWindow
+           fromOffscreenCommandLine:fromOffscreenCommandLine];
 }
 
 // Point is in window coords
 - (void)presentCommandInfoForMark:(id<VT100ScreenMarkReading>)mark
                absoluteLineNumber:(long long)absoluteLineNumber
                              date:(NSDate *)date
-                            point:(NSPoint)windowPoint {
+                            point:(NSPoint)windowPoint
+         fromOffscreenCommandLine:(BOOL)fromOffscreenCommandLine {
     long long overflow = self.dataSource.totalScrollbackOverflow;
     const int line = absoluteLineNumber - overflow;
-    const VT100GridCoordRange coordRange = [self.dataSource textViewRangeOfOutputForCommandMark:mark];
-    const VT100GridRange lineRange = VT100GridRangeMake(coordRange.start.y, coordRange.end.y - coordRange.start.y + 1);
+    const VT100GridRange lineRange = [self lineRangeForMark:mark];
     NSString *directory = [self.dataSource workingDirectoryOnLine:line];
+    id<VT100RemoteHostReading> remoteHost = [self.dataSource remoteHostOnLine:line];
     const NSPoint point = [self convertPoint:windowPoint
                                     fromView:nil];
+    iTermProgress *outputProgress = [[iTermProgress alloc] init];
+    iTermRenegablePromise<NSString *> *outputPromise = [self promisedOutputForMark:mark progress:outputProgress];
+    [iTermCommandInfoViewController presentMark:mark
+                                           date:date
+                                      directory:directory
+                                     remoteHost:remoteHost
+                                     outputSize:[self.dataSource numberOfCellsUsedInRange:lineRange]
+                                  outputPromise:outputPromise
+                                 outputProgress:outputProgress
+                                         inView:self
+                       fromOffscreenCommandLine:fromOffscreenCommandLine
+                                             at:point
+                                       delegate:self];
+}
+
+- (VT100GridCoordRange)coordRangeForMark:(id<VT100ScreenMarkReading>)mark {
+    return [self.dataSource textViewRangeOfOutputForCommandMark:mark];
+}
+
+- (VT100GridRange)lineRangeForMark:(id<VT100ScreenMarkReading>)mark {
+    const VT100GridCoordRange coordRange = [self coordRangeForMark:mark];
+    return VT100GridRangeMake(coordRange.start.y, coordRange.end.y - coordRange.start.y + 1);
+}
+
+- (iTermRenegablePromise<NSString *> *)promisedOutputForMark:(id<VT100ScreenMarkReading>)mark
+                                                    progress:(iTermProgress *)outputProgress {
+    long long overflow = self.dataSource.totalScrollbackOverflow;
     iTermSelection *selection = [[iTermSelection alloc] init];
     selection.delegate = self;
+    const VT100GridCoordRange coordRange = [self coordRangeForMark:mark];
     [selection beginSelectionAtAbsCoord:VT100GridAbsCoordMake(0, coordRange.start.y + overflow)
                                    mode:kiTermSelectionModeLine
                                  resume:NO
                                  append:NO];
     [selection moveSelectionEndpointTo:VT100GridAbsCoordMake(0, coordRange.end.y + overflow - 1)];
     [selection endLiveSelection];
-    iTermProgress *outputProgress = [[iTermProgress alloc] init];
-    iTermRenegablePromise<NSString *> *outputPromise = [self promisedStringForSelectedTextCappedAtSize:INT_MAX
-                                                                                     minimumLineNumber:0
-                                                                                            timestamps:NO
-                                                                                             selection:selection
-                                                                                              progress:outputProgress];
-    [iTermCommandInfoViewController presentMark:mark
-                                           date:date
-                                      directory:directory
-                                     outputSize:[self.dataSource numberOfCellsUsedInRange:lineRange]
-                                  outputPromise:outputPromise
-                                 outputProgress:outputProgress
-                                         inView:self
-                                             at:point
-                                       delegate:self];
+    return [self promisedStringForSelectedTextCappedAtSize:INT_MAX
+                                         minimumLineNumber:0
+                                                timestamps:NO
+                                                 selection:selection
+                                                  progress:outputProgress ?: [[iTermProgress alloc] init]];
 }
 
 #pragma mark - Mouse Cursor
@@ -520,7 +546,7 @@ iTermCommandInfoViewControllerDelegate>
             }
             break;
         }
-
+        case kURLActionShowCommandInfo:
         case kURLActionSmartSelectionAction:
             break;
     }
@@ -1049,6 +1075,11 @@ iTermCommandInfoViewControllerDelegate>
     return self.selection;
 }
 
+- (void)urlActionHelperShowCommandInfoForMark:(id<VT100ScreenMarkReading>)mark coord:(VT100GridCoord)coord {
+    const NSPoint point = [self convertPoint:[self pointForCoord:coord] toView:nil];
+    [self showCommandInfoForMark:mark at:point];
+}
+
 #pragma mark - Install Shell Integration
 
 - (IBAction)installShellIntegration:(id)sender {
@@ -1137,6 +1168,12 @@ allowRightMarginOverflow:(BOOL)allowRightMarginOverflow {
 - (id<VT100ScreenMarkReading>)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu
                                markOnLine:(int)line {
     return [self.dataSource markOnLine:line];
+}
+
+- (id<VT100ScreenMarkReading>)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu
+                              markAtCoord:(VT100GridCoord)coord {
+    VT100GridWindowedRange range = { 0 };
+    return [self.dataSource commandMarkAt:coord range:&range];
 }
 
 - (NSString *)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu
@@ -1521,7 +1558,8 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
     [self presentCommandInfoForMark:mark
                  absoluteLineNumber:absRange.start.y
                                date:mark.startDate
-                              point:windowPoint];
+                              point:windowPoint
+           fromOffscreenCommandLine:NO];
 }
 
 - (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu
@@ -1542,6 +1580,10 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
                          url:(NSURL *)url
                   windowCoordinate:(NSPoint)windowCoordinate {
     [self showWebkitPopoverAtPoint:windowCoordinate url:url];
+}
+
+- (BOOL)contextMenuCurrentTabHasMultipleSessions:(iTermTextViewContextMenuHelper *)contextMenu {
+    return [self.delegate textViewEnclosingTabHasMultipleSessions];
 }
 
 #pragma mark - NSResponder Additions

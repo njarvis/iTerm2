@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="21701" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" customObjectInstantitationMethod="direct">
+<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="22154" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES" customObjectInstantitationMethod="direct">
     <dependencies>
         <deployment identifier="macosx"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="21701"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="22154"/>
         <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
     </dependencies>
     <objects>
@@ -14,6 +14,7 @@
                 <outlet property="copyDirectory" destination="2qj-sU-AUO" id="lEM-9c-pvc"/>
                 <outlet property="copyOutput" destination="w1e-QE-s74" id="PfS-yR-gUB"/>
                 <outlet property="directory" destination="USn-lU-ZIc" id="1Bf-xv-ac1"/>
+                <outlet property="disableShowingOffscreenCommand" destination="pQZ-rQ-rSV" id="kVZ-vA-dcG"/>
                 <outlet property="output" destination="eKH-d2-hAv" id="aF0-Td-x6S"/>
                 <outlet property="progressIndicator" destination="rX2-2G-4s3" id="mDd-OJ-QGB"/>
                 <outlet property="proxyIcon" destination="lO8-vd-LCm" id="f9G-Pb-nav"/>
@@ -21,6 +22,7 @@
                 <outlet property="runningTime" destination="heb-a1-Sbk" id="rnY-8B-BP2"/>
                 <outlet property="sendCommand" destination="nN8-GS-lBf" id="VJ7-66-U42"/>
                 <outlet property="sendDirectory" destination="Plm-e7-RFK" id="rGd-RN-uJV"/>
+                <outlet property="shareCommand" destination="WLQ-uR-fm0" id="23N-vf-vIj"/>
                 <outlet property="stackView" destination="b8U-xH-1Z4" id="tJe-hd-pey"/>
                 <outlet property="startedAt" destination="UNn-LG-yVR" id="85y-Fs-ABy"/>
                 <outlet property="startedAtStackView" destination="Iqu-R7-45G" id="4CV-aJ-Ybk"/>
@@ -37,7 +39,7 @@
                     <rect key="frame" x="20" y="20" width="806" height="103"/>
                     <subviews>
                         <stackView distribution="fillProportionally" orientation="horizontal" alignment="top" horizontalStackHuggingPriority="249.99998474121094" verticalStackHuggingPriority="249.99998474121094" detachesHiddenViews="YES" translatesAutoresizingMaskIntoConstraints="NO" id="7Bu-CZ-ehd" userLabel="Command Horizontal Stack View">
-                            <rect key="frame" x="301" y="195" width="204" height="17"/>
+                            <rect key="frame" x="290" y="195" width="227" height="17"/>
                             <subviews>
                                 <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="gSV-cc-RpM">
                                     <rect key="frame" x="-2" y="1" width="70" height="16"/>
@@ -79,7 +81,7 @@
                                     </connections>
                                 </button>
                                 <button focusRingType="none" translatesAutoresizingMaskIntoConstraints="NO" id="lEf-yQ-9GU" userLabel="Edit">
-                                    <rect key="frame" x="187" y="-1.5" width="17.5" height="22"/>
+                                    <rect key="frame" x="187" y="-1.5" width="17.5" height="23"/>
                                     <buttonCell key="cell" type="square" bezelStyle="shadowlessSquare" image="square.and.pencil" catalog="system" imagePosition="only" alignment="center" focusRingType="none" imageScaling="proportionallyUpOrDown" inset="2" id="VjY-AT-fG3">
                                         <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                                         <font key="font" metaFont="system"/>
@@ -88,11 +90,22 @@
                                         <action selector="openInComposer:" target="-2" id="5Yg-zY-i7j"/>
                                     </connections>
                                 </button>
+                                <button focusRingType="none" translatesAutoresizingMaskIntoConstraints="NO" id="WLQ-uR-fm0" userLabel="Share">
+                                    <rect key="frame" x="212" y="-2" width="15.5" height="25"/>
+                                    <buttonCell key="cell" type="square" bezelStyle="shadowlessSquare" image="square.and.arrow.up" catalog="system" imagePosition="only" alignment="center" focusRingType="none" imageScaling="proportionallyUpOrDown" inset="2" id="l9U-Dx-9tf">
+                                        <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
+                                        <font key="font" metaFont="system"/>
+                                    </buttonCell>
+                                    <connections>
+                                        <action selector="shareCommand:" target="-2" id="CTf-v7-4ds"/>
+                                    </connections>
+                                </button>
                             </subviews>
                             <constraints>
                                 <constraint firstItem="QNY-Sg-eif" firstAttribute="firstBaseline" secondItem="gSV-cc-RpM" secondAttribute="firstBaseline" id="LP8-BF-UOd"/>
                                 <constraint firstItem="gaG-d9-QES" firstAttribute="centerY" secondItem="QNY-Sg-eif" secondAttribute="centerY" id="aso-aF-HDz"/>
                                 <constraint firstItem="nN8-GS-lBf" firstAttribute="centerY" secondItem="QNY-Sg-eif" secondAttribute="centerY" id="bzI-VJ-nwb"/>
+                                <constraint firstItem="WLQ-uR-fm0" firstAttribute="centerY" secondItem="gSV-cc-RpM" secondAttribute="centerY" id="dsT-hY-3sd"/>
                                 <constraint firstItem="lEf-yQ-9GU" firstAttribute="centerY" secondItem="gSV-cc-RpM" secondAttribute="centerY" id="sqn-Mi-k4Y"/>
                             </constraints>
                             <visibilityPriorities>
@@ -101,8 +114,10 @@
                                 <integer value="1000"/>
                                 <integer value="1000"/>
                                 <integer value="1000"/>
+                                <integer value="1000"/>
                             </visibilityPriorities>
                             <customSpacing>
+                                <real value="3.4028234663852886e+38"/>
                                 <real value="3.4028234663852886e+38"/>
                                 <real value="3.4028234663852886e+38"/>
                                 <real value="3.4028234663852886e+38"/>
@@ -133,7 +148,7 @@
                                     </textFieldCell>
                                 </textField>
                                 <imageView focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="251" placeholderIntrinsicWidth="16" placeholderIntrinsicHeight="16" translatesAutoresizingMaskIntoConstraints="NO" id="lO8-vd-LCm" customClass="iTermDraggableImageView">
-                                    <rect key="frame" x="157" y="-1.5" width="16.5" height="21"/>
+                                    <rect key="frame" x="157" y="-2.5" width="16.5" height="22"/>
                                     <constraints>
                                         <constraint firstAttribute="width" constant="16" id="78G-Hm-gQH"/>
                                         <constraint firstAttribute="height" constant="16" id="wPg-L0-0Vi"/>
@@ -253,7 +268,7 @@
                                     <rect key="frame" x="0.0" y="94" width="32" height="16"/>
                                     <subviews>
                                         <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="VI2-7b-u2l">
-                                            <rect key="frame" x="-2" y="0.0" width="28" height="16"/>
+                                            <rect key="frame" x="-2" y="0.0" width="6" height="16"/>
                                             <textFieldCell key="cell" lineBreakMode="clipping" alignment="right" title="Return Code:" id="Oj2-Xr-SWy">
                                                 <font key="font" usesAppearanceFont="YES"/>
                                                 <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
@@ -261,7 +276,7 @@
                                             </textFieldCell>
                                         </textField>
                                         <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="EuV-up-pPP">
-                                            <rect key="frame" x="30" y="0.0" width="4" height="16"/>
+                                            <rect key="frame" x="8" y="0.0" width="26" height="16"/>
                                             <textFieldCell key="cell" lineBreakMode="clipping" alignment="left" title="127" id="YLQ-rO-0Mh">
                                                 <font key="font" usesAppearanceFont="YES"/>
                                                 <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
@@ -330,10 +345,10 @@
                             <rect key="frame" x="234" y="0.0" width="339" height="20"/>
                             <subviews>
                                 <stackView distribution="fill" orientation="horizontal" alignment="top" horizontalStackHuggingPriority="249.99998474121094" verticalStackHuggingPriority="249.99998474121094" ambiguous="YES" detachesHiddenViews="YES" translatesAutoresizingMaskIntoConstraints="NO" id="Iqu-R7-45G" userLabel="Started At">
-                                    <rect key="frame" x="0.0" y="4" width="88" height="16"/>
+                                    <rect key="frame" x="0.0" y="0.0" width="88" height="20"/>
                                     <subviews>
                                         <textField horizontalHuggingPriority="251" verticalHuggingPriority="750" ambiguous="YES" translatesAutoresizingMaskIntoConstraints="NO" id="UNn-LG-yVR">
-                                            <rect key="frame" x="-2" y="0.0" width="92" height="16"/>
+                                            <rect key="frame" x="-2" y="3" width="92" height="16"/>
                                             <textFieldCell key="cell" lineBreakMode="clipping" title="Started at %@" id="KCF-7e-H8C">
                                                 <font key="font" usesAppearanceFont="YES"/>
                                                 <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
@@ -359,6 +374,9 @@
                                     </connections>
                                 </button>
                             </subviews>
+                            <constraints>
+                                <constraint firstItem="pQZ-rQ-rSV" firstAttribute="firstBaseline" secondItem="UNn-LG-yVR" secondAttribute="firstBaseline" id="8ml-hr-6xv"/>
+                            </constraints>
                             <visibilityPriorities>
                                 <integer value="1000"/>
                                 <integer value="1000"/>
@@ -413,7 +431,8 @@
         <image name="paperplane.fill" catalog="system" width="16" height="16"/>
         <image name="placeholdertext.fill" catalog="system" width="9" height="14"/>
         <image name="rectangle.portrait.on.rectangle.portrait" catalog="system" width="16" height="18"/>
-        <image name="square.and.pencil" catalog="system" width="17" height="15"/>
+        <image name="square.and.arrow.up" catalog="system" width="15" height="18"/>
+        <image name="square.and.pencil" catalog="system" width="17" height="16"/>
         <image name="text.redaction" catalog="system" width="16" height="13"/>
     </resources>
 </document>

@@ -1342,7 +1342,7 @@ void TurnOnDebugLoggingAutomatically(void) {
     [menu addItem:item];
 
     NSMenuItem *mainMenuItem = [[[NSMenuItem alloc] initWithTitle:@"Main Menu" action:nil keyEquivalent:@""] autorelease];
-    mainMenuItem.submenu = [NSApp mainMenu];
+    mainMenuItem.submenu = [[NSApp mainMenu] it_deepCopy];
     [menu addItem:mainMenuItem];
     
     item = [[[NSMenuItem alloc] initWithTitle:@"Quit iTerm2"
@@ -1458,6 +1458,47 @@ void TurnOnDebugLoggingAutomatically(void) {
                 return;
             }
             [session copyTextFromBlockWithID:blockID];
+        }
+    }
+    if ([components.path isEqualToString:@"/command"]) {
+        [self runCommandFromURL:components];
+    }
+}
+
+- (void)runCommandFromURL:(NSURLComponents *)components {
+    NSString *hostname = [components.host sanitizedHostname];
+    NSString *username = [components.user sanitizedUsername];
+    NSString *command = [[[components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
+        return [element.name isEqualToString:@"c"];
+    }].value stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] removingInvisibles];
+    NSString *directory = [components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
+        return [element.name isEqualToString:@"d"];
+    }].value;
+
+    if (@available(macOS 11, *)) {
+        iTermCommandURLHandler *handler = [[[iTermCommandURLHandler alloc] initWithCommand:command
+                                                                                  hostname:hostname
+                                                                                  username:username
+                                                                                 directory:directory
+                                                                                  offerTab:(iTermController.sharedInstance.currentTerminal != nil)] autorelease];
+        [handler show];
+        if ([handler.action isEqualTo: iTermCommandURLHandler.openInWindow]) {
+            [[iTermController sharedInstance] openWindow:YES
+                                                 command:handler.command
+                                               directory:handler.directory
+                                                hostname:handler.hostname
+                                                username:handler.username];
+        } else if ([handler.action isEqualTo: iTermCommandURLHandler.openInTab]) {
+            [[iTermController sharedInstance] openWindow:NO
+                                                 command:handler.command
+                                               directory:handler.directory
+                                                hostname:handler.hostname
+                                                username:handler.username];
+        } else if ([handler.action isEqualTo: iTermCommandURLHandler.runInCurrentTab]) {
+            [[[[iTermController sharedInstance] currentTerminal] currentSession] runCommand:handler.command
+                                                                                inDirectory:handler.directory
+                                                                                     onHost:handler.hostname
+                                                                                     asUser:handler.username];
         }
     }
 }

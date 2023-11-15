@@ -595,7 +595,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     if (line >= _state.numberOfScrollbackLines && _state.terminalSoftAlternateScreenMode) {
         return nil;
     }
-    id<VT100ScreenMarkReading> mark = [self screenMarkBeforeAbsLine:line + _state.totalScrollbackOverflow + 1];
+    id<VT100ScreenMarkReading> mark = [self screenMarkBeforeAbsLine:line + _state.totalScrollbackOverflow];
     if (!mark) {
         return nil;
     }
@@ -852,6 +852,10 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (id<VT100ScreenMarkReading>)markOnLine:(int)line {
     return [_state markOnLine:line];
+}
+
+- (id<VT100ScreenMarkReading>)commandMarkAt:(VT100GridCoord)coord range:(out nonnull VT100GridWindowedRange *)range {
+    return [_state commandMarkAt:coord range:range];
 }
 
 - (void)removeNamedMark:(id<VT100ScreenMarkReading>)mark {
@@ -1509,6 +1513,12 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 
 - (NSArray<id<VT100ScreenMarkReading>> *)namedMarks {
     return _state.namedMarks.strongObjects;
+}
+
+- (void)ensureDisambiguateEscapeInStack {
+    [self mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
+        [terminal ensureDisambiguateEscapeInStack];
+    }];
 }
 
 - (long long)startAbsLineForBlock:(NSString *)blockID {

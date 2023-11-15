@@ -25,6 +25,8 @@
 #import "iTermTextExtractor.h"
 #import "iTermURLActionHelper.h"
 #import "iTermVariableScope.h"
+#import "iTermVariableScope+Session.h"
+#import "iTermVariableScope+Tab.h"
 #import "NSColor+iTerm.h"
 #import "RegexKitLite.h"
 #import "URLAction.h"
@@ -92,9 +94,9 @@ static const int kMaxSelectedTextLengthForCustomActions = 400;
     _validationClickPoint = VT100GridCoordMake(-1, -1);
 }
 
-- (id<VT100ScreenMarkReading>)markForClick:(NSEvent *)event {
+- (id<VT100ScreenMarkReading>)markForClick:(NSEvent *)event requireMargin:(BOOL)requireMargin {
     NSPoint locationInWindow = [event locationInWindow];
-    if (locationInWindow.x >= [iTermPreferences intForKey:kPreferenceKeySideMargins]) {
+    if (requireMargin && locationInWindow.x >= [iTermPreferences intForKey:kPreferenceKeySideMargins]) {
         return nil;
     }
     iTermOffscreenCommandLine *offscreenCommandLine =
@@ -106,7 +108,11 @@ static const int kMaxSelectedTextLengthForCustomActions = 400;
                                                clickPoint:event
                                  allowRightMarginOverflow:NO];
     const int y = clickPoint.y;
-    return [self.delegate contextMenu:self markOnLine:y];
+    if (requireMargin) {
+        return [self.delegate contextMenu:self markOnLine:y];
+    } else {
+        return [self.delegate contextMenu:self markAtCoord:VT100GridCoordMake(clickPoint.x, clickPoint.y)];
+    }
 }
 
 - (NSMenu *)contextMenuWithEvent:(NSEvent *)event {
@@ -529,6 +535,12 @@ static uint64_t iTermInt64FromBytes(const unsigned char *bytes, BOOL bigEndian) 
     [theMenu addItem:[NSMenuItem separatorItem]];
 
     add(@"Move Session to Split Pane", @selector(movePane:));
+    if ([self.delegate contextMenuCurrentTabHasMultipleSessions:self]) {
+        NSMenuItem *item = [theMenu addItemWithTitle:@"Move Session to Tab"
+                                              action:@selector(moveSessionToTab:)
+                                       keyEquivalent:@""];
+        item.representedObject = [self.delegate contextMenuSessionScope:self].ID;
+    }
     [theMenu addItemWithTitle:@"Move Session to Window"
                      action:@selector(moveSessionToWindow:)
                 keyEquivalent:@""];

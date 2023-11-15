@@ -439,6 +439,7 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
     // Issue 10551
     iTermTextView *_fieldEditor;
+    BOOL _needsCanonicalize;
 }
 
 @synthesize scope = _scope;
@@ -1707,6 +1708,55 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     DLog(@"Current screen has frame %@. Moving.", NSStringFromRect(currentScreen.frame));
     _isAnchoredToScreen = NO;
+}
+
+- (void)moveToScreen:(NSScreen *)screen {
+    const NSRect originalFrame = self.window.frame;
+    NSRect destinationFrame;
+    const NSRect sourceScreenFrame = self.fullScreen ? self.window.screen.frame : self.window.screen.visibleFrame;
+    const NSRect destinationScreenFrame = self.fullScreen ? screen.frame : screen.visibleFrame;
+    const NSPoint originOffset = NSMakePoint(originalFrame.origin.x - sourceScreenFrame.origin.x,
+                                             originalFrame.origin.y - sourceScreenFrame.origin.y);
+    const NSPoint offsetFraction = NSMakePoint(originOffset.x / sourceScreenFrame.size.width,
+                                               originOffset.y / sourceScreenFrame.size.height);
+    const NSPoint destinationOrigin = NSMakePoint(destinationScreenFrame.origin.x + offsetFraction.x * destinationScreenFrame.size.width,
+                                                  destinationScreenFrame.origin.y + offsetFraction.y * destinationScreenFrame.size.height);
+    destinationFrame.origin = destinationOrigin;
+    destinationFrame.size.height = MIN(originalFrame.size.height, destinationScreenFrame.size.height);
+    destinationFrame.size.width = MIN(originalFrame.size.width, destinationScreenFrame.size.width);
+
+    // Move towards origin to fit
+    CGFloat overage;
+    overage = MAX(0, NSMaxX(destinationFrame) - NSMaxX(destinationScreenFrame));
+    destinationFrame.origin.x = MAX(destinationScreenFrame.origin.x, destinationFrame.origin.x - overage);
+    overage = MAX(0, NSMaxY(destinationFrame) - NSMaxY(destinationScreenFrame));
+    destinationFrame.origin.y = MAX(destinationScreenFrame.origin.y, destinationFrame.origin.y - overage);
+    DLog(@"Failed to move window. Current screen is %@. Desired screen is %@. originalFrame=%@ destinationFrame=%@ sourceScreenFrame=%@ destinationScreenFrame=%@ originOffset=%@ offsetFraction=%@ destinationOrigin=%@",
+         self.window.screen,
+         screen,
+         NSStringFromRect(originalFrame),
+         NSStringFromRect(destinationFrame),
+         NSStringFromRect(sourceScreenFrame),
+         NSStringFromRect(destinationScreenFrame),
+         NSStringFromPoint(originOffset),
+         NSStringFromPoint(offsetFraction),
+         NSStringFromPoint(destinationOrigin));
+    [self.window setFrame:destinationFrame display:NO];
+    [self canonicalizeWindowFrame];
+}
+
+- (void)terminalWindowDidMoveToScreen:(NSScreen *)screen {
+    if (self.window &&
+        ![self.window.screen.it_uniqueKey isEqualToString:screen.it_uniqueKey] &&
+        !self.window.isFullScreen) {
+        DLog(@"Hit the backstop");
+        [self moveToScreen:screen];
+    }
+    if (_needsCanonicalize) {
+        DLog(@"moveToScreen finished so do deferred frame canonicalization");
+        [self canonicalizeWindowFrame];
+    }
+    _needsCanonicalize = NO;
 }
 
 - (PTYWindowTitleBarFlavor)ptyWindowTitleBarFlavor {
@@ -3031,7 +3081,7 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 - (IBAction)findUrls:(id)sender {
     DLog(@"begin");
-    iTermFindDriver *findDriver = self.currentSession.view.findDriver;
+    iTermFindDriver *findDriver = self.currentSession.view.findDriverCreatingIfNeeded;
     NSString *regex = [iTermAdvancedSettingsModel findUrlsRegex];
     DLog(@"findDriver=%@ regex=%@", findDriver, regex);
     __weak PTYSession *session = self.currentSession;
@@ -3905,6 +3955,11 @@ ITERM_WEAKLY_REFERENCEABLE
 
 - (void)canonicalizeWindowFrame {
     PtyLog(@"canonicalizeWindowFrame %@\n%@", self, [NSThread callStackSymbols]);
+    if (self.ptyWindow.it_isMovingScreen) {
+        _needsCanonicalize = YES;
+        DLog(@"Moving screens so don't canonicalize");
+        return;
+    }
     // It's important that this method respect the current screen if possible because
     // -windowDidChangeScreen calls it.
 
@@ -4505,12 +4560,16 @@ ITERM_WEAKLY_REFERENCEABLE
         DLog(@"Accepting proposal");
         return proposedFrameSize;
     }
+    if (self.ptyWindow.it_isMovingScreen) {
+        DLog(@"Accepting proposal (2)");
+        return proposedFrameSize;
+    }
     if (self.windowType == WINDOW_TYPE_MAXIMIZED || self.windowType == WINDOW_TYPE_COMPACT_MAXIMIZED) {
         DLog( @"Blocking resize" );
         self.timeOfLastResize = [NSDate timeIntervalSinceReferenceDate];
         return self.window.screen.visibleFrameIgnoringHiddenDock.size;
     }
-    NSSize originalProposal = proposedFrameSize;
+     NSSize originalProposal = proposedFrameSize;
     // Find the session for the current pane of the current tab.
     PTYTab* tab = [self currentTab];
     if (!tab) {
@@ -9931,7 +9990,9 @@ static BOOL iTermApproximatelyEqualRects(NSRect lhs, NSRect rhs, double epsilon)
 }
 
 - (IBAction)moveSessionToTab:(id)sender {
-    [[MovePaneController sharedInstance] moveSession:[self currentSession]
+    NSString *sessionID = [NSString castFrom:[[NSMenuItem castFrom:sender] representedObject]];
+    PTYSession *session = [[iTermController sharedInstance] sessionWithGUID:sessionID] ?: self.currentSession;
+    [[MovePaneController sharedInstance] moveSession:session
                                        toTabInWindow:self.window];
 
 }
@@ -11587,13 +11648,19 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
 
 - (void)updateToolbeltAppearance {
     switch ((iTermPreferencesTabStyle)[iTermPreferences intForKey:kPreferenceKeyTabStyle]) {
-        case TAB_STYLE_MINIMAL:
+        case TAB_STYLE_MINIMAL: {
+            NSAppearance *appearance;
             if (self.minimalTabStyleBackgroundColor.isDark) {
-                _contentView.toolbelt.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+                appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
             } else {
-                _contentView.toolbelt.appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+                appearance = [NSAppearance appearanceNamed:NSAppearanceNameAqua];
+            }
+            _contentView.toolbelt.appearance = appearance;
+            if (!self.useSeparateStatusbarsPerPane) {
+                self.contentView.statusBarViewController.view.appearance = appearance;
             }
             break;
+        }
 
         case TAB_STYLE_AUTOMATIC:
         case TAB_STYLE_LIGHT:
@@ -11602,6 +11669,9 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
         case TAB_STYLE_DARK_HIGH_CONTRAST:
         case TAB_STYLE_COMPACT:
             _contentView.toolbelt.appearance = nil;
+            if (!self.useSeparateStatusbarsPerPane) {
+                self.contentView.statusBarViewController.view.appearance = nil;
+            }
             break;
     }
 }

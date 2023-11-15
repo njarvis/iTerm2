@@ -619,7 +619,6 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 }
 
 #pragma mark - NSResponder Keyboard Input and Helpers
-
 // Control-pgup and control-pgdown are handled at this level by NSWindow if no
 // view handles it. It's necessary to setUserScroll in the PTYScroller, or else
 // it scrolls back to the bottom right away. This code handles those two
@@ -627,11 +626,13 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 // Addendum: control page up/down seem to be supported because I did not understand
 // macOS very well back in issue 1112. I guess I won't break it.
 - (BOOL)performKeyEquivalent:(NSEvent *)theEvent {
+    DLog(@"performKeyQuivalent self=%@ theEvent=%@", self, theEvent);
     if (self.window.firstResponder != self) {
         return [super performKeyEquivalent:theEvent];
     }
     NSString* unmodkeystr = [theEvent charactersIgnoringModifiers];
     if ([unmodkeystr length] == 0) {
+        DLog(@"Calling super.performKeyEquivalent");
         return [super performKeyEquivalent:theEvent];
     }
     unichar unmodunicode = [unmodkeystr length] > 0 ? [unmodkeystr characterAtIndex:0] : 0;
@@ -887,6 +888,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 
 // For Metal
 - (void)setNeedsDisplay:(BOOL)needsDisplay {
+    DLog(@"-[PTYTextView setNeedsDisplay:%@]", @(needsDisplay));
     [super setNeedsDisplay:needsDisplay];
     if (needsDisplay) {
         [_delegate textViewNeedsDisplayInRect:self.bounds];
@@ -1014,6 +1016,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 }
 
 - (void)mouseDown:(NSEvent *)event {
+    NSLog(@"mouseDown on %@: %@", self, event);
     [self.delegate textViewWillHandleMouseDown:event];
     [_mouseHandler mouseDown:event superCaller:^{ [super mouseDown:event]; }];
 }
@@ -1388,6 +1391,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 // sometimes decide to draw subviews of alpha=0 views, it doesn't always! So we make ourselves
 // alpha=1 but clear when an annotation is visible.
 - (void)drawRect:(NSRect)rect {
+    DLog(@"-[PTYTextView drawRect:]");
     rect = NSIntersectionRect(rect, self.bounds);
     [[NSColor clearColor] set];
     NSRectFillUsingOperation(rect, NSCompositingOperationCopy);
@@ -1525,7 +1529,8 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     [_drawingHelper updateButtonFrames];
     
     const VT100GridRange range = [self rangeOfVisibleLines];
-    if ([_delegate textViewShouldShowOffscreenCommandLine]) {
+    const int topBottomMargin = [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
+    if ([_delegate textViewShouldShowOffscreenCommandLine] && self.enclosingScrollView.contentView.bounds.origin.y > topBottomMargin) {
         _drawingHelper.offscreenCommandLine = [self.dataSource offscreenCommandLineBefore:range.location];
         [_drawingHelper.offscreenCommandLine setBackgroundColor:[_drawingHelper offscreenCommandLineBackgroundColor]];
     } else {
@@ -3405,20 +3410,27 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 }
 
 - (BOOL)showCommandInfoForEvent:(NSEvent *)event {
-    iTermOffscreenCommandLine *offscreenCommandLine = [self offscreenCommandLineForClickAt:event.locationInWindow];
-    if (offscreenCommandLine) {
-        [self presentCommandInfoForOffscreenCommandLine:offscreenCommandLine event:event];
-        return YES;
+    if (event.buttonNumber == 1) {
+        iTermOffscreenCommandLine *offscreenCommandLine = [self offscreenCommandLineForClickAt:event.locationInWindow];
+        if (offscreenCommandLine) {
+            [self presentCommandInfoForOffscreenCommandLine:offscreenCommandLine event:event fromOffscreenCommandLine:YES];
+            return YES;
+        }
     }
-    id<VT100ScreenMarkReading> mark = [_contextMenuHelper markForClick:event];
+    id<VT100ScreenMarkReading> mark = [_contextMenuHelper markForClick:event requireMargin:event.buttonNumber == 1];
+    return [self showCommandInfoForMark:mark at:event.locationInWindow];
+}
+
+- (BOOL)showCommandInfoForMark:(id<VT100ScreenMarkReading>)mark at:(NSPoint)locationInWindow {
     if (mark.startDate != nil) {
-        const VT100GridCoord coord = [self coordForPointInWindow:event.locationInWindow];
+        const VT100GridCoord coord = [self coordForPointInWindow:locationInWindow];
         const long long overflow = [self.dataSource totalScrollbackOverflow];
         NSDate *date = [self.dataSource timestampForLine:coord.y];
         [self presentCommandInfoForMark:mark
                      absoluteLineNumber:VT100GridAbsCoordFromCoord(coord, overflow).y
                                    date:date
-                                  event:event];
+                                  point:locationInWindow
+               fromOffscreenCommandLine:NO];
         return YES;
     }
     return NO;
@@ -4947,12 +4959,11 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 
 // Does not include hover buttons.
 - (NSArray<iTermTerminalButton *> *)terminalButtons NS_AVAILABLE_MAC(11) {
-    NSMutableArray<iTermTerminalButton *> *buttons = [NSMutableArray array];
+    NSMutableArray<iTermTerminalButton *> *updated = [NSMutableArray array];
     if (_hoverBlockCopyButton) {
-        [buttons addObject:_hoverBlockCopyButton];
+        [updated addObject:_hoverBlockCopyButton];
     }
     NSArray<iTermTerminalButtonPlace *> *places = [self.dataSource buttonsInRange:self.rangeOfVisibleLines];
-    NSMutableArray<iTermTerminalButton *> *updated = [NSMutableArray array];
     __weak __typeof(self) weakSelf = self;
     [places enumerateObjectsUsingBlock:^(iTermTerminalButtonPlace * _Nonnull place, NSUInteger idx, BOOL * _Nonnull stop) {
         NSInteger i = [_buttons indexOfObjectPassingTest:^BOOL(iTermTerminalButton * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
@@ -4976,9 +4987,192 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
             [updated addObject:_buttons[i]];
         }
     }];
+
+    const int height = [self.dataSource height];
+    const int width = [self.dataSource width];
+    const int firstLine = self.rangeOfVisibleLines.location;
+    const long long offset = self.dataSource.totalScrollbackOverflow;
+    for (int i = firstLine; i < firstLine + height - 1; i++) {
+        const int markLine = i + 1;
+        id<VT100ScreenMarkReading> mark = [self.dataSource markOnLine:markLine];
+        if (!mark.lineStyle) {
+            continue;
+        }
+        if (!mark.command.length) {
+            continue;
+        }
+        iTermTerminalButton *existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalCopyCommandButton class]];
+        int x = width - 2;
+        if (existing) {
+            [updated addObject:existing];
+        } else {
+            iTermTerminalButton *button = [[iTermTerminalCopyCommandButton alloc] initWithMark:mark
+                                                                                      absCoord:VT100GridAbsCoordMake(x, i + offset)];
+            __weak __typeof(mark) weakMark = mark;
+            button.action = ^(NSPoint locationInWindow) {
+                [weakSelf popCommandCopyMenuAt:locationInWindow for:weakMark];
+            };
+            [updated addObject:button];
+        }
+        x -= 3;
+        existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalBookmarkButton class]];
+        if (existing) {
+            [updated addObject:existing];
+        } else {
+            iTermTerminalButton *button = [[iTermTerminalBookmarkButton alloc] initWithMark:mark
+                                                                                   absCoord:VT100GridAbsCoordMake(x, i + offset)];
+            __weak __typeof(mark) weakMark = mark;
+            button.action = ^(NSPoint locationInWindow) {
+                NSString *command = weakMark.command;
+                if (command.length) {
+                    [weakSelf toggleBookmarkForMark:weakMark];
+                }
+            };
+            [updated addObject:button];
+        }
+        x -= 3;
+        existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalShareButton class]];
+        if (existing) {
+            [updated addObject:existing];
+        } else {
+            iTermTerminalButton *button = [[iTermTerminalShareButton alloc] initWithMark:mark
+                                                                                absCoord:VT100GridAbsCoordMake(x, i + offset)];
+            __weak __typeof(mark) weakMark = mark;
+            button.action = ^(NSPoint locationInWindow) {
+                [weakSelf popShareMenuAt:locationInWindow absLine:markLine + offset for:weakMark];
+            };
+            [updated addObject:button];
+        }
+    }
+
     [_buttons autorelease];
     _buttons = [updated retain];
     return _buttons;
+}
+
+- (void)popCommandCopyMenuAt:(NSPoint)locationInWindow for:(id<VT100ScreenMarkReading>)mark {
+    if (![[mark retain] autorelease]) {
+        return;
+    }
+    NSString *command = mark.command;
+
+    iTermSimpleContextMenu *menu = [[[iTermSimpleContextMenu alloc] init] autorelease];
+    if (command.length) {
+        __weak __typeof(self) weakSelf = self;
+        [menu addItemWithTitle:@"Copy Command" action:^{
+            [weakSelf copyString:command];
+            [ToastWindowController showToastWithMessage:@"Command Copied"
+                                               duration:1.5
+                                topLeftScreenCoordinate:[weakSelf.window convertPointToScreen:locationInWindow]
+                                              pointSize:12];
+        }];
+        [menu addItemWithTitle:@"Copy Output" action:^{
+            iTermRenegablePromise<NSString *> *promise = [self promisedOutputForMark:mark progress:nil];
+            [[promise wait] whenFirst:^(NSString * _Nonnull string) {
+                [weakSelf copyString:string];
+                [ToastWindowController showToastWithMessage:@"Output Copied"
+                                                   duration:1.5
+                                    topLeftScreenCoordinate:[weakSelf.window convertPointToScreen:locationInWindow]
+                                                  pointSize:12];
+            } second:^(NSError * _Nonnull object) {
+                DLog(@"%@", object);
+            }];
+        }];
+    }
+
+    [menu showInView:self forEvent:NSApp.currentEvent];
+}
+
+- (void)popShareMenuAt:(NSPoint)locationInWindow absLine:(long long)absLine for:(id<VT100ScreenMarkReading>)mark {
+    if (![[mark retain] autorelease]) {
+        return;
+    }
+
+    __weak __typeof(self) weakSelf = self;
+    iTermSimpleContextMenu *menu = [[[iTermSimpleContextMenu alloc] init] autorelease];
+    NSString *command = mark.command;
+    if (command.length) {
+        [menu addItemWithTitle:@"Add Command as Snippet" action:^{
+            iTermSnippet *snippet = [[iTermSnippet alloc] initWithTitle:command
+                                                                  value:command
+                                                                   guid:[[NSUUID UUID] UUIDString]
+                                                                   tags:@[]
+                                                               escaping:iTermSendTextEscapingNone
+                                                                version:[iTermSnippet currentVersion]];
+            [[iTermSnippetsModel sharedInstance] addSnippet:snippet];
+            [ToastWindowController showToastWithMessage:@"Snippet Added"
+                                               duration:1.5
+                                topLeftScreenCoordinate:[weakSelf.window convertPointToScreen:locationInWindow]
+                                              pointSize:12];
+        }];
+    }
+    const long long offset = self.dataSource.totalScrollbackOverflow;
+    NSString *directory = absLine >= offset ? [self.dataSource workingDirectoryOnLine:absLine - offset] : nil;
+    NSURLComponents *components = [[[NSURLComponents alloc] init] autorelease];
+    components.scheme = @"iterm2";
+    components.path = @"/command";
+    NSMutableArray *queryItems = [NSMutableArray array];
+    [queryItems addObject:[NSURLQueryItem queryItemWithName:@"c" value:mark.command]];
+    if (directory) {
+        [queryItems addObject:[NSURLQueryItem queryItemWithName:@"d" value:directory]];
+    }
+    components.queryItems = queryItems;
+    id<VT100RemoteHostReading> remoteHost = absLine >= offset ? [self.dataSource remoteHostOnLine:absLine - offset] : nil;
+    if (remoteHost && !remoteHost.isLocalhost) {
+        if (remoteHost.username) {
+            components.user = remoteHost.username;
+        }
+        if (remoteHost.hostname) {
+            components.host = remoteHost.hostname;
+        }
+    }
+    NSURL *url = [components URL];
+
+    if (url) {
+        [menu addItemWithTitle:@"Copy Command URL to Clipboard" action:^{
+            NSPasteboard *pasteBoard = [NSPasteboard generalPasteboard];
+            [pasteBoard clearContents];
+            [pasteBoard writeObjects:@[ url ]];
+        }];
+        [menu addItemWithTitle:@"Open Share Sheet…" action:^{
+            if (!weakSelf) {
+                return;
+            }
+            const NSRect viewRect = NSMakeRect(locationInWindow.x, locationInWindow.y, 0, 0);
+            NSSharingServicePicker *picker = [[[NSSharingServicePicker alloc] initWithItems:@[ url ]] autorelease];
+            [picker showRelativeToRect:viewRect ofView:weakSelf preferredEdge:NSRectEdgeMinY];
+        }];
+    }
+
+    [menu showInView:self forEvent:NSApp.currentEvent];
+}
+
+- (void)toggleBookmarkForMark:(id<VT100ScreenMarkReading>)mark {
+    if (!mark) {
+        return;
+    }
+    if (mark.name) {
+        [self.delegate textViewRemoveBookmarkForMark:mark];
+    } else {
+        [iTermBookmarkDialogViewController showInWindow:self.window
+                                         withCompletion:^(NSString * _Nonnull name) {
+            [self.delegate textViewSaveScrollPositionForMark:mark withName:name];
+        }];
+    }
+}
+
+- (iTermTerminalMarkButton *)cachedTerminalButtonForMark:(id<VT100ScreenMarkReading>)mark
+                                                 ofClass:(Class)desiredClass NS_AVAILABLE_MAC(11) {
+    return [iTermTerminalMarkButton castFrom:[_buttons objectPassingTest:^BOOL(iTermTerminalButton *genericButton, NSUInteger index, BOOL *stop) {
+        iTermTerminalMarkButton *button = [iTermTerminalMarkButton castFrom:genericButton];
+        if (!button) {
+            return NO;
+        }
+        if (![button isKindOfClass:desiredClass]) {
+            return NO;
+        }
+        return button.mark == mark || [button.mark.guid isEqualToString:mark.guid];
+    }]];
 }
 
 - (void)copyBlock:(NSString *)block absLine:(long long)absLine screenCoordinate:(NSPoint)screenCoordinate {
@@ -4992,14 +5186,17 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 
 - (void)updateButtonHover:(NSPoint)locationInWindow pressed:(BOOL)pressed {
     NSPoint point = [self convertPoint:locationInWindow fromView:nil];
+    DLog(@"updateHover location=%@ pressed=%@", NSStringFromPoint(locationInWindow), @(pressed));
     if (@available(macOS 11, *)) {
         BOOL changed = NO;
         for (iTermTerminalButton *button in self.terminalButtons) {
             if (NSPointInRect(point, button.desiredFrame)) {
+                DLog(@"mouse is over %@", button);
                 // Mouse over button
                 if (pressed) {
                     changed = [button mouseDownInside] || changed;
                 } else if (button.pressed) {
+                    DLog(@"button was pressed");
                     [button mouseUpWithLocationInWindow:locationInWindow];
                     changed = YES;
                 }
@@ -5008,6 +5205,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
                 if (pressed) {
                     changed = [button mouseDownOutside] || changed;
                 } else if (button.pressed) {
+                    DLog(@"button was pressed");
                     [button mouseUpWithLocationInWindow:locationInWindow];
                     changed = YES;
                 }
@@ -5666,6 +5864,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
 
 - (void)mouseHandlerOpenTargetWithEvent:(NSEvent *)event
                            inBackground:(BOOL)inBackground {
+    if ([self showCommandInfoForEvent:event]) {
+        return;
+    }
     [_urlActionHelper openTargetWithEvent:event inBackground:inBackground];
 }
 

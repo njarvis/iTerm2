@@ -695,6 +695,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
         int rles = 0;
         iTermMarkStyle markStyle;
         BOOL lineStyleMark = NO;
+        int lineStyleMarkRightInset = 0;
         NSDate *date;
         BOOL belongsToBlock;
         [frameData.perFrameState metalGetGlyphKeys:glyphKeys
@@ -704,6 +705,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
                                           rleCount:&rles
                                          markStyle:&markStyle
                                      lineStyleMark:&lineStyleMark
+                           lineStyleMarkRightInset:&lineStyleMarkRightInset
                                                row:y
                                              width:columns
                                     drawableGlyphs:&drawableGlyphs
@@ -720,6 +722,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
                                  @(rowData.keysData.length / sizeof(iTermMetalGlyphKey)));
         rowData.markStyle = markStyle;
         rowData.lineStyleMark = lineStyleMark;
+        rowData.lineStyleMarkRightInset = lineStyleMarkRightInset;
         [rowData.keysData checkForOverrun];
         [rowData.attributesData checkForOverrun];
         [rowData.backgroundColorRLEData checkForOverrun];
@@ -953,9 +956,11 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
                  frameData:frameData
                       stat:iTermMetalFrameDataStatPqEnqueueDrawTimestamps];
 
-    [self drawCellRenderer:_terminalButtonRenderer
-                 frameData:frameData
-                      stat:iTermMetalFrameDataStatPqEnqueueDrawButtons];
+    if (_terminalButtonRenderer) {
+        [self drawCellRenderer:_terminalButtonRenderer
+                     frameData:frameData
+                          stat:iTermMetalFrameDataStatPqEnqueueDrawButtons];
+    }
 
     [self drawRenderer:_flashRenderer
              frameData:frameData
@@ -1439,7 +1444,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
             return;
         }
         if (rowData.lineStyleMark) {
-            [tState setMarkStyle:rowData.markStyle row:idx];
+            [tState setMarkStyle:rowData.markStyle row:idx rightInset:rowData.lineStyleMarkRightInset];
         }
     }];
     tState.colors = frameData.perFrameState.lineStyleMarkColors;
@@ -1507,6 +1512,9 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
 }
 
 - (void)populateTerminalButtonRendererTransientStateWithFrameData:(iTermMetalFrameData *)frameData NS_AVAILABLE_MAC(11) {
+    if (!_terminalButtonRenderer) {
+        return;
+    }
     iTermTerminalButtonRendererTransientState *tState = [frameData transientStateForRenderer:_terminalButtonRenderer];
 
     const long long firstLine = frameData.perFrameState.firstVisibleAbsoluteLineNumber;
@@ -1519,7 +1527,8 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
              onScreenLine:button.absCoord.y - firstLine
                    column:button.absCoord.x
           foregroundColor:frameData.perFrameState.processedDefaultTextColor
-          backgroundColor:frameData.perFrameState.processedDefaultBackgroundColor];
+          backgroundColor:frameData.perFrameState.processedDefaultBackgroundColor
+            selectedColor:frameData.perFrameState.selectedBackgroundColor];
     }
 }
 
@@ -2084,7 +2093,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
 #pragma mark - Miscellaneous Utility Methods
 
 - (NSArray<id<iTermMetalCellRenderer>> *)cellRenderers {
-    return @[ _marginRenderer,
+    return [@[ _marginRenderer,
               _textRenderer,
               _offscreenCommandLineTextRenderer,
               _backgroundColorRenderer,
@@ -2105,7 +2114,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
               _keyCursorRenderer,
               _timestampsRenderer,
               _blockRenderer,
-              _terminalButtonRenderer];
+              _terminalButtonRenderer ?: [NSNull null]] arrayByRemovingNulls];
 }
 
 - (NSArray<id<iTermMetalRenderer>> *)nonCellRenderers {

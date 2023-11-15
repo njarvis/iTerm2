@@ -17,6 +17,7 @@ protocol PromptStateMachineDelegate: AnyObject {
     func promptStateMachineAppendCommandToComposer(command: String)
 
     @objc var promptStateMachineCursorAbsCoord: VT100GridAbsCoord { get }
+    @objc func promptStateMachineCheckForPrompt()
 }
 
 @objc(iTermPromptStateMachine)
@@ -191,7 +192,9 @@ class PromptStateMachine: NSObject {
     // Call this before any other token handling.
     @objc(handleToken:withEncoding:)
     func handle(token: VT100Token, encoding: UInt) {
-        currentEvent = "handleToken\(token.debugDescription)"
+        // Computing the description can be somewhat expensive, and it's only
+        // used for debugging. Use a placeholder instead when it's not used.
+        currentEvent = "handleToken\(gDebugLogging.boolValue ? token.debugDescription : "<optimized>")"
         defer { currentEvent = "none" }
 
         switch token.type {
@@ -283,6 +286,7 @@ class PromptStateMachine: NSObject {
             set(state: .ground, on: "B")
         case .ground, .echoingBack, .executing:
             // Something crazy happened so continue without composer.
+            delegate?.promptStateMachineCheckForPrompt()
             set(state: .ground, on: "B")
         case .accruingAlreadyEnteredCommand:
             // Something crazy happened so continue without composer.

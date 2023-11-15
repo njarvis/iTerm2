@@ -2254,6 +2254,21 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     return (iTermColorMap *)[super colorMap];
 }
 
+- (void)setName:(NSString *)name forMark:(VT100ScreenMark *)mark {
+    [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull mutableObj) {
+        VT100ScreenMark *mutableMark = [VT100ScreenMark castFrom:mutableObj];
+        mutableMark.name = name;
+    }];
+    if (name) {
+        [self.namedMarks addObject:mark];
+    } else {
+        [self.namedMarks removeObjectsPassingTest:^BOOL(id<VT100ScreenMarkReading>  _Nullable anObject) {
+            return [anObject.guid isEqualToString:mark.guid];
+        }];
+    }
+    self.namedMarksDirty = YES;
+}
+
 - (id<iTermMark>)addMarkStartingAtAbsoluteLine:(long long)line
                                        oneLine:(BOOL)oneLine
                                        ofClass:(Class)markClass {
@@ -2347,29 +2362,24 @@ void VT100ScreenEraseCell(screen_char_t *sct,
 
 - (BOOL)removeObjectFromIntervalTree:(id<IntervalTreeObject>)obj {
     DLog(@"Remove %@", obj);
-    long long totalScrollbackOverflow = self.cumulativeScrollbackOverflow;
-    if ([obj isKindOfClass:[VT100ScreenMark class]]) {
-        long long theKey = (totalScrollbackOverflow +
-                            [self coordRangeForInterval:obj.entry.interval].end.y);
-        [self.markCache removeMark:(VT100ScreenMark *)obj onLine:theKey];
-        self.lastCommandMark = nil;
-        VT100ScreenMark *screenMark = [VT100ScreenMark castFrom:obj];
-        if (screenMark.name) {
-            [self.namedMarks removeObjectsPassingTest:^BOOL(id<VT100ScreenMarkReading>  _Nullable anObject) {
-                return anObject == screenMark;
-            }];
-            self.namedMarksDirty = YES;
-        }
-    }
-    if ([obj isKindOfClass:[PTYAnnotation class]]) {
-        [self.mutableIntervalTree mutateObject:obj block:^(id<IntervalTreeObject> _Nonnull mutableObj) {
-            PTYAnnotation *mutableAnnotation = (PTYAnnotation *)mutableObj;
-            [mutableAnnotation willRemove];
-        }];
-    }
+    [self willRemoveObjectsFromIntervalTree:@[ obj ]];
     DLog(@"removeObjectFromIntervalTree: %@", obj);
-    const VT100GridAbsCoordRange range = [self absCoordRangeForInterval:obj.entry.interval];
     const BOOL removed = [self.mutableIntervalTree removeObject:obj];
+    [self didRemoveObjectFromIntervalTree:obj];
+    return removed;
+}
+
+- (void)willRemoveObjectsFromIntervalTree:(NSArray<id<IntervalTreeObject>> *)objects {
+    [self willRemoveScreenMarksFromIntervalTree:[objects mapWithBlock:^id _Nullable(id<IntervalTreeObject>  _Nonnull anObject) {
+        return [VT100ScreenMark castFrom:anObject];
+    }]];
+    [self willRemoveAnnotationsFromIntervalTree:[objects mapWithBlock:^id _Nullable(id<IntervalTreeObject>  _Nonnull anObject) {
+        return [PTYAnnotation castFrom:anObject];
+    }]];
+}
+
+- (void)didRemoveObjectFromIntervalTree:(id<IntervalTreeObject>)obj {
+    const VT100GridAbsCoordRange range = [self absCoordRangeForInterval:obj.entry.interval];
     iTermIntervalTreeObjectType type = iTermIntervalTreeObjectTypeForObject(obj);
     if (type != iTermIntervalTreeObjectTypeUnknown) {
         const long long line = range.start.y;
@@ -2378,7 +2388,44 @@ void VT100ScreenEraseCell(screen_char_t *sct,
                                                  onLine:line];
         }];
     }
-    return removed;
+}
+
+- (void)willRemoveScreenMarksFromIntervalTree:(NSArray<VT100ScreenMark *> *)objects {
+    const long long totalScrollbackOverflow = self.cumulativeScrollbackOverflow;
+    NSArray<NSNumber *> *keys = [objects mapWithBlock:^id _Nullable(VT100ScreenMark * _Nonnull obj) {
+        long long theKey = (totalScrollbackOverflow +
+                            [self coordRangeForInterval:obj.entry.interval].end.y);
+        return @(theKey);
+    }];
+    [self.markCache removeMarks:objects onLines:keys];
+    [objects enumerateObjectsUsingBlock:^(VT100ScreenMark * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        self.lastCommandMark = nil;
+        VT100ScreenMark *screenMark = [VT100ScreenMark castFrom:obj];
+        if (screenMark.name) {
+            [self.namedMarks removeObjectsPassingTest:^BOOL(id<VT100ScreenMarkReading>  _Nullable anObject) {
+                return anObject == screenMark;
+            }];
+            self.namedMarksDirty = YES;
+        }
+    }];
+}
+
+- (void)willRemoveAnnotationsFromIntervalTree:(NSArray<PTYAnnotation *> *)objects {
+    [objects enumerateObjectsUsingBlock:^(PTYAnnotation * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        [self.mutableIntervalTree mutateObject:obj block:^(id<IntervalTreeObject> _Nonnull mutableObj) {
+            PTYAnnotation *mutableAnnotation = (PTYAnnotation *)mutableObj;
+            [mutableAnnotation willRemove];
+        }];
+    }];
+}
+
+- (void)removeObjectsFromIntervalTree:(NSArray<id<IntervalTreeObject>> *)objects {
+    [self willRemoveObjectsFromIntervalTree:objects];
+    [objects enumerateObjectsUsingBlock:^(id<IntervalTreeObject>  _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        const BOOL removed = [self.mutableIntervalTree removeObject:obj];
+        assert(removed);
+        [self didRemoveObjectFromIntervalTree:obj];
+    }];
 }
 
 - (void)removeIntervalTreeObjectsInRange:(VT100GridCoordRange)coordRange {
@@ -2412,6 +2459,8 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     DLog(@"Remove interval tree objects in range %@", VT100GridAbsCoordRangeDescription(absCoordRange));
     Interval *intervalToClear = [self intervalForGridAbsCoordRange:absCoordRange];
     NSMutableArray<id<IntervalTreeObject>> *marksToMove = [NSMutableArray array];
+    NSMutableArray<id<IntervalTreeObject>> *marksToRemove = [NSMutableArray array];
+
     for (id<IntervalTreeObject> obj in [self.intervalTree objectsInInterval:intervalToClear]) {
         const VT100GridAbsCoordRange absMarkRange = [self absCoordRangeForInterval:obj.entry.interval];
         if (VT100GridAbsCoordRangeContainsAbsCoord(absCoordRangeToSave, absMarkRange.start)) {
@@ -2419,10 +2468,10 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         } else {
             DLog(@"Remove %p with range %@", obj, VT100GridAbsCoordRangeDescription([self absCoordRangeForInterval:obj.entry.interval]));
             DLog(@"Remove in range: %@", obj);
-            const BOOL removed = [self removeObjectFromIntervalTree:obj];
-            assert(removed);
+            [marksToRemove addObject:obj];
         }
     }
+    [self removeObjectsFromIntervalTree:marksToRemove];
     return marksToMove;
 }
 
@@ -2437,7 +2486,9 @@ void VT100ScreenEraseCell(screen_char_t *sct,
         [command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if (trimmedCommand.length) {
             mark = [self markOnLine:self.lastPromptLine - self.cumulativeScrollbackOverflow];
-            if (mark) {
+            if (mark && !mark.command) {
+                // This code path should not be taken with auto-composer because mark.command gets
+                // set prior to sending the command.
                 const VT100GridAbsCoordRange commandRange = VT100GridAbsCoordRangeFromCoordRange(range, self.cumulativeScrollbackOverflow);
                 const VT100GridAbsCoord outputStart = VT100GridAbsCoordMake(self.currentGrid.cursor.x,
                                                                             self.currentGrid.cursor.y + [self.linebuffer numLinesWithWidth:self.currentGrid.size.width] + self.cumulativeScrollbackOverflow);
@@ -2448,6 +2499,7 @@ void VT100ScreenEraseCell(screen_char_t *sct,
                     mark.command = command;
                     mark.commandRange = commandRange;
                     mark.outputStart = outputStart;
+                    // If you change this also update -setCommand:startingAt:inMark:
                 }];
             } else {
                 DLog(@"No mark");
@@ -3332,8 +3384,56 @@ void VT100ScreenEraseCell(screen_char_t *sct,
     return NO;
 }
 
-- (void)composerWillSendCommand {
+- (void)composerWillSendCommand:(NSString *)command 
+                     startingAt:(VT100GridAbsCoord)startAbsCoord {
     [_promptStateMachine willSendCommand];
+    id<VT100ScreenMarkReading> mark = self.lastPromptMark;
+    if (!mark) {
+        return;
+    }
+    __weak __typeof(self) weakSelf = self;
+    [self.mutableIntervalTree mutateObject:mark block:^(id<IntervalTreeObject> _Nonnull obj) {
+        VT100ScreenMark *screenMark = [VT100ScreenMark castFrom:obj];
+        if (!screenMark) {
+            return;
+        }
+        [weakSelf setCommand:command startingAt:startAbsCoord inMark:screenMark];
+    }];
+}
+
+// This code path is taken when using the auto-composer.
+- (void)setCommand:(NSString *)command
+        startingAt:(VT100GridAbsCoord)startAbsCoord
+            inMark:(VT100ScreenMark *)screenMark {
+    screenMark.command = [command stringByTrimmingTrailingCharactersFromCharacterSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    const int width = self.width;
+
+    const int len = [self lengthOfStringInCells:command];
+    screenMark.commandRange = VT100GridAbsCoordRangeMake(startAbsCoord.x,
+                                                         startAbsCoord.y,
+                                                         (startAbsCoord.x + len) % width,
+                                                         startAbsCoord.y + (startAbsCoord.x + len) / width);
+    screenMark.outputStart = VT100GridAbsCoordMake(0, screenMark.commandRange.end.y + 1);
+    // If you modify this also update -commandDidEndWithRange:
+}
+
+- (int)lengthOfStringInCells:(NSString *)string {
+    screen_char_t *buf = iTermCalloc(string.length * 3, sizeof(screen_char_t));
+    int len = string.length;
+    BOOL dwc = NO;
+    StringToScreenChars(string,
+                        buf,
+                        (screen_char_t){0},
+                        (screen_char_t){0},
+                        &len,
+                        self.config.treatAmbiguousCharsAsDoubleWidth,
+                        NULL,
+                        &dwc,
+                        self.config.normalization,
+                        self.config.unicodeVersion,
+                        self.terminal.softAlternateScreenMode);
+    free(buf);
+    return len;
 }
 
 - (void)didInferEndOfCommand {
@@ -5055,6 +5155,7 @@ launchCoprocessWithCommand:(NSString *)command
 
 - (void)handleTriggerDetectedPromptAt:(VT100GridAbsCoordRange)range {
     DLog(@"handleTriggerDetectedPromptAt: %@", VT100GridAbsCoordRangeDescription(range));
+    _triggerDidDetectPrompt = NO;
     if (self.fakePromptDetectedAbsLine == -2) {
         // Infer the end of the preceding command. Set a return status of 0 since we don't know what it was.
         [self setReturnCodeOfLastCommand:0];
@@ -5120,6 +5221,7 @@ launchCoprocessWithCommand:(NSString *)command
     }
     // We can't mutate the session at this point. Wait until trigger processing is done and the
     // current token (if any) is executed and then do the prompt handling.
+    _triggerDidDetectPrompt = YES;
     __weak __typeof(self) weakSelf = self;
     [_postTriggerActions addObject:[^{
         [weakSelf handleTriggerDetectedPromptAt:range];
@@ -5586,6 +5688,15 @@ launchCoprocessWithCommand:(NSString *)command
         [delegate screenAppendStringToComposer:command];
         [unpauser unpause];
     }];
+}
+
+- (void)promptStateMachineCheckForPrompt {
+    DLog(@"Prompt check requested");
+    if (_triggerEvaluator.havePromptDetectingTrigger) {
+        DLog(@"Have a prompt-detecting trigger");
+        [_triggerEvaluator resetRateLimit];
+        [self performPeriodicTriggerCheck];
+    }
 }
 
 @end

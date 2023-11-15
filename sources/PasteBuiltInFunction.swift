@@ -14,7 +14,7 @@ class PasteBuiltInFunction: NSObject {
 
 extension PasteBuiltInFunction: iTermBuiltInFunctionProtocol {
     private static func error(message: String) -> NSError {
-        return NSError(domain: "com.iterm2.focus",
+        return NSError(domain: "com.iterm2.paste",
                        code: 1,
                        userInfo: [ NSLocalizedDescriptionKey: message])
     }

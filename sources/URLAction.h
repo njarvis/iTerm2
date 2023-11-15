@@ -14,6 +14,7 @@
 @class iTermTextExtractor;
 @class SCPPath;
 @protocol VT100RemoteHostReading;
+@protocol VT100ScreenMarkReading;
 
 typedef NS_ENUM(NSInteger, URLActionType) {
     kURLActionOpenURL,
@@ -21,6 +22,7 @@ typedef NS_ENUM(NSInteger, URLActionType) {
     kURLActionOpenExistingFile,
     kURLActionOpenImage,
     kURLActionSecureCopyFile,
+    kURLActionShowCommandInfo,
 };
 
 @interface URLAction : NSObject
@@ -61,6 +63,8 @@ typedef NS_ENUM(NSInteger, URLActionType) {
 @property(nonatomic) BOOL isAlternate;
 
 @property(nonatomic) BOOL hover;
+@property(nonatomic, strong) id<VT100ScreenMarkReading> mark;
+@property(nonatomic) VT100GridCoord coord;
 
 + (instancetype)urlActionToSecureCopyFile:(SCPPath *)scpPath;
 + (instancetype)urlActionToOpenURL:(NSString *)filename;
@@ -68,5 +72,6 @@ typedef NS_ENUM(NSInteger, URLActionType) {
                                             onString:(NSString *)content;
 + (instancetype)urlActionToOpenExistingFile:(NSString *)filename;
 + (instancetype)urlActionToOpenImage:(id<iTermImageInfoReading>)imageInfo;
++ (instancetype)actionToShowCommandInfoForMark:(id<VT100ScreenMarkReading>)mark coord:(VT100GridCoord)coord;
 
 @end
