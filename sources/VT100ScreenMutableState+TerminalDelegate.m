@@ -912,11 +912,15 @@
 
 - (void)terminalPopCurrentTitleForWindow:(BOOL)isWindow {
     DLog(@"begin %@", @(isWindow));
-    [self addSideEffect:^(id<VT100ScreenDelegate> delegate) {
+    [self addPausedSideEffect:^(id<VT100ScreenDelegate> delegate, iTermTokenExecutorUnpauser *unpauser) {
         DLog(@"begin side-effect");
         if ([delegate screenAllowTitleSetting]) {
             DLog(@"allowed");
-            [delegate screenPopCurrentTitleForWindow:isWindow];
+            [delegate screenPopCurrentTitleForWindow:isWindow completion:^{
+                [unpauser unpause];
+            }];
+        } else {
+            [unpauser unpause];
         }
     }];
 }
@@ -2603,9 +2607,25 @@
         _sshIntegrationFlags = parts;
         return;
     }
+}
+
+- (void)terminalSendConductor:(NSString *)args {
+    DLog(@"begin %@", args);
     if (!_sshIntegrationFlags) {
         return;
     }
+    NSDictionary<NSString *, NSString *> *params = [args it_keyValuePairsSeparatedBy:@";"];
+    NSString *v = params[@"v"];
+    if (!v || [v integerValue] < 2) {
+        _sshIntegrationFlags = nil;
+        [self appendBannerMessage:@"Out-of-date version of it2ssh detected. Please upgrade it2ssh."];
+        return;
+    } else if (v.integerValue > 2) {
+        _sshIntegrationFlags = nil;
+        [self appendBannerMessage:@"Future version of it2ssh detected. Please upgrade iTerm2."];
+        return;
+    }
+
     // Send conductor
     NSString *token = _sshIntegrationFlags[0];
     NSString *uniqueID = _sshIntegrationFlags[1];

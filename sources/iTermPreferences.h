@@ -90,6 +90,8 @@ extern NSString *const kPreferenceKeyLoadPrefsFromCustomFolder;
 extern NSString *const kPreferenceKeyUseCustomScriptsFolder;  // Bool
 extern NSString *const kPreferenceKeyOpenAIAPIKey;
 extern NSString *const kPreferenceKeyAIPrompt;
+extern NSString *const kPreferenceKeyAIModel;
+extern NSString *const kPreferenceKeyAITokenLimit;
 
 // Note: if kPreferenceKeyNeverRemindPrefsChangesLostForFileHaveSelection is false, then use the default value (.never).
 // Otherwise, respect this value.
@@ -119,7 +121,7 @@ extern NSString *const kPreferenceKeyUseMetal;
 extern NSString *const kPreferenceKeyDisableMetalWhenUnplugged;
 extern NSString *const kPreferenceKeyDisableInLowPowerMode;
 extern NSString *const kPreferenceKeyPreferIntegratedGPU;
-extern NSString *const kPreferenceKeyMetalMaximizeThroughput;
+extern NSString *const kPreferenceKeyMaximizeThroughput;
 extern NSString *const kPreferenceKeyEnableAPIServer;
 extern NSString *const kPreferenceKeyAPIAuthentication;
 extern NSString *const kPreferenceKeyPhonyAllowSendingClipboardContents;
@@ -299,6 +301,6 @@ extern NSString *const iTermDefaultAIPrompt;
 
 @interface iTermPreferences (FastAccessors)
 + (BOOL)hideTabActivityIndicator;
-+ (BOOL)maximizeMetalThroughput;
++ (BOOL)maximizeThroughput;
 + (BOOL)useTmuxProfile;
 @end

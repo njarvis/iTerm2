@@ -251,7 +251,7 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
         // I don't expect this to ever happen.
         return;
     }
-    NSArray<NSString *> *possibleIdentifiers = codium ? @[ kVSCodiumIdentifier1, kVSCodiumIdentifier2 ] : @[kVSCodeIdentifier];
+    NSArray<NSString *> *possibleIdentifiers = codium ? @[ kVSCodiumIdentifier1, kVSCodiumIdentifier2 ] : @[kVSCodeIdentifier, kVSCodeInsidersIdentifier];
     NSString *identifier;
     NSString *bundlePath = nil;
     for (NSString *candidate in possibleIdentifiers) {
@@ -357,11 +357,32 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
     }
 }
 
+- (void)openDocumentInXcode:(NSString *)path line:(NSString *)line {
+    assert(path);
+    if (!path) {
+        // I don't expect this to ever happen.
+        return;
+    }
+
+    NSMutableArray *args = [NSMutableArray array];
+    if ([line length]) {
+        [args addObjectsFromArray:@[@"--line", line]];
+    }
+
+    [args addObject:path];
+
+    NSString *xedPath = @"/usr/bin/xed";
+
+    DLog(@"Launch Xcode: `%@ %@`", xedPath, args);
+    [self launchTaskWithPath:xedPath arguments:args completion:nil];
+}
+
 + (NSArray *)bundleIdsThatSupportOpeningToLineNumber {
     return @[ kAtomIdentifier,
               kVSCodeIdentifier,
               kVSCodiumIdentifier1,
               kVSCodiumIdentifier2,
+              kVSCodeInsidersIdentifier,
               kSublimeText2Identifier,
               kSublimeText3Identifier,
               kSublimeText4Identifier,
@@ -374,7 +395,9 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
               kIntelliJIDEAIdentifierUE,
               kWebStormIdentifier,
               kRiderIdentifier,
-              kNovaAppIdentifier ];
+              kNovaAppIdentifier,
+              kXcodeAppIdentifier,
+    ];
 }
 
 - (void)openFile:(NSString *)path
@@ -397,7 +420,8 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
     }
     if ([identifier isEqualToString:kVSCodeIdentifier] ||
         [identifier isEqualToString:kVSCodiumIdentifier1] ||
-        [identifier isEqualToString:kVSCodiumIdentifier2]) {
+        [identifier isEqualToString:kVSCodiumIdentifier2] ||
+        [identifier isEqualToString:kVSCodeInsidersIdentifier]) {
         if (lineNumber != nil) {
             path = [NSString stringWithFormat:@"%@:%@", path, lineNumber];
         }
@@ -446,6 +470,10 @@ NSString *const kSemanticHistoryColumnNumberKey = @"semanticHistory.columnNumber
     }
     if ([identifier isEqualToString:kNovaAppIdentifier]) {
         [self openDocumentInNova:path line:lineNumber column:columnNumber];
+        return;
+    }
+    if ([identifier isEqualToString:kXcodeAppIdentifier]) {
+        [self openDocumentInXcode:path line:lineNumber];
         return;
     }
     // WebStorm doesn't actually support --line, but it's harmless to try.

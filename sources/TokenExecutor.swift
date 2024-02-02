@@ -81,7 +81,7 @@ private class TokenArray: IteratorProtocol {
     let length: Int
     private var cvector: CVector
     private var nextIndex = Int32(0)
-    private let count: Int32
+    let count: Int32
     private static var destroyQueue: DispatchQueue = {
         return DispatchQueue(label: "com.iterm2.token-destroyer")
     }()
@@ -177,6 +177,9 @@ private class TwoTierTokenQueue {
         var isEmpty: Bool {
             return arrays.isEmpty
         }
+        var count: Int {
+            return arrays.map { Int($0.count) }.reduce(0, +)
+        }
     }
     static let numberOfPriorities = 2
     private lazy var queues: [Queue] = {
@@ -205,6 +208,7 @@ private class TwoTierTokenQueue {
                 queue.removeFirst()
             }
             if !shouldContinue {
+                DLog("Stopping early with counts=\(queues.map { $0.count })")
                 return
             }
         }
@@ -585,6 +589,8 @@ private class TokenExecutorImpl {
     func whilePaused(_ block: () -> (), onExecutorQueue: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
 
+        DLog("Incr pending pauses if \(iTermPreferences.maximizeThroughput())")
+        let unpauser = iTermPreferences.maximizeThroughput() ? nil : pause()
         let sema = DispatchSemaphore(value: 0)
         queue.sync {
             let barrierDidRun = MutableAtomicObject(false)
@@ -612,12 +618,17 @@ private class TokenExecutorImpl {
             DLog("Task queue should now be blocked.")
         }
         block()
+        if unpauser != nil {
+            DLog("Decr pending pauses")
+        }
+        unpauser?.unpause()
         sema.signal()
     }
 
     // Any queue
     func addSideEffect(_ task: @escaping TokenExecutorTask) {
         sideEffects.append(task)
+        DLog("addSideEffect()")
         sideEffectScheduler.markNeedsUpdate()
     }
 
@@ -629,7 +640,7 @@ private class TokenExecutorImpl {
     // Any queue
     func setSideEffectFlag(value: Int) {
         sideEffects.setFlag(value: value)
-        sideEffectScheduler.markNeedsUpdate()
+        sideEffectScheduler.markNeedsUpdate(deferred: sideEffectScheduler.period / 2)
     }
 
     func assertSynchronousSideEffectsAreSafe() {
@@ -696,6 +707,10 @@ private class TokenExecutorImpl {
         if !delegate.tokenExecutorShouldQueueTokens() {
             slownessDetector.measureEvent(PTYSessionSlownessEventExecute) {
                 tokenQueue.enumerateTokenArrays { (vector, priority) in
+                    DLog("Begin executing a batch of tokens")
+                    defer {
+                        DLog("Done executing a batch of tokens")
+                    }
                     return executeTokens(vector,
                                          priority: priority,
                                          accumulatedLength: &accumulatedLength,

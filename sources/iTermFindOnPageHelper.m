@@ -120,12 +120,14 @@ typedef struct {
            context:(FindContext *)findContext
      numberOfLines:(int)numberOfLines
     totalScrollbackOverflow:(long long)totalScrollbackOverflow
-scrollToFirstResult:(BOOL)scrollToFirstResult {
+scrollToFirstResult:(BOOL)scrollToFirstResult 
+             force:(BOOL)force {
     DLog(@"begin self=%@ aString=%@", self, aString);
     _searchingForward = direction;
     _findOffset = offset;
     if ([_lastStringSearchedFor isEqualToString:aString] &&
-        _mode == mode) {
+        _mode == mode &&
+        !force) {
         DLog(@"query and mode are unchanged.");
         _haveRevealedSearchResult = NO;  // select the next item before/after the current selection.
         _searchingForNextResult = scrollToFirstResult;
@@ -168,7 +170,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
         _searchingForNextResult = scrollToFirstResult;
         _lastStringSearchedFor = [aString copy];
 
-        [_delegate setNeedsDisplay:YES];
+        [_delegate findOnPageHelperRequestRedraw];
         [_delegate findOnPageHelperSearchExternallyFor:aString mode:mode];
     }
 }
@@ -188,7 +190,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     _searchingForNextResult = NO;
     [_delegate findOnPageHelperRemoveExternalHighlights];
 
-    [_delegate setNeedsDisplay:YES];
+    [_delegate findOnPageHelperRequestRedraw];
 }
 
 - (void)resetCopiedFindContext {
@@ -248,7 +250,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult {
     }
 
     if (redraw) {
-        [_delegate setNeedsDisplay:YES];
+        [_delegate findOnPageHelperRequestRedraw];
     }
     return more;
 }

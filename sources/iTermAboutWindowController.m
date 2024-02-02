@@ -20,12 +20,55 @@ static NSString *iTermAboutWindowControllerWhatsNewURLString = @"iterm2://whats-
 @interface iTermAboutWindowContentView : NSVisualEffectView
 @end
 
+@interface iTermSponsor: NSObject
+@property (nonatomic) NSTextField *textField;
+@property (nonatomic) NSTrackingArea *trackingArea;
+@property (nonatomic) NSView *view;
+@property (nonatomic, copy) NSString *url;
+
++ (instancetype)sponsorWithView:(NSView *)view textField:(NSTextField *)textField container:(NSView *)container url:(NSString *)url;
+@end
+
+@implementation iTermSponsor
++ (instancetype)sponsorWithView:(NSView *)view textField:(NSTextField *)textField container:(NSView *)container url:(NSString *)url {
+    iTermSponsor *sponsor = [[iTermSponsor alloc] init];
+    sponsor.view = view;
+    sponsor.textField = textField;
+    sponsor.url = url;
+
+    // Create a tracking area for the sponsor's view
+    sponsor.trackingArea = [[NSTrackingArea alloc] initWithRect:view.frame
+                                                        options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways
+                                                          owner:container
+                                                       userInfo:nil];
+    [view addTrackingArea:sponsor.trackingArea];
+    NSDictionary *underlineAttribute = @{NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle)};
+    NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:[textField stringValue] attributes:underlineAttribute];
+    [textField setAttributedStringValue:attributedString];
+    return sponsor;
+}
+
+- (void)updateTrackingAreaForContainer:(NSView *)container {
+    [container removeTrackingArea:self.trackingArea];
+    self.trackingArea = [[NSTrackingArea alloc] initWithRect:self.view.frame
+                                                    options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways
+                                                      owner:container
+                                                   userInfo:nil];
+    [container addTrackingArea:self.trackingArea];
+}
+@end
+
 @implementation iTermAboutWindowContentView {
     IBOutlet NSScrollView *_bottomAlignedScrollView;
     IBOutlet NSTextView *_sponsorsHeading;
+
     IBOutlet NSView *_blendbyte;
-    NSTrackingArea *_trackingArea;
+    IBOutlet NSView *_whitebox;
+
     IBOutlet NSTextField *_blendbyteText;
+    IBOutlet NSTextField *_whiteboxText;
+
+    NSArray<iTermSponsor *> *_sponsors;
 }
 
 - (void)resizeSubviewsWithOldSize:(NSSize)oldSize {
@@ -46,16 +89,16 @@ static NSString *iTermAboutWindowControllerWhatsNewURLString = @"iterm2://whats-
                                                                                               font:_sponsorsHeading.font
                                                                                     paragraphStyle:paragraphStyle]];
 
-    // Create a tracking area for the _blendbyte view
-    _trackingArea = [[NSTrackingArea alloc] initWithRect:_blendbyte.bounds
-                                                options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways
-                                                  owner:self
-                                               userInfo:nil];
-    [_blendbyte addTrackingArea:_trackingArea];
-    NSDictionary *underlineAttribute = @{NSUnderlineStyleAttributeName: @(NSUnderlineStyleSingle)};
-    NSAttributedString *attributedString = [[NSAttributedString alloc] initWithString:[_blendbyteText stringValue] attributes:underlineAttribute];
-    [_blendbyteText setAttributedStringValue:attributedString];
+    _sponsors = @[ [iTermSponsor sponsorWithView:_blendbyte
+                                       textField:_blendbyteText
+                                       container:self
+                                             url:@"https://www.blendbyte.com/?utm_source=iterm2"],
+                   [iTermSponsor sponsorWithView:_whitebox 
+                                       textField:_whiteboxText
+                                       container:self
+                                             url:@"https://whitebox.so/?utm_source=iTerm2"] ];
 }
+
 
 - (void)mouseEntered:(NSEvent *)theEvent {
     [NSCursor.pointingHandCursor set];
@@ -66,22 +109,23 @@ static NSString *iTermAboutWindowControllerWhatsNewURLString = @"iterm2://whats-
 }
 
 - (void)mouseUp:(NSEvent *)theEvent {
-    NSPoint locationInView = [self convertPoint:theEvent.locationInWindow fromView:nil];
-    if (NSPointInRect(locationInView, _blendbyte.frame)) {
-        // Open the link
-        [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://www.blendbyte.com/"]];
+    if (theEvent.clickCount == 1) {
+        NSPoint locationInView = [self convertPoint:theEvent.locationInWindow fromView:nil];
+        [_sponsors enumerateObjectsUsingBlock:^(iTermSponsor * _Nonnull sponsor, NSUInteger idx, BOOL * _Nonnull stop) {
+            if (NSPointInRect(locationInView, sponsor.view.frame)) {
+                // Open the link
+                [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:sponsor.url]];
+            }
+        }];
     }
 }
 
 // Don't forget to update the tracking area when the view resizes
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
-    [_blendbyte removeTrackingArea:_trackingArea];
-    _trackingArea = [[NSTrackingArea alloc] initWithRect:_blendbyte.bounds
-                                                options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways
-                                                  owner:self
-                                               userInfo:nil];
-    [_blendbyte addTrackingArea:_trackingArea];
+    [_sponsors enumerateObjectsUsingBlock:^(iTermSponsor * _Nonnull sponsor, NSUInteger idx, BOOL * _Nonnull stop) {
+        [sponsor updateTrackingAreaForContainer:self];
+    }];
 }
 
 @end

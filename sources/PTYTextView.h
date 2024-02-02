@@ -185,6 +185,7 @@ extern NSNotificationName PTYTextViewWillChangeFontNotification;
 - (BOOL)textViewIsZoomedIn;
 - (BOOL)textViewShouldShowMarkIndicators;
 - (BOOL)textViewIsFiltered;
+- (BOOL)textViewInPinnedHotkeyWindow;
 
 // Is it possible to restart this session?
 - (BOOL)isRestartable;
@@ -292,6 +293,7 @@ extern NSNotificationName PTYTextViewWillChangeFontNotification;
 - (void)textViewSaveScrollPositionForMark:(id<VT100ScreenMarkReading>)mark withName:(NSString *)name;
 - (void)textViewRemoveBookmarkForMark:(id<VT100ScreenMarkReading>)mark;
 - (BOOL)textViewEnclosingTabHasMultipleSessions;
+- (BOOL)textViewSelectionScrollAllowed;
 
 @end
 
@@ -475,6 +477,8 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
 // Checked and at the end of -refresh. Meant to be use when a reentrant call failed.
 @property (nonatomic) BOOL needsUpdateSubviewFrames;
 @property (nonatomic, readonly) NSArray<iTermTerminalButton *> *terminalButtons NS_AVAILABLE_MAC(11);
+@property (nonatomic, readonly) BOOL scrolledToBottom;
+@property (nonatomic, readonly) BOOL shouldBeAlphaedOut;
 
 // Returns the size of a cell for a given font. hspace and vspace are multipliers and the width
 // and height.
@@ -581,7 +585,8 @@ typedef void (^PTYTextViewDrawingHookBlock)(iTermTextDrawingHelper *);
   forwardDirection:(BOOL)direction
       mode:(iTermFindMode)mode
         withOffset:(int)offset
-scrollToFirstResult:(BOOL)scrollToFirstResult;
+scrollToFirstResult:(BOOL)scrollToFirstResult
+             force:(BOOL)force;
 
 // Remove highlighted terms from previous search.
 // If resetContext is set then the search state will get reset to empty.
@@ -714,6 +719,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult;
 - (void)updateSubviewFrames;
 - (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProviderUsingProcessedColors:(BOOL)processed;
 - (BOOL)copyBlock:(NSString *)block includingAbsLine:(long long)absLine;
+- (void)setNeedsDisplay:(BOOL)needsDisplay NS_UNAVAILABLE;
+- (void)setNeedsDisplayInRect:(NSRect)invalidRect NS_UNAVAILABLE;  // Use this instead of setNeedsDisplay:
+- (void)requestDelegateRedraw;  // Use this instead of setNeedsDisplay:
 
 #pragma mark - Testing only
 

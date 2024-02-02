@@ -690,6 +690,10 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
         rowData.attributesData = [iTermAttributesData dataOfLength:sizeof(iTermMetalGlyphAttributes) * columns];
         rowData.backgroundColorRLEData = [iTermBackgroundColorRLEsData dataOfLength:sizeof(iTermMetalBackgroundColorRLE) * columns];
         rowData.screenCharArray = [frameData.perFrameState screenCharArrayForRow:y];
+        if (!rowData.screenCharArray) {
+            ITDebugAssert(NO);
+            rowData.screenCharArray = [ScreenCharArray emptyLineOfLength:columns];
+        }
         iTermMetalGlyphKey *glyphKeys = (iTermMetalGlyphKey *)rowData.keysData.mutableBytes;
         int drawableGlyphs = 0;
         int rles = 0;
@@ -872,7 +876,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
     } else {
 #if ENABLE_DEFER_CURRENT_DRAWABLE
         const BOOL synchronousDraw = (_context.group != nil);
-        frameData.deferCurrentDrawable = ([iTermPreferences boolForKey:kPreferenceKeyMetalMaximizeThroughput] &&
+        frameData.deferCurrentDrawable = ([iTermPreferences boolForKey:kPreferenceKeyMaximizeThroughput] &&
                                           !synchronousDraw);
 #else
         frameData.deferCurrentDrawable = NO;
@@ -1042,6 +1046,7 @@ legacyScrollbarWidth:(unsigned int)legacyScrollbarWidth {
         .thinStrokes = !!(attributes & iTermASCIITextureAttributesThinStrokes),
         .drawable = YES,
         .typeface = (attributes & typefaceMask),
+        .antialiased = NO  // always no because it's ascii
     };
     BOOL emoji = NO;
     // Don't need to pass predecessor or successor because ASCII never has combining spacing marks.

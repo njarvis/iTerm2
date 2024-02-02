@@ -111,6 +111,8 @@ static iTermController *gSharedInstance;
 }
 
 + (void)releaseSharedInstance {
+    DLog(@"releaseSharedInstance");
+    [gSharedInstance cleanUpIfNeeded];
     [gSharedInstance release];
     gSharedInstance = nil;
 }
@@ -181,6 +183,25 @@ static iTermController *gSharedInstance;
 }
 
 - (void)dealloc {
+    DLog(@"dealloc");
+    [self cleanUpIfNeeded];
+
+    [_restorableSessions release];
+    [_currentRestorableSessionsStack release];
+    [_fullScreenWindowManager release];
+    [_lastSelectionPromise release];
+    [_setCurrentTerminalHelper release];
+    [super dealloc];
+}
+
+- (void)cleanUpIfNeeded {
+    @synchronized([iTermController class]) {
+        static BOOL needsCleanUp = YES;
+        if (!needsCleanUp) {
+            return;
+        }
+        needsCleanUp = NO;
+    }
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 
     // Save hotkey window arrangement to user defaults before closing it.
@@ -198,8 +219,10 @@ static iTermController *gSharedInstance;
         //
         // In either case, we only get here if we're pretty sure everything will get restored
         // nicely.
+        DLog(@"Intentionally leaving sessions running on quit");
         [_terminalWindows autorelease];
     } else {
+        DLog(@"Will close all terminal windows to kill jobs: %@", _terminalWindows);
         // Terminate buried sessions
         [[iTermBuriedSessions sharedInstance] terminateAll];
         // Close all terminal windows, killing jobs.
@@ -209,13 +232,7 @@ static iTermController *gSharedInstance;
         ITAssertWithMessage([_terminalWindows count] == 0, @"Expected terminals to be gone");
         [_terminalWindows release];
     }
-
-    [_restorableSessions release];
-    [_currentRestorableSessionsStack release];
-    [_fullScreenWindowManager release];
-    [_lastSelectionPromise release];
-    [_setCurrentTerminalHelper release];
-    [super dealloc];
+    _terminalWindows = nil;
 }
 
 - (PseudoTerminal*)keyTerminalWindow {
@@ -521,24 +538,10 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
                       partialAttachments:nil];
         return;
     }
-    BOOL shouldDelay = NO;
-    DLog(@"Try to open arrangement %p...", terminalArrangement);
-    if ([PseudoTerminal willAutoFullScreenNewWindow] &&
-        [PseudoTerminal anyWindowIsEnteringLionFullScreen]) {
-        DLog(@"Prevented by autofullscreen + a window entering.");
-        shouldDelay = YES;
-    }
-    if ([PseudoTerminal arrangementIsLionFullScreen:terminalArrangement] &&
-        [PseudoTerminal anyWindowIsEnteringLionFullScreen]) {
-        DLog(@"Prevented by fs arrangement + a window entering.");
-        shouldDelay = YES;
-    }
-    if (shouldDelay) {
-        DLog(@"Trying again in .25 sec");
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self tryOpenArrangement:terminalArrangement named:arrangementName asTabsInWindow:term];
-        });
-    } else {
+    const BOOL lionFullScreen = [PseudoTerminal arrangementIsLionFullScreen:terminalArrangement];
+    [PseudoTerminal performWhenWindowCreationIsSafeForLionFullScreen:lionFullScreen
+                                                               block:^{
+
         DLog(@"Opening it.");
         PseudoTerminal *term = [PseudoTerminal terminalWithArrangement:terminalArrangement
                                                                  named:arrangementName
@@ -546,7 +549,7 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
         if (term) {
           [self addTerminalWindow:term];
         }
-    }
+    }];
 }
 
 - (BOOL)loadWindowArrangementWithName:(NSString *)theName asTabsInTerminal:(PseudoTerminal *)term {
@@ -1251,6 +1254,30 @@ replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
         }
     }
     return nil;
+}
+
+- (PseudoTerminal *)windowForSessionWithGUID:(NSString *)guid {
+    PTYSession *session = [self sessionWithGUID:guid];
+    if (!session) {
+        return nil;
+    }
+    return [self windowForSession:session];
+}
+
+- (PseudoTerminal *)windowForSession:(PTYSession *)session {
+    PTYTab *tab = [self tabForSession:session];
+    if (!tab) {
+        return nil;
+    }
+    return [self windowForTab:tab];
+}
+
+- (PTYTab *)tabForSession:(PTYSession *)session {
+    return [PTYTab castFrom:session.delegate];
+}
+
+- (PseudoTerminal *)windowForTab:(PTYTab *)tab {
+    return [PseudoTerminal castFrom:tab.realParentWindow];
 }
 
 - (void)dumpViewHierarchy {

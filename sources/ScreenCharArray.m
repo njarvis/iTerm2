@@ -188,7 +188,7 @@ static NSString *const ScreenCharArrayKeyContinuation = @"continuation";
             [result appendCharacter:c.code];
             continue;
         }
-        [result appendString:ScreenCharToStr(&c)];
+        [result appendString:ScreenCharToStr(&c) ?: @""];
     }
     return result;
 }
@@ -273,6 +273,24 @@ static NSString *const ScreenCharArrayKeyContinuation = @"continuation";
         ScreenCharArrayKeyMetadata: iTermImmutableMetadataEncodeToArray(_metadata),
         ScreenCharArrayKeyContinuation: [NSData dataWithBytes:&_continuation length:sizeof(_continuation)]
     };
+}
+
+- (ScreenCharArray *)screenCharArrayByRemovingFirst:(int)n {
+    if (n >= self.length) {
+        return [ScreenCharArray emptyLineOfLength:0];
+    }
+    return [[ScreenCharArray alloc] initWithCopyOfLine:self.line + n
+                                                length:self.length - n
+                                          continuation:self.continuation];
+}
+
+- (ScreenCharArray *)screenCharArrayByRemovingLast:(int)n {
+    if (n >= self.length) {
+        return [ScreenCharArray emptyLineOfLength:0];
+    }
+    return [[ScreenCharArray alloc] initWithCopyOfLine:self.line
+                                                length:self.length - n
+                                          continuation:self.continuation];
 }
 
 - (ScreenCharArray *)screenCharArrayByAppendingScreenCharArray:(ScreenCharArray *)other {

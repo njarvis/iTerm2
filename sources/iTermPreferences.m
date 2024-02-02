@@ -81,7 +81,7 @@ NSString *const kPreferenceKeyUseMetal = @"UseMetal";
 NSString *const kPreferenceKeyDisableMetalWhenUnplugged = @"disableMetalWhenUnplugged";
 NSString *const kPreferenceKeyDisableInLowPowerMode = @"disableMetalInLowPowerMode";
 NSString *const kPreferenceKeyPreferIntegratedGPU = @"preferIntegratedGPU";
-NSString *const kPreferenceKeyMetalMaximizeThroughput = @"metalMaximizeThroughput";
+NSString *const kPreferenceKeyMaximizeThroughput = @"metalMaximizeThroughput";  // Used to be metal-specific but not any more
 NSString *const kPreferenceKeyEnableAPIServer = @"EnableAPIServer";
 NSString *const kPreferenceKeyAPIAuthentication = @"API Authentication Method";
 
@@ -193,6 +193,8 @@ NSString *const kPreferenceKeyOpenAIAPIKey = @"NoSyncOpenAIAPIKey";
 NSString *const kPreferenceKeyAIPrompt = @"AI Prompt";
 NSString *const kPreferenceKeyAlertOnMarksInOffscreenSessions = @"Alert On Marks in Offscreen Sessions";
 NSString *const kPreferenceKeyCompressHistory = @"Compress History";
+NSString *const kPreferenceKeyAIModel = @"AiModel";
+NSString *const kPreferenceKeyAITokenLimit = @"AiMaxTokens";
 
 NSString *const iTermDefaultAIPrompt =
 @"#!/usr/bin/\\(shell)\n"
@@ -384,13 +386,15 @@ static NSString *sPreviousVersion;
                   kPreferenceKeyDisableMetalWhenUnplugged: @YES,
                   kPreferenceKeyDisableInLowPowerMode: @YES,
                   kPreferenceKeyPreferIntegratedGPU: @YES,
-                  kPreferenceKeyMetalMaximizeThroughput: @YES,
+                  kPreferenceKeyMaximizeThroughput: @YES,
                   kPreferenceKeyEnableAPIServer: @NO,
                   kPreferenceKeyAPIAuthentication: @0,  // ignored — synthetic value
                   kPreferenceKeyOpenAIAPIKey: @"",
                   kPreferenceKeyAIPrompt: iTermDefaultAIPrompt,
                   kPreferenceKeyAlertOnMarksInOffscreenSessions: @NO,
-
+                  kPreferenceKeyAIModel: @"gpt-3.5-turbo",
+                  kPreferenceKeyAITokenLimit: @4000,
+                  
                   kPreferenceKeyTabStyle_Deprecated: @(TAB_STYLE_LIGHT),
                   kPreferenceKeyTabStyle: @(TAB_STYLE_LIGHT),
                   
@@ -850,7 +854,7 @@ typedef struct {
 }
 
 FAST_BOOL_ACCESSOR(hideTabActivityIndicator, kPreferenceKeyHideTabActivityIndicator)
-FAST_BOOL_ACCESSOR(maximizeMetalThroughput, kPreferenceKeyMetalMaximizeThroughput)
+FAST_BOOL_ACCESSOR(maximizeThroughput, kPreferenceKeyMaximizeThroughput)
 FAST_BOOL_ACCESSOR(useTmuxProfile, kPreferenceKeyUseTmuxProfile)
 
 @end

@@ -217,6 +217,7 @@ class Conductor: NSObject, Codable {
         case append(path: Data, content: Data)
         case utime(path: Data, date: Date)
         case chmod(path: Data, r: Bool, w: Bool, x: Bool)
+        case zip(path: Data)
 
         var stringValue: String {
             switch self {
@@ -236,6 +237,9 @@ class Conductor: NSObject, Codable {
                 } else {
                     return "fetch\n\(path.base64EncodedString())"
                 }
+
+            case .zip(let path):
+                return "zip\n\(path.base64EncodedString())"
 
             case .stat(let path):
                 return "stat\n\(path.base64EncodedString())"
@@ -297,6 +301,8 @@ class Conductor: NSObject, Codable {
                 } else {
                     return "fetch \(path.stringOrHex)"
                 }
+            case .zip(path: let path):
+                return "zip \(path.stringOrHex)"
             case .stat(let path):
                 return "stat \(path.stringOrHex)"
             case .fetchSuggestions(request: let request):
@@ -335,6 +341,7 @@ class Conductor: NSObject, Codable {
         case runPython(String)
         // Shell out to this command and then return to conductor
         case shell(String)
+        case pythonversion
         case getshell
         case write(data: Data, dest: String)
         case cd(String)
@@ -358,7 +365,7 @@ class Conductor: NSObject, Codable {
 
         var isFramer: Bool {
             switch self {
-            case .execLoginShell, .setenv(_, _), .run(_), .runPython(_), .shell(_),
+            case .execLoginShell, .setenv(_, _), .run(_), .runPython(_), .shell(_), .pythonversion,
                     .write(_, _), .cd(_), .quit, .getshell, .eval(_):
                 return false
 
@@ -381,6 +388,8 @@ class Conductor: NSObject, Codable {
                 return "runpython"
             case .shell(let cmd):
                 return "shell \(cmd)"
+            case .pythonversion:
+                return "pythonversion"
             case .write(let data, let dest):
                 return "write \(data.base64EncodedString()) \(dest)"
             case .cd(let dir):
@@ -432,6 +441,8 @@ class Conductor: NSObject, Codable {
                 return "running “\(cmd)”"
             case .shell(let cmd):
                 return "running in shell “\(cmd)”"
+            case .pythonversion:
+                return "running pythonversion"
             case .runPython(_):
                 return "running Python code"
             case .write(_, let dest):
@@ -766,7 +777,7 @@ class Conductor: NSObject, Codable {
       case sshargs, varsToSend, payloads, initialDirectory, parsedSSHArguments, depth, parent,
            framedPID, remoteInfo, state, queue, boolArgs, dcsID, clientUniqueID,
            modifiedVars, modifiedCommandArgs, clientVars, shouldInjectShellIntegration,
-           homeDirectory, shell, uname, terminalConfiguration
+           homeDirectory, shell, pythonversion, uname, terminalConfiguration
     }
 
 
@@ -1031,7 +1042,7 @@ class Conductor: NSObject, Codable {
     }
 
     @objc func startRecovery() {
-        write("\nrecover\n\n")
+        write("\n\("recover".base64Encoded)\n\n")
         state = .recovery(.ground)
         delegate?.conductorStateDidChange()
     }
@@ -1233,7 +1244,7 @@ class Conductor: NSObject, Codable {
     }
 
     private func checkForPython() {
-        send(.shell("command -v python3 >/dev/null 2>&1 && python3 -V"), .handleCheckForPython(StringArray()))
+        send(.pythonversion, .handleCheckForPython(StringArray()))
     }
 
     private static let minimumPythonMajorVersion = 3
@@ -1787,7 +1798,7 @@ class Conductor: NSObject, Codable {
             return
         }
         state = .willExecute(pending)
-        let chunked = pending.command.stringValue.chunk(128, continuation: pending.command.isFramer ? "\\" : "").joined(separator: "\n") + "\n"
+        let chunked = pending.command.stringValue.components(separatedBy: "\n").map(\.base64Encoded).joined(separator: "\n").chunk(128, continuation: pending.command.isFramer ? "\\" : "").joined(separator: "\n") + "\n"
         write(chunked)
     }
 
@@ -2070,6 +2081,17 @@ extension Conductor: SSHEndpoint {
         }
     }
 
+    @MainActor
+    func zip(_ path: String) async throws -> String {
+        return try await logging("zip \(path)") {
+            guard let pathData = path.data(using: .utf8) else {
+                throw iTermFileProviderServiceError.notFound(path)
+            }
+            log("perform file operation to zip \(path)")
+            return try await performFileOperation(subcommand: .zip(path: pathData))
+        }
+    }
+
     private func remoteFile(_ json: String) throws -> RemoteFile {
         log("file operation completed with \(json.count) characters")
         guard let jsonData = json.data(using: .utf8) else {
@@ -2320,16 +2342,28 @@ extension Conductor: ConductorFileTransferDelegate {
         Task {
             await reallyBeginDownload(fileTransfer: fileTransfer,
                                       remotePath: remotePath,
-                                      fileHandle: fileHandle)
+                                      fileHandle: fileHandle,
+                                      allowDirectories: true)
         }
     }
 
     @MainActor
     private func reallyBeginDownload(fileTransfer: ConductorFileTransfer,
                                      remotePath: String,
-                                     fileHandle: FileHandle) async {
+                                     fileHandle: FileHandle,
+                                     allowDirectories: Bool) async {
         do {
-            let info = try await stat(fileTransfer.path.path)
+            let info = try await stat(remotePath)
+            if info.kind == .folder {
+                if !allowDirectories {
+                    fileTransfer.fail(reason: "Transfer of directory at \(remotePath) not allowed")
+                }
+                await reallyDownloadFolder(info: info,
+                                           fileTransfer: fileTransfer,
+                                           remotePath: remotePath,
+                                           fileHandle: fileHandle)
+                return
+            }
             let sizeKnown: Bool
             if let size = info.size {
                 sizeKnown = true
@@ -2363,6 +2397,24 @@ extension Conductor: ConductorFileTransferDelegate {
                 }
             }
             fileTransfer.didFinishSuccessfully()
+        } catch {
+            fileTransfer.fail(reason: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func reallyDownloadFolder(info: RemoteFile,
+                                      fileTransfer: ConductorFileTransfer,
+                                      remotePath: String,
+                                      fileHandle: FileHandle) async {
+        do {
+            let remoteZipPath = try await zip(remotePath)
+            fileTransfer.isZipOfFolder = true
+            await reallyBeginDownload(fileTransfer: fileTransfer,
+                                      remotePath: remoteZipPath,
+                                      fileHandle: fileHandle,
+                                      allowDirectories: false)
+            try? await rm(remoteZipPath, recursive: false)
         } catch {
             fileTransfer.fail(reason: error.localizedDescription)
         }

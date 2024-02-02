@@ -92,6 +92,7 @@ extern NSString *const iTermSnippetsTagsDidChange;
 - (PseudoTerminal *)terminalWithGuid:(NSString *)guid;
 - (PTYTab *)tabWithID:(NSString *)tabID;  // short numeric ID
 - (PTYTab *)tabWithGUID:(NSString *)guid;  // UUID
+- (PseudoTerminal *)windowForSessionWithGUID:(NSString *)guid;
 
 - (int)allocateWindowNumber;
 
@@ -113,6 +114,10 @@ extern NSString *const iTermSnippetsTagsDidChange;
 - (void)repairSavedArrangementNamed:(NSString *)arrangementName
 replaceInitialDirectoryForSessionWithGUID:(NSString *)guid
                                with:(NSString *)replacementOldCWD;
+
+- (void)tryOpenArrangement:(NSDictionary *)terminalArrangement
+                     named:(NSString *)arrangementName
+            asTabsInWindow:(PseudoTerminal *)term;
 
 - (void)terminalWillClose:(PseudoTerminal*)theTerminalWindow;
 - (void)addBookmarksToMenu:(NSMenu *)aMenu

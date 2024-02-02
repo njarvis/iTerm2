@@ -2537,6 +2537,43 @@ static TECObjectRef CreateTECConverterForUTF8Variants(TextEncodingVariant varian
     return string;
 }
 
+- (NSString *)stringByReplacingUnicodeSpacesWithASCIISpace {
+    static NSRegularExpression *regex;
+
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSError *error = NULL;
+        regex = [NSRegularExpression regularExpressionWithPattern:@"\\p{Zs}"
+                                                          options:NSRegularExpressionCaseInsensitive
+                                                            error:&error];
+        if (error) {
+            NSLog(@"Error creating regular expression: %@", error);
+        }
+    });
+    if (!regex) {
+        return self;
+    }
+    NSString *modifiedString = [regex stringByReplacingMatchesInString:self
+                                                               options:0
+                                                                 range:NSMakeRange(0, self.length)
+                                                          withTemplate:@" "];
+    return modifiedString;
+}
+
+- (NSString *)chunkedWithLineLength:(NSInteger)length separator:(NSString *)separator {
+    NSMutableString *result = [NSMutableString stringWithCapacity:self.length + self.length / length + 1];
+    NSInteger start = 0;
+    while (start < self.length) {
+        const NSInteger chunkLength = MIN(length, self.length - start);
+        const NSRange range = NSMakeRange(start, chunkLength);
+        [result appendString:[self substringWithRange:range]];
+        start += chunkLength;
+        if (start < self.length) {
+            [result appendString:separator];
+        }
+    }
+    return result;
+}
 
 @end
 

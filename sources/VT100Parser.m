@@ -123,7 +123,7 @@
                                         encoding:encoding
                                       savedState:_savedStateForPartialParse
                                        dcsHooked:&_dcsHooked];
-            DLog(@"%@: dcs produced %@", self, token);
+            DLog(@"%@: control parser produced %@", self, token);
             if (token->type != VT100_WAIT) {
                 [_savedStateForPartialParse removeAllObjects];
             }
@@ -471,6 +471,17 @@
         [self forceUnhookDCS:nil];
         [self clearStream];
         [_sshParsers[@(_mainSSHParserPID)] reset];
+    }
+}
+
+- (void)resetExceptSSH {
+    @synchronized(self) {
+        [_savedStateForPartialParse removeAllObjects];
+        if (!_controlParser.dcsHookIsSSH) {
+            [self forceUnhookDCS:nil];
+            [self clearStream];
+            [_sshParsers[@(_mainSSHParserPID)] reset];
+        }
     }
 }
 

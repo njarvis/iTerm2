@@ -191,7 +191,7 @@ static BOOL hasBecomeActive = NO;
     NSMenu *_statusIconBuriedSessions;  // unsafe unretained
     IBOutlet NSMenu *_scriptsMenu;
     IBOutlet NSMenuItem *_composerMenuItem;
-
+    IBOutlet NSMenuItem *_removeRecentProfilesFromDockMenuItem;
     IBOutlet NSMenuItem *showFullScreenTabs;
     IBOutlet NSMenuItem *useTransparency;
     IBOutlet NSMenuItem *maximizePane;
@@ -634,7 +634,7 @@ static BOOL hasBecomeActive = NO;
         if ([iTermColorPresets importColorPresetFromFile:filename]) {
             NSAlert *alert = [[[NSAlert alloc] init] autorelease];
             alert.messageText = @"Colors Scheme Imported";
-            alert.informativeText = @"The color scheme was imported and added to presets. You can find it under Preferences>Profiles>Colors>Load Presets….";
+            alert.informativeText = @"The color scheme was imported and added to presets. You can find it under Settings > Profiles > Colors > Load Presets….";
             [alert runModal];
         }
         return YES;
@@ -835,24 +835,19 @@ static BOOL hasBecomeActive = NO;
         [alert addButtonWithTitle:@"OK"];
         [alert addButtonWithTitle:@"Cancel"];
         iTermDisclosableView *accessory = [[iTermDisclosableView alloc] initWithFrame:NSZeroRect
-                                                                               prompt:@"Details"
+                                                                               prompt:@"Why am I being prompted?"
                                                                               message:[NSString stringWithFormat:@"You are being prompted because:\n\n%@",
                                                                                        reason.message]];
+        iTermAccessoryViewUnfucker *unfucker = [[iTermAccessoryViewUnfucker alloc] initWithView:accessory];
         accessory.frame = NSMakeRect(0, 0, accessory.intrinsicContentSize.width, accessory.intrinsicContentSize.height);
         accessory.requestLayout = ^{
+            [unfucker layout];
             [alert layout];
-            if (@available(macOS 10.16, *)) {
-                // FB8897296:
-                // Prior to Big Sur, you could call [NSAlert layout] on an already-visible NSAlert
-                // to have it change its size to accommodate an accessory view controller whose
-                // frame changed.
-                //
-                // On Big Sur, it no longer works. Instead, you must call NSAlert.layout *twice*.
-                [alert layout];
-            }
+            [alert layout];
         };
-        alert.accessoryView = accessory;
-
+        [unfucker layout];
+        alert.accessoryView = unfucker;
+        [alert layout];
         if ([alert runModal] != NSAlertFirstButtonReturn) {
             DLog(@"User declined to quit");
             return NSTerminateCancel;
@@ -876,6 +871,7 @@ static BOOL hasBecomeActive = NO;
     [[NSNotificationCenter defaultCenter] postNotificationName:iTermApplicationWillTerminate object:nil];
 
     // This causes all windows to be closed and all sessions to be terminated.
+    DLog(@"Will release shared instance");
     [iTermController releaseSharedInstance];
 
     // save preferences
@@ -890,6 +886,7 @@ static BOOL hasBecomeActive = NO;
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification {
     DLog(@"applicationWillTerminate called");
+    [iTermController releaseSharedInstance];
     [[iTermModifierRemapper sharedInstance] setRemapModifiers:NO];
     DLog(@"applicationWillTerminate returning");
     TurnOffDebugLoggingSilently();
@@ -1074,6 +1071,9 @@ void TurnOnDebugLoggingAutomatically(void) {
     if ([iTermUserDefaults importPath]) {
         [iTerm2ImportExport finishImporting];
         assert(NO);
+    }
+    if (![iTermAdvancedSettingsModel saveProfilesToRecentDocuments]) {
+        [_removeRecentProfilesFromDockMenuItem.menu removeItem:_removeRecentProfilesFromDockMenuItem];
     }
     [iTermMenuBarObserver sharedInstance];
     // Cleanly crash on uncaught exceptions, such as during actions.
@@ -1318,7 +1318,7 @@ void TurnOnDebugLoggingAutomatically(void) {
     NSMenu *menu = [[[NSMenu alloc] init] autorelease];
     NSMenuItem *item;
 
-    item = [[[NSMenuItem alloc] initWithTitle:@"Preferences"
+    item = [[[NSMenuItem alloc] initWithTitle:@"Settings"
                                        action:@selector(showAndOrderFrontRegardlessPrefWindow:)
                                 keyEquivalent:@""] autorelease];
     [menu addItem:item];

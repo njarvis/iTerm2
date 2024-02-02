@@ -2824,6 +2824,30 @@ ITERM_WEAKLY_REFERENCEABLE
     return NO;
 }
 
++ (void)performWhenWindowCreationIsSafeForLionFullScreen:(BOOL)lionFullScreen
+                                                   block:(void (^)(void))block {
+    BOOL shouldDelay = NO;
+    DLog(@"begin");
+    if ([PseudoTerminal willAutoFullScreenNewWindow] &&
+        [PseudoTerminal anyWindowIsEnteringLionFullScreen]) {
+        DLog(@"Prevented by autofullscreen + a window entering.");
+        shouldDelay = YES;
+    }
+    if (lionFullScreen &&
+        [PseudoTerminal anyWindowIsEnteringLionFullScreen]) {
+        DLog(@"Prevented by fs arrangement + a window entering.");
+        shouldDelay = YES;
+    }
+    if (shouldDelay) {
+        DLog(@"Trying again in .25 sec");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self performWhenWindowCreationIsSafeForLionFullScreen:lionFullScreen block:block];
+        });
+    } else {
+        block();
+    }
+}
+
 + (BOOL)arrangementIsLionFullScreen:(NSDictionary *)arrangement {
     return [PseudoTerminal _windowTypeForArrangement:arrangement] == WINDOW_TYPE_LION_FULL_SCREEN;
 }
@@ -3622,6 +3646,7 @@ ITERM_WEAKLY_REFERENCEABLE
     [[_contentView.toolbelt directoriesView] updateDirectories];
     [[_contentView.toolbelt jobsView] updateJobs];
     [[_contentView.toolbelt snippetsView] currentSessionDidChange];
+    [[_contentView.toolbelt codeciergeView] currentSessionDidChange];
     [[NSNotificationCenter defaultCenter] postNotificationName:iTermSnippetsTagsDidChange object:nil];
     [self refreshNamedMarks];
 }
@@ -3883,7 +3908,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
     // update the cursor
     [[self currentSession] refresh];
-    [[[self currentSession] textview] setNeedsDisplay:YES];
+    [[[self currentSession] textview] requestDelegateRedraw];
     [_contentView setNeedsDisplay:YES];
     [[iTermFindPasteboard sharedInstance] updateObservers:nil];
 
@@ -4359,7 +4384,7 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     // update the cursor
     [[[self currentSession] textview] refresh];
-    [[[self currentSession] textview] setNeedsDisplay:YES];
+    [[[self currentSession] textview] requestDelegateRedraw];
     [_contentView setNeedsDisplay:YES];
 
     // Note that if you have multiple displays you can see a lion fullscreen window when it's
@@ -4397,7 +4422,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
     // update the cursor
     [[[self currentSession] textview] refresh];
-    [[[self currentSession] textview] setNeedsDisplay:YES];
+    [[[self currentSession] textview] requestDelegateRedraw];
     [_contentView updateDivisionViewAndWindowNumberLabel];
 }
 
@@ -4867,7 +4892,7 @@ ITERM_WEAKLY_REFERENCEABLE
     }
     for (PTYSession *session in self.allSessions) {
         [session updateMetalDriver];
-        [session.textview setNeedsDisplay:YES];
+        [session.textview requestDelegateRedraw];
         [session didChangeScreen:self.window.backingScaleFactor];
     }
     const NSSize screenSize = self.window.screen.frame.size;
@@ -5008,7 +5033,7 @@ ITERM_WEAKLY_REFERENCEABLE
     for (PTYSession* aSession in [self allSessions]) {
         [aSession useTransparencyDidChange];
         [[aSession view] setNeedsDisplay:YES];
-        [[aSession textview] setNeedsDisplay:YES];
+        [[aSession textview] requestDelegateRedraw];
     }
     [self haveTransparentPaneDidChange];
 }
@@ -5999,7 +6024,7 @@ ITERM_WEAKLY_REFERENCEABLE
 
         // Background tabs' timers run infrequently so make sure the display is
         // up to date to avoid a jump when it's shown.
-        [[aSession textview] setNeedsDisplay:YES];
+        [[aSession textview] requestDelegateRedraw];
         [aSession updateDisplayBecause:@"tabView:didSelectTabViewItem:"];
         aSession.active = YES;
         [self setDimmingForSession:aSession];
@@ -8731,7 +8756,7 @@ typedef NS_ENUM(NSUInteger, PseudoTerminalTabSizeExclusion) {
 
     PtyLog(@"fitWindowToTabs - refresh textview");
     for (PTYSession* session in [[self currentTab] sessions]) {
-        [[session textview] setNeedsDisplay:YES];
+        [[session textview] requestDelegateRedraw];
     }
     PtyLog(@"fitWindowToTabs - update tab bar");
     [_contentView.tabBarControl updateFlashing];
@@ -10665,14 +10690,33 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     [self createDuplicateOfTab:(PTYTab *)[[sender representedObject] identifier]];
 }
 
+- (IBAction)duplicateWindow:(id)sender {
+    const BOOL lionFullScreen = self.lionFullScreen;
+    __weak __typeof(self) weakSelf = self;
+    [PseudoTerminal performWhenWindowCreationIsSafeForLionFullScreen:lionFullScreen
+                                                               block:^{
+        [weakSelf reallyDuplicateWindow];
+    }];
+}
+
+- (void)reallyDuplicateWindow {
+    NSDictionary *arrangement = [self arrangementExcludingTmuxTabs:NO includingContents:NO];
+    [[iTermController sharedInstance] tryOpenArrangement:arrangement named:nil asTabsInWindow:nil];
+}
+
 - (void)createDuplicateOfTab:(PTYTab *)theTab {
     DLog(@"Duplicate tab %@", theTab);
     if (!theTab) {
         theTab = [self currentTab];
     }
-    PseudoTerminal *destinationTerminal = [[iTermController sharedInstance] windowControllerForNewTabWithProfile:self.currentSession.profile
-                                                                                                       candidate:self
-                                                                                              respectTabbingMode:NO];
+    PseudoTerminal *destinationTerminal = 
+    [[iTermController sharedInstance] windowControllerForNewTabWithProfile:self.currentSession.profile
+                                                                 candidate:self
+                                                        respectTabbingMode:NO];
+    [self createDuplicateOfTab:theTab inTerminal:destinationTerminal];
+}
+
+- (void)createDuplicateOfTab:(PTYTab *)theTab inTerminal:(PseudoTerminal *)destinationTerminal {
     if (destinationTerminal == nil) {
         PTYTab *copyOfTab = [[theTab copy] autorelease];
         [copyOfTab updatePaneTitles];
@@ -10709,12 +10753,12 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
                               didMakeSession:nil
                                   completion:nil];
     } else {
-        [self openTabWithArrangement:theTab.arrangementWithNewGUID
-                               named:nil
-                     hasFlexibleView:theTab.isTmuxTab
-                             viewMap:nil
-                          sessionMap:nil
-                  partialAttachments:nil];
+        [destinationTerminal openTabWithArrangement:theTab.arrangementWithNewGUID
+                                              named:nil
+                                    hasFlexibleView:theTab.isTmuxTab
+                                            viewMap:nil
+                                         sessionMap:nil
+                                 partialAttachments:nil];
     }
 }
 
@@ -10902,11 +10946,11 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
 }
 #pragma clang diagnostic pop
 
-- (void)incrementBadge {
+- (BOOL)incrementBadge {
     DLog(@"incrementBadge");
     if (![iTermAdvancedSettingsModel indicateBellsInDockBadgeLabel]) {
         DLog(@"Disabled by advanced pref");
-        return;
+        return NO;
     }
 
     NSDockTile *dockTile;
@@ -10916,7 +10960,7 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     } else {
         if ([[NSApplication sharedApplication] isActive]) {
             DLog(@"App is active so don't increment it");
-            return;
+            return NO;
         }
         DLog(@"Use main app dock tile");
         dockTile = [[NSApplication sharedApplication] dockTile];
@@ -10925,12 +10969,13 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
     DLog(@"Old count was %d", count);
     if (count == 999) {
         DLog(@"Won't go over 999, so stop early");
-        return;
+        return NO;
     }
     ++count;
     DLog(@"Set badge label to %@", @(count));
     [dockTile setBadgeLabel:[NSString stringWithFormat:@"%d", count]];
     [self.window.dockTile setShowsApplicationBadge:YES];
+    return YES;
 }
 
 - (void)sessionHostDidChange:(PTYSession *)session to:(id<VT100RemoteHostReading>)host {
@@ -11687,6 +11732,10 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
 
 - (id<VT100RemoteHostReading>)toolbeltCurrentHost {
     return [[self currentSession] currentHost];
+}
+
+- (NSString *)toolbeltCurrentSessionGUID {
+    return self.currentSession.guid;
 }
 
 - (pid_t)toolbeltCurrentShellProcessId {

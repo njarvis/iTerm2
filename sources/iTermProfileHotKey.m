@@ -318,9 +318,17 @@ static NSString *const kArrangement = @"Arrangement";
                 // full screen window. Do this to avoid overlapping notifications.
                 return windowLevelJustBelowNotificiations;
             }
-            // Floating panel and fixed menu bar — overlap the menu bar.
+            if (!self.windowController.fullScreen) {
+                // Non-fullscreen windows have their frame set below the menu bar so we can let
+                // notifications overlap them.
+                return windowLevelJustBelowNotificiations;
+            }
+            // Floating fullscreen panel and fixed menu bar — overlap the menu bar.
             // Unfortunately, this overlaps notification center since it is at the same level as
-            // the menu bar.
+            // the menu bar. If iTerm2 is not active then it can't hide the menu bar by setting
+            // presentation options. To move this below notifications we'd also need to adjust the
+            // window's frame as the menu bar hides and shows (e.g., if iTerm2 is activated then
+            // it gains the ability to hide the menu bar, and the frame would need to change).
             return NSStatusWindowLevel;
         }
     }
@@ -471,7 +479,7 @@ static NSString *const kArrangement = @"Arrangement";
                         }];
 }
 
-- (void)rollOutAnimatingInDirection:(iTermAnimationDirection)direction {
+- (void)rollOutAnimatingInDirection:(iTermAnimationDirection)direction causedByKeypress:(BOOL)causedByKeypress {
     _activationPending = NO;
     NSRect source = self.windowController.window.frame;
     NSRect destination = source;
@@ -488,8 +496,8 @@ static NSString *const kArrangement = @"Arrangement";
         [self.windowController.window.animator setAlphaValue:0];
     }
                         completionHandler:^{
-                            [self didFinishRollingOut];
-                        }];
+        [self didFinishRollingOut:causedByKeypress];
+    }];
 
 }
 
@@ -515,11 +523,11 @@ static NSString *const kArrangement = @"Arrangement";
     [NSAnimationContext endGrouping];
 }
 
-- (void)fadeOut {
+- (void)fadeOut:(BOOL)causedByKeypress {
     [NSAnimationContext beginGrouping];
     [[NSAnimationContext currentContext] setDuration:[iTermAdvancedSettingsModel hotkeyTermAnimationDuration]];
     [[NSAnimationContext currentContext] setCompletionHandler:^{
-        [self didFinishRollingOut];
+        [self didFinishRollingOut:causedByKeypress];
     }];
     self.windowController.window.animator.alphaValue = 0;
 #if BETA
@@ -633,7 +641,7 @@ static NSString *const kArrangement = @"Arrangement";
     }
 }
 
-- (void)rollOut {
+- (void)rollOut:(BOOL)causedByKeypress {
     DLog(@"Roll out [hide] hotkey window");
     DLog(@"\n%@", [NSThread callStackSymbols]);
     if (_rollingOut) {
@@ -661,7 +669,7 @@ static NSString *const kArrangement = @"Arrangement";
             case WINDOW_TYPE_BOTTOM_PARTIAL: {
                 iTermAnimationDirection inDirection = [self animateInDirectionForWindowType:self.windowController.windowType];
                 iTermAnimationDirection outDirection = iTermAnimationDirectionOpposite(inDirection);
-                [self rollOutAnimatingInDirection:outDirection];
+                [self rollOutAnimatingInDirection:outDirection causedByKeypress:causedByKeypress];
                 break;
             }
 
@@ -672,7 +680,7 @@ static NSString *const kArrangement = @"Arrangement";
             case WINDOW_TYPE_COMPACT_MAXIMIZED:
             case WINDOW_TYPE_TRADITIONAL_FULL_SCREEN:  // Framerate drops too much to roll this (2014 5k iMac)
             case WINDOW_TYPE_ACCESSORY:
-                [self fadeOut];
+                [self fadeOut:causedByKeypress];
                 break;
 
             case WINDOW_TYPE_LION_FULL_SCREEN:
@@ -680,7 +688,7 @@ static NSString *const kArrangement = @"Arrangement";
         }
     } else {
         self.windowController.window.alphaValue = 0;
-        [self didFinishRollingOut];
+        [self didFinishRollingOut:causedByKeypress];
     }
 }
 
@@ -744,7 +752,7 @@ static NSString *const kArrangement = @"Arrangement";
 }
 
 - (void)hideForScripting {
-    [self hideHotKeyWindowAnimated:YES suppressHideApp:NO otherIsRollingIn:NO];
+    [self hideHotKeyWindowAnimated:YES suppressHideApp:NO otherIsRollingIn:NO causedByKeypress:NO];
 }
 
 - (void)toggleForScripting {
@@ -864,7 +872,7 @@ static NSString *const kArrangement = @"Arrangement";
             self.wasAutoHidden = NO;
             if (anyIsKey || ![self switchToVisibleHotKeyWindowIfPossible]) {
                 DLog(@"Hide hotkey window");
-                [self hideHotKeyWindowAnimated:YES suppressHideApp:NO otherIsRollingIn:NO];
+                [self hideHotKeyWindowAnimated:YES suppressHideApp:NO otherIsRollingIn:NO causedByKeypress:YES];
             }
         } else {
             DLog(@"hotkey window not opaque");
@@ -959,11 +967,12 @@ static NSString *const kArrangement = @"Arrangement";
     [[iTermPresentationController sharedInstance] update];
 }
 
-- (void)didFinishRollingOut {
+- (void)didFinishRollingOut:(BOOL)causedByKeypress {
     DLog(@"didFinishRollingOut");
     _activationPending = NO;
     DLog(@"Invoke willFinishRollingOutProfileHotKey:");
-    BOOL activatingOtherApp = [self.delegate willFinishRollingOutProfileHotKey:self];
+    BOOL activatingOtherApp = [self.delegate willFinishRollingOutProfileHotKey:self
+                                                              causedByKeypress:causedByKeypress];
     if (activatingOtherApp) {
         _rollOutCancelable = YES;
         DLog(@"Schedule order-out");
@@ -1064,7 +1073,8 @@ static NSString *const kArrangement = @"Arrangement";
 
 - (void)hideHotKeyWindowAnimated:(BOOL)animated
                  suppressHideApp:(BOOL)suppressHideApp
-                otherIsRollingIn:(BOOL)otherIsRollingIn {
+                otherIsRollingIn:(BOOL)otherIsRollingIn
+                causedByKeypress:(BOOL)causedByKeypress {
     DLog(@"Hide hotkey window. animated=%@ suppressHideApp=%@", @(animated), @(suppressHideApp));
 
     if (suppressHideApp) {
@@ -1078,7 +1088,7 @@ static NSString *const kArrangement = @"Arrangement";
         [self.windowController.window endSheet:sheet];
     }
     self.closedByOtherHotkeyWindowOpening = otherIsRollingIn;
-    [self rollOut];
+    [self rollOut:causedByKeypress];
 }
 
 - (void)windowWillClose {

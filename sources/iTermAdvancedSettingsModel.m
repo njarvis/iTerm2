@@ -289,7 +289,7 @@ DEFINE_FLOAT(compactMinimalTabBarHeight, 38, SECTION_TABS @"Tab bar height (poin
 DEFINE_SETTABLE_FLOAT(defaultTabBarHeight, DefaultTabBarHeight, 24, SECTION_TABS @"Default tab bar height")
 DEFINE_BOOL(doubleClickTabToEdit, YES, SECTION_TABS @"Should double-clicking a tab open a window to edit its title?");
 DEFINE_FLOAT(minimumTabLabelWidth, 35, SECTION_TABS @"Minimum width for tab labels.\nThe activity/bell icon will be hidden when the space for the label drops below this size (in points)");
-DEFINE_BOOL(disregardDockSettingToOpenTabsInsteadOfWindows, YES, SECTION_TABS @"Ignore System Preferences > Dock > Prefer tabs when opening documents?\nWhen set to No, asking to open a window will open a tab instead when system preferences is configured to prefer tabs over windows. When set to Yes, asking to open a window may open a tab instead.");
+DEFINE_BOOL(disregardDockSettingToOpenTabsInsteadOfWindows, YES, SECTION_TABS @"Ignore System Settings > Dock > Prefer tabs when opening documents?\nWhen set to No, asking to open a window will open a tab instead when system settings is configured to prefer tabs over windows. When set to Yes, asking to open a window may open a tab instead.");
 DEFINE_BOOL(convertTabDragToWindowDragForSolitaryTabInCompactOrMinimalTheme, YES, SECTION_TABS @"In the Minimal and Compact themes when there is a single tab and the tab bar is visible, should dragging the tab bar move the window?\nThis also affects windows without titlebars in any theme.");
 DEFINE_BOOL(highVisibility, YES, SECTION_TABS @"High Contrast modes maximize visibility.\nWhen enabled, the dark high-contrast theme emphasizes visibility over beauty.");
 DEFINE_BOOL(drawBottomLineForHorizontalTabBar, YES, SECTION_TABS @"Draw bottom line for horizontal tabbar in Regular, Dark and Light theme?");
@@ -304,7 +304,7 @@ DEFINE_STRING(tabColorMenuOptions, @"#fb6b62 #f6ac47 #f0dc4f #b5d749 #5fa3f8 #c1
 DEFINE_BOOL(removeAddTabButton, NO, SECTION_TABS @"Remove the “new tab” button from horizontal tab bars?");
 DEFINE_FLOAT(lightModeInactiveTabDarkness, 0.07, SECTION_TABS @"Darkness (in [0…1]) for non-selected tabs in non-Minimal theme in light mode.");
 DEFINE_FLOAT(darkModeInactiveTabDarkness, 0.5, SECTION_TABS @"Darkness (in [0…1]) for non-selected tabs in non-Minimal theme in dark mode.");
-DEFINE_BOOL(saveProfilesToRecentDocuments, YES, SECTION_TABS @"Add items to Recents (in the dock icon's menu) to reopen recently used profiles as tabs?")
+DEFINE_BOOL(saveProfilesToRecentDocuments, NO, SECTION_TABS @"Add items to Recents (in the dock icon's menu) to reopen recently used profiles as tabs?")
 DEFINE_BOOL(placeTabsInTitlebarAccessoryInFullScreen, YES, SECTION_TABS @"Place the tabbar in the window's titlebar in full screen mode (macOS 13+ only)?\nThis can be disabled to work around a bug in macOS where tabs may not be visible in full screen.");
 DEFINE_BOOL(defaultIconsUsingLetters, YES, SECTION_TABS @"Use the running command's first letter as the tab's default icon if there isn't a built in one.\nThis takes effect when tabs are configured to use built-in icons.");
 
@@ -348,6 +348,7 @@ DEFINE_FLOAT(horizontalScrollingSensitivity, 0.1, SECTION_MOUSE @"Sensitivity of
 
 #define SECTION_TERMINAL @"Terminal: "
 
+DEFINE_BOOL(bounceOnInactiveBell, NO, SECTION_TERMINAL @"Bounce dock icon when the bell rings while another app is active?");
 DEFINE_BOOL(traditionalVisualBell, NO, SECTION_TERMINAL @"Visual bell flashes the whole screen, not just a bell icon.");
 DEFINE_FLOAT(indicatorFlashInitialAlpha, 0.5, SECTION_TERMINAL @"Initial alpha value when flashing the visual bell or search wraparound indicator");
 DEFINE_FLOAT(timeBetweenBlinks, 0.5, SECTION_TERMINAL @"Cursor blink speed (seconds).");
@@ -410,6 +411,7 @@ DEFINE_BOOL(dockIconTogglesWindow, NO, SECTION_HOTKEY @"If the only window is a 
 DEFINE_BOOL(hotkeyWindowFloatsAboveOtherWindows, NO, SECTION_HOTKEY @"The hotkey window floats above other windows even when another application is active.\nYou must disable “Prefs > Keys > Hotkey window hides when focus is lost” for this setting to be effective.");
 DEFINE_FLOAT(hotKeyDoubleTapMaxDelay, 0.3, SECTION_HOTKEY @"The maximum amount of time allowed between presses of a modifier key when performing a modifier double-tap.");
 DEFINE_FLOAT(hotKeyDoubleTapMinDelay, 0.01, SECTION_HOTKEY @"The minimum amount of time required between presses of a modifier key when performing a modifier double-tap.");
+DEFINE_BOOL(showPinnedIndicator, NO, SECTION_HOTKEY @"Show indicator for pinned hotkey windows.");
 
 #pragma mark General
 
@@ -428,6 +430,8 @@ DEFINE_BOOL(useOpenDirectory, YES, SECTION_GENERAL @"Use Open Directory to deter
 DEFINE_SETTABLE_BOOL(disableDECRQCRA, NoSyncDisableDECRQCRA, YES, SECTION_GENERAL @"Disable DECRQCRA?\nThis control sequence allows an app running in the terminal to read its contents.");
 DEFINE_BOOL(disablePotentiallyInsecureEscapeSequences, NO, SECTION_GENERAL @"Disable potentially insecure escape sequences.\nSome features of iTerm2 expand the surface area for security issues. Consider turning this on when viewing untrusted content. The following custom escape sequences will be disabled: RemoteHost, StealFocus, CurrentDir, SetProfile, CopyToClipboard, EndCopy, File, SetBackgroundImageFile, OSC 6’s proxy icon-changing feature. The following DEC sequences are disabled: DECRQCRA. The following xterm extensions are disabled: Window Title Reporting, Icon Title Reporting. This will break displaying inline images, file download, some shell integration features, and other features.");
 DEFINE_BOOL(performDictionaryLookupOnQuickLook, YES, SECTION_GENERAL @"Perform dictionary lookups on force press.\nIf this is NO, force press will still preview the Semantic History action; only dictionary lookups can be disabled.");
+DEFINE_STRING(webUserAgent, @"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15", SECTION_GENERAL @"User agent for web views. Leave empty to use system default.");
+
 DEFINE_BOOL(jiggleTTYSizeOnClearBuffer, NO, SECTION_GENERAL @"Redraw the screen after the Clear Buffer menu item is selected.\nWhen enabled, the TTY size is briefly changed after clearing the buffer to cause the shell or current app to redraw.");
 DEFINE_BOOL(saveScrollBufferWhenClearing, YES, SECTION_GENERAL @"Save scroll buffer when clearing screen.\nWhen enabled, saves the current screen into scroll back buffer instead of clearing it.");
 DEFINE_BOOL(indicateBellsInDockBadgeLabel, YES, SECTION_GENERAL @"Indicate the number of bells rung while the app is inactive in the dock icon’s badge label");
@@ -437,7 +441,7 @@ DEFINE_BOOL(showTimestampsByDefault, NO, SECTION_GENERAL @"Show timestamps by de
 DEFINE_STRING(viewManPageCommand, @"man %@ || sleep 3", SECTION_GENERAL @"Command to view man pages.\nUsed when you press the man page button on the touch bar. %@ is replaced with the command. End the command with & to avoid opening an iTerm2 window (e.g., if you're launching an external viewer).");
 DEFINE_BOOL(hideStuckTooltips, YES, SECTION_GENERAL @"Hide stuck tooltips.\nWhen you hide iTerm2 using a hotkey while a tooltip is fading out it gets stuck because of an OS bug. Work around it with a nasty hack by enabling this feature.")
 DEFINE_BOOL(openFileOverridesSendText, YES, SECTION_GENERAL @"Should opening a script with iTerm2 disable the default profile's “Send Text at Start” setting?\nIf you use “open iTerm2 file.command” or drag a script onto iTerm2's icon and this setting is enabled then the script will be executed in lieu of the profile's “Send Text at Start” setting. If this setting is off then both will be executed.");
-DEFINE_BOOL(statusBarIcon, YES, SECTION_GENERAL @"Add status bar icon when excluded from dock?\nWhen you turn on “Exclude from Dock and ⌘-Tab Application Switcher” a status bar icon is added to the menu bar so you can switch the setting back off. Disable this to remove the status bar icon. Doing so makes it very hard to get to Preferences. You must restart iTerm2 after changing this setting.");
+DEFINE_BOOL(statusBarIcon, YES, SECTION_GENERAL @"Add status bar icon when excluded from dock?\nWhen you turn on “Exclude from Dock and ⌘-Tab Application Switcher” a status bar icon is added to the menu bar so you can switch the setting back off. Disable this to remove the status bar icon. Doing so makes it very hard to get to Settings. You must restart iTerm2 after changing this setting.");
 DEFINE_FLOAT(statusBarHeight, 21, SECTION_GENERAL @"Height of the status bar in points.\nThis will also affect the height of per-pane title bars becuase the status bar may be embedded in it. You must restart iTerm2 after changing this setting for it to take effect.");
 DEFINE_BOOL(wrapFocus, YES, SECTION_GENERAL @"Should split pane navigation by direction wrap around?");
 DEFINE_BOOL(openUntitledFile, YES, SECTION_GENERAL @"Open a new window when you click the dock icon and no windows are already open, and also on app launch when no other windows are open?");
@@ -754,9 +758,10 @@ DEFINE_BOOL(concurrentMutation, NO, SECTION_EXPERIMENTAL @"Mutate session state 
 DEFINE_BOOL(fastTriggerRegexes, YES, SECTION_EXPERIMENTAL @"Fast regular expression evaluation for triggers.\nThis is experimental because it could potentially change how regular expressions are interpreted.");
 DEFINE_BOOL(postFakeFlagsChangedEvents, NO, SECTION_EXPERIMENTAL @"Post fake flags-changed events when remapping modifiers with an event tap.\nThis is an attempt to work around incompatibilities with AltTab in issue 10220.");
 DEFINE_BOOL(fullWidthFlags, YES, SECTION_EXPERIMENTAL @"Flag emoji render full-width");
-DEFINE_INT(aiMaxTokens, 80, SECTION_EXPERIMENTAL @"Maximum tokens for OpenAI");
-DEFINE_STRING(aiModel, @"gpt-3.5-turbo", SECTION_EXPERIMENTAL @"OpenAI Model name");
+DEFINE_INT(aiResponseMaxTokens, 1000, SECTION_EXPERIMENTAL @"Maximum tokens for OpenAI to use in its response");
 DEFINE_BOOL(addUtilitiesToPATH, YES, SECTION_EXPERIMENTAL @"Add path to iTerm2 utilities to $PATH for new sessions?");
+DEFINE_STRING(aitermURL, @"https://api.openai.com/v1/completions", SECTION_EXPERIMENTAL @"URL for AI API.\nA ChatGPT API endpoint should be here. Note that this URL is only used if the model name does not begin with `gpt-` because those models used an older API.");
+DEFINE_BOOL(autoSearch, NO, SECTION_EXPERIMENTAL @"Automatically search for selected text after making a selection?");
 
 #pragma mark - Scripting
 #define SECTION_SCRIPTING @"Scripting: "

@@ -43,8 +43,8 @@ const CGFloat iTermTimestampGradientWidth = 20;
                                obscured:(CGFloat)obscured {
     self = [super init];
     if (self) {
-        _bgColor = backgroundColor;
-        _fgColor = textColor;
+        _bgColor = backgroundColor ?: [NSColor colorWithRed:0 green:0 blue:0 alpha:1];
+        _fgColor = textColor ?: [NSColor colorWithRed:0 green:0 blue:0 alpha:1];
         _now = now;
         _useTestingTimezone = useTestingTimezone;
         _rowHeight = rowHeight;
@@ -156,8 +156,8 @@ const CGFloat iTermTimestampGradientWidth = 20;
                row:(int)index
              frame:(NSRect)frame {
     NSColor *color = _fgColor;
-    NSDictionary *attributes = [self attributesForTextColor:color
-                                                     shadow:[self shadowForTextColor:color]
+    NSDictionary *attributes = [self attributesForTextColor:color ?: [NSColor colorWithRed:0 green:0 blue:0 alpha:1]
+                                                     shadow:[self shadowForTextColor:color ?: [NSColor colorWithRed:1 green:1 blue:1 alpha:1]]
                                                      retina:_isRetina];
     const BOOL repeat = [self rowIsRepeat:index];
     if (s.length && repeat) {
