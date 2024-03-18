@@ -151,7 +151,7 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
         _linebuffer = [[LineBuffer alloc] init];
         _colorMap = [[iTermColorMap alloc] init];
         _temporaryDoubleBuffer = [[iTermTemporaryDoubleBufferedGridController alloc] initWithQueue:queue];
-        _namedMarks = [[iTermAtomicMutableArrayOfWeakObjects alloc] init];
+        _namedMarks = [[iTermMutableArrayOfWeakObjects alloc] init];
         _blockStartAbsLine = [NSMutableDictionary dictionary];
         _fakePromptDetectedAbsLine = -1;
     }
@@ -235,7 +235,8 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
         _blockStartAbsLine = [source.blockStartAbsLine copy];
     }
     if (source.namedMarksDirty) {
-        _namedMarks = [source.namedMarks compactMap:^id _Nonnull(id<VT100ScreenMarkReading>  _Nonnull mark) {
+        _namedMarks = [source.namedMarks compactMap:^NSObject * _Nonnull(NSObject * _Nonnull obj) {
+            id<VT100ScreenMarkReading> mark = (id<VT100ScreenMarkReading>)obj;
             return [mark doppelganger];
         }];
     }
@@ -543,15 +544,15 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
 - (NSArray<iTermTerminalButtonPlace *> *)buttonsInRange:(VT100GridRange)range {
     NSMutableArray<iTermTerminalButtonPlace *> *places = [NSMutableArray array];
     const long long offset = self.cumulativeScrollbackOverflow;
-    Interval *interval = 
+    Interval *interval =
     [self intervalForGridCoordRange:VT100GridCoordRangeMake(0,
-                                                            range.location + offset,
+                                                            range.location,
                                                             0,
-                                                            range.location + offset)];
+                                                            range.location)];
     for (NSArray *objects in [self.intervalTree forwardLimitEnumeratorAt:interval.location]) {
         for (id<IntervalTreeObject> obj in objects) {
             VT100GridAbsCoordRange objRange = [self absCoordRangeForInterval:obj.entry.interval];
-            if (objRange.start.y >= range.location + range.length) {
+            if (objRange.start.y >= range.location + range.length + offset) {
                 return places;
             }
             if ([obj isKindOfClass:[iTermButtonMark class]]) {
@@ -1151,15 +1152,6 @@ NSString *VT100ScreenTerminalStateKeyPath = @"Path";
 }
 
 #pragma mark - VT100GridDelgate
-
-// This is here to enable copying of the temporary double buffer.
-- (screen_char_t)gridForegroundColorCode {
-    return self.terminalForegroundColorCode;
-}
-
-- (screen_char_t)gridBackgroundColorCode {
-    return self.terminalBackgroundColorCode;
-}
 
 - (iTermUnicodeNormalization)gridUnicodeNormalizationForm {
     return self.normalization;

@@ -158,6 +158,7 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 - (id<VT100ScreenMarkReading>)namedMarkWithGUID:(NSString *)guid;
 - (BOOL)markIsValid:(iTermMark *)mark;
 - (VT100GridRange)lineNumberRangeOfInterval:(Interval *)interval;
+- (VT100GridAbsCoordRange)absCoordRangeForInterval:(Interval *)interval;
 - (void)enumeratePromptsFrom:(NSString *)maybeFirst
                           to:(NSString *)maybeLast
                        block:(void (^ NS_NOESCAPE)(id<VT100ScreenMarkReading> mark))block;
@@ -252,7 +253,6 @@ typedef NS_ENUM(NSUInteger, VT100ScreenTriggerCheckType) {
 - (void)restoreSavedState:(NSDictionary *)savedState;
 - (NSArray<id<VT100ScreenMarkReading>> *)namedMarks;
 - (long long)startAbsLineForBlock:(NSString *)blockID;
-- (void)ensureDisambiguateEscapeInStack;
 - (VT100GridCoordRange)rangeOfOutputForCommandMark:(id<VT100ScreenMarkReading>)mark;
 
 @end

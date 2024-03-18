@@ -9,6 +9,7 @@
 #import "VT100Grid.h"
 #import "VT100Terminal.h"
 
+@class Interval;
 @class iTermColorMap;
 @class iTermExternalAttributeIndex;
 @protocol iTermMark;
@@ -112,7 +113,9 @@
 - (NSArray *)charactersWithNotesOnLine:(int)line;
 - (id<VT100ScreenMarkReading>)markOnLine:(int)line;
 - (void)removeNamedMark:(id<VT100ScreenMarkReading>)mark;
-- (id<VT100ScreenMarkReading>)commandMarkAt:(VT100GridCoord)coord;
+- (id<VT100ScreenMarkReading>)commandMarkAt:(VT100GridCoord)coord
+                                      range:(out VT100GridWindowedRange *)range;
+- (VT100GridAbsCoordRange)absCoordRangeForInterval:(Interval *)interval;
 
 - (NSString *)workingDirectoryOnLine:(int)line;
 

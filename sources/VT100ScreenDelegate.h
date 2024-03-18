@@ -87,11 +87,13 @@
 - (void)screenDidAppendStringToCurrentLine:(NSString * _Nonnull)string
                                isPlainText:(BOOL)plainText
                                 foreground:(screen_char_t)fg
-                                background:(screen_char_t)bg;
+                                background:(screen_char_t)bg
+                                  atPrompt:(BOOL)atPrompt;
 
 - (void)screenDidAppendAsciiDataToCurrentLine:(NSData * _Nonnull)asciiData
                                    foreground:(screen_char_t)fg
-                                   background:(screen_char_t)bg;
+                                   background:(screen_char_t)bg
+                                     atPrompt:(BOOL)atPrompt;
 
 - (void)screenRevealComposerWithPrompt:(NSArray<ScreenCharArray *> * _Nonnull)prompt;
 - (void)screenDismissComposer;
@@ -167,7 +169,7 @@
 - (void)screenPushCurrentTitleForWindow:(BOOL)flag;
 
 // If the flag is set, pop the current window title from the stack; otherwise pop the icon title.
-- (void)screenPopCurrentTitleForWindow:(BOOL)flag completion:(void (^)(void))completion;
+- (void)screenPopCurrentTitleForWindow:(BOOL)flag completion:(void (^ _Nonnull)(void))completion;
 
 // Returns the screen's number (in practice, this is the tab's number that cmd-N switches to).
 - (int)screenNumber;
@@ -319,7 +321,7 @@
 // Failed to run the command (e.g., syntax error)
 - (void)screenCommandDidAbortOnLine:(int)line
                         outputRange:(VT100GridCoordRange)outputRange
-                            command:(NSString *)command;
+                            command:(NSString *_Nonnull)command;
 
 typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
     // We polled for the working directory for a really sketchy reason, such as the user pressing enter.
@@ -418,6 +420,7 @@ typedef NS_ENUM(NSUInteger, VT100ScreenWorkingDirectoryPushType) {
                                    depth:(int)depth;
 
 - (void)screenDidTerminateSSHProcess:(int)pid code:(int)code depth:(int)depth;
+- (void)screenWillBeginSSHIntegration;
 - (void)screenBeginSSHIntegrationWithToken:(NSString * _Nonnull)token
                                   uniqueID:(NSString * _Nonnull)uniqueID
                                  encodedBA:(NSString * _Nonnull)encodedBA

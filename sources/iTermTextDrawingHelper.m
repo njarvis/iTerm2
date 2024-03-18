@@ -249,7 +249,6 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         [[NSColor redColor] set];
         iTermRectFill(rect, virtualOffset);
     }
-    [self updateCachedMetrics];
     // If there are two or more rects that need display, the OS will pass in |rect| as the smallest
     // bounding rect that contains them all. Luckily, we can get the list of the "real" dirty rects
     // and they're guaranteed to be disjoint. So draw each of them individually.
@@ -608,7 +607,7 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
             alpha = 1;
         }
     } else if (run->isMatch) {
-        color = [NSColor colorWithCalibratedRed:1 green:1 blue:0 alpha:1];
+        color = [_colorMap colorForKey:kColorMapMatch];
     } else {
         const BOOL defaultBackground = (run->bgColor == ALTSEM_DEFAULT &&
                                         run->bgColorMode == ColorModeAlternate);
@@ -1169,15 +1168,33 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
     const CGFloat margin = [iTermPreferences intForKey:kPreferenceKeySideMargins];
     for (iTermTerminalButton *button in [self.delegate drawingHelperTerminalButtons]) {
         CGFloat x;
-        if (button.absCoord.x < 0) {
+        button.enclosingSessionWidth = _gridSize.width;
+        VT100GridAbsCoord absCoord = [_delegate absCoordForButton:button];
+        if (absCoord.x < 0) {
             x = _scrollViewDocumentVisibleRect.size.width - margin;
         } else {
-            x = margin + button.absCoord.x * self.cellSize.width;
+            x = margin + absCoord.x * self.cellSize.width;
         }
+        const long long minAbsY = drawableCoordRange.start.y + _totalScrollbackOverflow;
         button.desiredFrame = [button frameWithX:x
-                                      minAbsLine:drawableCoordRange.start.y + _totalScrollbackOverflow
+                                            absY:absCoord.y
+                                      minAbsLine:minAbsY
                                 cumulativeOffset:_totalScrollbackOverflow
                                         cellSize:_cellSize];
+        if (absCoord.x < 0) {
+            absCoord.x =  1; //self.gridSize.width;
+        }
+        absCoord.y = MAX(absCoord.y, minAbsY);
+        button.absCoordForDesiredFrame = absCoord;
+        DLog(@"Set desired frame of %@ to %@ from minAbsLine:%@ = (%@ + %@) visibleRect:%@ cumulativeOffset:%@ cellSize.height:%@",
+             button,
+             NSStringFromRect(button.desiredFrame),
+             @(drawableCoordRange.start.y + _totalScrollbackOverflow),
+             @(drawableCoordRange.start.y),
+             @(_totalScrollbackOverflow),
+             NSStringFromRect(_visibleRect),
+             @(_totalScrollbackOverflow),
+             @(_cellSize.height));
     }
 }
 
@@ -2260,6 +2277,10 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
     return maskContext;
 }
 
+NSColor *iTermTextDrawingHelperTextColorForMatch(NSColor *bgColor) {
+    return bgColor.isDark ? [NSColor colorWithCalibratedRed:1 green:1 blue:1 alpha:1] : [NSColor colorWithCalibratedRed:0 green:0 blue:0 alpha:1];
+}
+
 NSColor *iTermTextDrawingHelperGetTextColor(iTermTextDrawingHelper *self,
                                             screen_char_t *c,
                                             BOOL inUnderlinedRange,
@@ -2290,7 +2311,8 @@ NSColor *iTermTextDrawingHelperGetTextColor(iTermTextDrawingHelper *self,
 
     if (isMatch) {
         // Black-on-yellow search result.
-        rawColor = [NSColor colorWithCalibratedRed:0 green:0 blue:0 alpha:1];
+        NSColor *bgColor = [context->colorMap colorForKey:kColorMapMatch];
+        rawColor = iTermTextDrawingHelperTextColorForMatch(bgColor);
         assert(rawColor);
         context->havePreviousCharacterAttributes = NO;
     } else if (inUnderlinedRange) {

@@ -941,29 +941,10 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 #pragma mark Set Needs Display Helpers
 
 - (void)setNeedsDisplayOnLine:(int)line {
-    [self setNeedsDisplayOnLine:line inRange:VT100GridRangeMake(0, _dataSource.width)];
+    [self requestDelegateRedraw];
 }
 
 - (void)setNeedsDisplayOnLine:(int)y inRange:(VT100GridRange)range {
-    NSRect dirtyRect;
-    const BOOL allowPartialLineRedraw = [iTermAdvancedSettingsModel preferSpeedToFullLigatureSupport];
-    const int x = allowPartialLineRedraw ? range.location : 0;
-    const int maxX = range.location + range.length;
-
-    dirtyRect.origin.x = [iTermPreferences intForKey:kPreferenceKeySideMargins] + x * _charWidth;
-    dirtyRect.origin.y = y * _lineHeight;
-    dirtyRect.size.width = allowPartialLineRedraw ? (maxX - x) * _charWidth : _dataSource.width;
-    dirtyRect.size.height = _lineHeight;
-
-    if (self.showTimestamps) {
-        dirtyRect.size.width = self.visibleRect.size.width - dirtyRect.origin.x;
-    }
-
-    // Expand the rect in case we're drawing a changed cell with an oversize glyph.
-    dirtyRect = [self rectWithHalo:dirtyRect];
-
-    DLog(@"Line %d is dirty in range [%d, %d), set rect %@ dirty",
-         y, x, maxX, [NSValue valueWithRect:dirtyRect]);
     [self requestDelegateRedraw];
 }
 
@@ -1057,7 +1038,9 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         if (_hoverBlockCopyButton) {
             buttons = [buttons arrayByAddingObject:_hoverBlockCopyButton];
         }
+        DLog(@"Mouse at %@", NSStringFromPoint(point));
         return [buttons anyWithBlock:^BOOL(iTermTerminalButton *button) {
+            DLog(@"Button %@ at %@", button, NSStringFromRect(button.desiredFrame));
             return NSPointInRect(point, button.desiredFrame);
         }];
     }
@@ -1462,6 +1445,10 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     [scrollView.verticalScroller setNeedsDisplay:YES];
 }
 
+- (BOOL)drawingHelperIsValid {
+    return _drawingHelper.delegate != nil;
+}
+
 - (iTermTextDrawingHelper *)drawingHelper {
     _drawingHelper.showStripes = (_showStripesWhenBroadcastingInput &&
                                   [_delegate textViewSessionIsBroadcastingInput]);
@@ -1516,6 +1503,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     const BOOL autoComposerOpen = [self.delegate textViewIsAutoComposerOpen];
     _drawingHelper.isCursorVisible = _cursorVisible && !autoComposerOpen;
     _drawingHelper.linesToSuppress = self.delegate.textViewLinesToSuppressDrawing;
+    [_drawingHelper updateCachedMetrics];
     [_drawingHelper updateButtonFrames];
     
     const VT100GridRange range = [self rangeOfVisibleLines];
@@ -4168,7 +4156,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
             NSString *selection = [self selectedText];
             if (selection) {
                 [[iTermFindPasteboard sharedInstance] setStringValueUnconditionally:selection];
-                [[iTermFindPasteboard sharedInstance] updateObservers:_delegate];
+                [[iTermFindPasteboard sharedInstance] updateObservers:_delegate internallyGenerated:YES];
             }
             break;
         }
@@ -4622,7 +4610,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         NSString *selection = [self selectedText];
         if (selection) {
             [[iTermFindPasteboard sharedInstance] setStringValueUnconditionally:selection];
-            [[iTermFindPasteboard sharedInstance] updateObservers:_delegate];
+            [[iTermFindPasteboard sharedInstance] updateObservers:_delegate internallyGenerated:YES];
         }
     }
 }
@@ -4644,7 +4632,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     const VT100GridCoord coord = VT100GridCoordFromAbsCoord(absCoord, _dataSource.totalScrollbackOverflow, &ok);
     if (!ok) {
         const long long totalScrollbackOverflow = _dataSource.totalScrollbackOverflow;
-        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), -1, -1);
+        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), 0, 0);
     }
     iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:_dataSource];
     [extractor restrictToLogicalWindowIncludingCoord:coord];
@@ -4657,7 +4645,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     const VT100GridCoord coord = VT100GridCoordFromAbsCoord(absCoord, _dataSource.totalScrollbackOverflow, &ok);
     const long long totalScrollbackOverflow = _dataSource.totalScrollbackOverflow;
     if (!ok) {
-        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), -1, -1);
+        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), 0, 0);
     }
     VT100GridWindowedRange range;
     [self getWordForX:coord.x
@@ -4691,7 +4679,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     }];
     const long long totalScrollbackOverflow = _dataSource.totalScrollbackOverflow;
     if (!ok) {
-        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), -1, -1);
+        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), 0, 0);
     }
     return VT100GridAbsWindowedRangeFromWindowedRange(relativeRange, totalScrollbackOverflow);
 }
@@ -4723,7 +4711,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                                           extractor.logicalWindow.length);
     }];
     if (!ok) {
-        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), -1, -1);
+        return VT100GridAbsWindowedRangeMake(VT100GridAbsCoordRangeMake(0, totalScrollbackOverflow, 0, totalScrollbackOverflow), 0, 0);
     }
     return result;
 }
@@ -4984,6 +4972,27 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     return [self terminalButtons];
 }
 
+- (VT100GridAbsCoord)absCoordForButton:(iTermTerminalButton *)button API_AVAILABLE(macos(11)) {
+    if (!button.mark) {
+        NSInteger y = button.transientAbsY;
+        if (y >= 0) {
+            // -1 means go in the right margin
+            return VT100GridAbsCoordMake(-1, y);
+        }
+    }
+    id<iTermMark> mark = button.mark;
+    Interval *interval = mark.entry.interval;
+    if (!interval) {
+        return VT100GridAbsCoordMake(-1, -1);
+    }
+    const VT100GridAbsCoord markCoord = [self.dataSource absCoordRangeForInterval:interval].start;
+    iTermTerminalMarkButton *markButton = [iTermTerminalMarkButton castFrom:button];
+    if (markButton) {
+        return VT100GridAbsCoordMake(self.dataSource.width + markButton.dx, markCoord.y - 1);
+    }
+    return markCoord;
+}
+
 // Does not include hover buttons.
 - (NSArray<iTermTerminalButton *> *)terminalButtons NS_AVAILABLE_MAC(11) {
     NSMutableArray<iTermTerminalButton *> *updated = [NSMutableArray array];
@@ -4996,11 +5005,12 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         NSInteger i = [_buttons indexOfObjectPassingTest:^BOOL(iTermTerminalButton * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
             return (obj.id == place.id);
         }];
-        if (i == NSNotFound || !VT100GridAbsCoordEquals(_buttons[i].absCoord, place.coord)) {
+        if (i == NSNotFound || !VT100GridAbsCoordEquals([self absCoordForButton:_buttons[i]], place.coord)) {
             if (place.mark.copyBlockID) {
                 iTermTerminalButton *button = [[iTermTerminalCopyButton alloc] initWithID:place.id 
                                                                                   blockID:place.mark.copyBlockID
-                                                                                 absCoord:place.coord];
+                                                                                     mark:place.mark
+                                                                                     absY:nil];
                 NSString *blockID = [[place.mark.copyBlockID copy] autorelease];
 
                 button.action = ^(NSPoint locationInWindow) {
@@ -5034,7 +5044,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             [updated addObject:existing];
         } else {
             iTermTerminalButton *button = [[iTermTerminalCopyCommandButton alloc] initWithMark:mark
-                                                                                      absCoord:VT100GridAbsCoordMake(x, i + offset)];
+                                                                                            dx:x - width];
             __weak __typeof(mark) weakMark = mark;
             button.action = ^(NSPoint locationInWindow) {
                 [weakSelf popCommandCopyMenuAt:locationInWindow for:weakMark];
@@ -5047,7 +5057,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             [updated addObject:existing];
         } else {
             iTermTerminalButton *button = [[iTermTerminalBookmarkButton alloc] initWithMark:mark
-                                                                                   absCoord:VT100GridAbsCoordMake(x, i + offset)];
+                                                                                         dx:x - width];
             __weak __typeof(mark) weakMark = mark;
             button.action = ^(NSPoint locationInWindow) {
                 NSString *command = weakMark.command;
@@ -5063,7 +5073,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             [updated addObject:existing];
         } else {
             iTermTerminalButton *button = [[iTermTerminalShareButton alloc] initWithMark:mark
-                                                                                absCoord:VT100GridAbsCoordMake(x, i + offset)];
+                                                                                      dx:x - width];
             __weak __typeof(mark) weakMark = mark;
             button.action = ^(NSPoint locationInWindow) {
                 [weakSelf popShareMenuAt:locationInWindow absLine:markLine + offset for:weakMark];
@@ -5198,7 +5208,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         if (![button isKindOfClass:desiredClass]) {
             return NO;
         }
-        return button.mark == mark || [button.mark.guid isEqualToString:mark.guid];
+        return button.screenMark == mark || [button.screenMark.guid isEqualToString:mark.guid];
     }]];
 }
 
@@ -5890,7 +5900,8 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 
 - (void)mouseHandlerOpenTargetWithEvent:(NSEvent *)event
                            inBackground:(BOOL)inBackground {
-    if ([self showCommandInfoForEvent:event]) {
+    if ([iTermAdvancedSettingsModel enableCmdClickPromptForShowCommandInfo]
+        && [self showCommandInfoForEvent:event]) {
         return;
     }
     [_urlActionHelper openTargetWithEvent:event inBackground:inBackground];
@@ -6236,7 +6247,9 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
     }
     _hoverBlockCopyButton = [[iTermTerminalCopyButton alloc] initWithID:-1
                                                                 blockID:block
-                                                               absCoord:VT100GridAbsCoordMake(self.dataSource.width - 1, i + _dataSource.totalScrollbackOverflow)];
+                                                                   mark:nil
+                                                                   absY:@(i + _dataSource.totalScrollbackOverflow)];
+    _hoverBlockCopyButton.isFloating = YES;
     __weak __typeof(self) weakSelf = self;
     const long long offset = _dataSource.totalScrollbackOverflow;
     _hoverBlockCopyButton.action = ^(NSPoint locationInWindow) {

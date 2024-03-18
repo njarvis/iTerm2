@@ -1,5 +1,5 @@
 //
-//  iTermAtomicMutableArrayOfWeakObjects.h
+//  iTermLegacyAtomicMutableArrayOfWeakObjects.h
 //  iTerm2SharedARC
 //
 //  Created by George Nachman on 1/3/23.
@@ -9,7 +9,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface iTermAtomicMutableArrayOfWeakObjects<ObjectType>: NSObject<NSFastEnumeration>
+// This only exists for objective-c++ code to use. Other code should use the swift implementation.
+@interface iTermLegacyAtomicMutableArrayOfWeakObjects<ObjectType>: NSObject<NSFastEnumeration>
 @property (atomic, readonly) NSArray<ObjectType> *strongObjects;
 @property (atomic, readonly) NSUInteger count;
 
@@ -19,7 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)removeAllObjects;
 - (void)addObject:(ObjectType)object;
 - (void)prune;
-- (iTermAtomicMutableArrayOfWeakObjects *)compactMap:(id (^)(ObjectType value))block;
+- (iTermLegacyAtomicMutableArrayOfWeakObjects *)compactMap:(id (^)(ObjectType value))block;
 
 @end
 

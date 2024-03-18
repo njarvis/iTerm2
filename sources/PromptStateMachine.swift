@@ -153,6 +153,14 @@ class PromptStateMachine: NSObject {
     private var _state = State.ground
     private var state: State { _state }
     private var currentEvent = ""
+    @objc var isAtPrompt: Bool {
+        switch state {
+        case .disabled, .ground, .executing:
+            return false
+        case .receivingPrompt, .enteringCommand, .accruingAlreadyEnteredCommand, .echoingBack:
+            return true
+        }
+    }
 
     private func set(state newValue: State, on event: String) {
         DLog("\(event): \(state) -> \(newValue)")
@@ -179,8 +187,14 @@ class PromptStateMachine: NSObject {
 
     @objc(setAllowed:)
     func setAllowed(_ allowed: Bool) {
-        currentEvent = "setAllowed"
-        defer { currentEvent = "none" }
+        if gDebugLogging.boolValue {
+            currentEvent = "setAllowed"
+        }
+        defer {
+            if gDebugLogging.boolValue {
+                currentEvent = "none"
+            }
+        }
         if !allowed {
             set(state: .disabled, on: "disallowed")
             dismissComposer()
@@ -194,8 +208,14 @@ class PromptStateMachine: NSObject {
     func handle(token: VT100Token, encoding: UInt) {
         // Computing the description can be somewhat expensive, and it's only
         // used for debugging. Use a placeholder instead when it's not used.
-        currentEvent = "handleToken\(gDebugLogging.boolValue ? token.debugDescription : "<optimized>")"
-        defer { currentEvent = "none" }
+        if gDebugLogging.boolValue {
+            currentEvent = "handleToken\(token.debugDescription)"
+        }
+        defer {
+            if gDebugLogging.boolValue {
+                currentEvent = "none"
+            }
+        }
 
         switch token.type {
         case XTERMCC_FINAL_TERM:
@@ -208,8 +228,14 @@ class PromptStateMachine: NSObject {
     @objc
     func willSendCommand() {
         DLog("willSendCommand in \(state)")
-        currentEvent = "willSendCommand"
-        defer { currentEvent = "none" }
+        if gDebugLogging.boolValue {
+            currentEvent = "willSendCommand"
+        }
+        defer {
+            if gDebugLogging.boolValue {
+                currentEvent = "none"
+            }
+        }
 
         switch state {
         case .disabled, .ground, .receivingPrompt, .accruingAlreadyEnteredCommand, .echoingBack, .executing:
@@ -221,8 +247,14 @@ class PromptStateMachine: NSObject {
 
     @objc
     func revealOrDismissComposerAgain() {
-        currentEvent = "re-do"
-        defer { currentEvent = "none" }
+        if gDebugLogging.boolValue {
+            currentEvent = "re-do"
+        }
+        defer {
+            if gDebugLogging.boolValue {
+                currentEvent = "none"
+            }
+        }
         switch state {
         case .disabled, .ground, .receivingPrompt, .echoingBack, .executing:
             dismissComposer()

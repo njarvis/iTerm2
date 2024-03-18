@@ -17,12 +17,14 @@ protocol ComposerTextViewDelegate: AnyObject {
     @objc(composerTextViewSendControl:) func composerTextViewSendControl(_ control: String)
     @objc(composerTextViewOpenHistoryWithPrefix:forSearch:) func composerTextViewOpenHistory(prefix: String,
                                                                                              forSearch: Bool)
+    @objc(composerTextViewShowCompletions) func composerTextViewShowCompletions()
     @objc(composerTextViewWantsKeyEquivalent:) func composerTextViewWantsKeyEquivalent(_ event: NSEvent) -> Bool
     @objc(composerTextViewPerformFindPanelAction:) func composerTextViewPerformFindPanelAction(_ sender: Any?)
     @objc(composerTextViewClear) func composerTextViewClear()
 
     @objc(composerSyntaxHighlighterForAttributedString:)
     func composerSyntaxHighlighter(textStorage: NSMutableAttributedString) -> SyntaxHighlighting
+    @objc func composerHandleKeyDown(event: NSEvent) -> Bool
 
     // Optional
     @objc(composerTextViewDidResignFirstResponder) optional func composerTextViewDidResignFirstResponder()
@@ -204,7 +206,9 @@ class ComposerTextView: MultiCursorTextView {
                 multiCursorReplaceCharacters(in: range, with: string)
             }
         } else {
-            multiCursorReplaceCharacters(in: NSRange(location: 0, length: textStorage?.length ?? 0),
+            let range = NSRange(from: prefixRange.upperBound,
+                                to: textStorage?.length ?? prefixRange.upperBound)
+            multiCursorReplaceCharacters(in: range,
                                          with: string)
         }
     }
@@ -240,7 +244,7 @@ class ComposerTextView: MultiCursorTextView {
                         return textStorage.string.substringWithUTF16Range(range)
                     }.joined(separator: "\n")
                     iTermFindPasteboard.sharedInstance().setStringValueUnconditionally(selection)
-                    iTermFindPasteboard.sharedInstance().updateObservers(self)
+                    iTermFindPasteboard.sharedInstance().updateObservers(self, internallyGenerated: true)
                     return
                 default:
                     break
@@ -273,6 +277,15 @@ class ComposerTextView: MultiCursorTextView {
         }),
         Action(modifiers: [.option], characters: "\r", closure: { textView, _ in
             textView.enqueueEachAction()
+            return true
+        }),
+        // Tab
+        Action(modifiers: [], characters: "\t", closure: { textView, _ in
+            if textView.hasSuggestion && textView.suggestionRange.length > 0 {
+                textView.acceptSuggestion()
+            } else {
+                textView.composerDelegate?.composerTextViewShowCompletions()
+            }
             return true
         })
     ]
@@ -331,6 +344,15 @@ class ComposerTextView: MultiCursorTextView {
             textView.selectAll(nil)
             textView.delete(nil)
             return true
+        }),
+        // Tab
+        Action(modifiers: [], characters: "\t", closure: { textView, _ in
+            if textView.hasSuggestion && textView.suggestionRange.length > 0 {
+                textView.acceptSuggestion()
+            } else {
+                textView.composerDelegate?.composerTextViewShowCompletions()
+            }
+            return true
         })
     ]
 
@@ -387,6 +409,9 @@ class ComposerTextView: MultiCursorTextView {
             action.characters == event.characters && action.modifiers == maskedModifiers
         }
         if let action, action.closure(self, event) {
+            return
+        }
+        if composerDelegate?.composerHandleKeyDown(event: event) ?? false {
             return
         }
         super.keyDown(with: event)

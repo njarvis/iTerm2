@@ -326,6 +326,7 @@ DEFINE_BOOL(stealKeyFocus, NO, SECTION_MOUSE @"When Focus Follows Mouse is enabl
 DEFINE_BOOL(aggressiveFocusFollowsMouse, NO, SECTION_MOUSE @"When Focus Follows Mouse is enabled, activate the window under the cursor when iTerm2 becomes active?");
 DEFINE_BOOL(cmdClickWhenInactiveInvokesSemanticHistory, NO, SECTION_MOUSE @"⌘-click in an active pane while iTerm2 isn't the active app invokes Semantic History.\nBy default, iTerm2 respects the OS standard that ⌘-click in an app that doesn't have keyboard focus behaves like a non-⌘ click that does not raise the window.");
 DEFINE_BOOL(enableUnderlineSemanticHistoryOnCmdHover, YES, SECTION_MOUSE @"Underline Semantic History-selectable items under the cursor while holding ⌘?");
+DEFINE_BOOL(enableCmdClickPromptForShowCommandInfo, YES, SECTION_MOUSE @"⌘-click in the prompt shows the Command Info window");
 DEFINE_BOOL(sensitiveScrollWheel, NO, SECTION_MOUSE @"Scroll on any scroll wheel movement, no matter how small?");
 DEFINE_FLOAT(scrollWheelAcceleration, 1, SECTION_MOUSE @"Speed up scroll gestures by this factor.");
 
@@ -378,6 +379,7 @@ DEFINE_BOOL(fullHeightCursor, NO, SECTION_TERMINAL @"Cursor occupies line spacin
 DEFINE_FLOAT(underlineCursorOffset, 0, SECTION_TERMINAL @"Vertical offset for underline cursor.\nPositive values move it up, negative values move it down.");
 DEFINE_SETTABLE_OPTIONAL_BOOL(preventEscapeSequenceFromClearingHistory, PreventEscapeSequenceFromClearingHistory, nil, SECTION_TERMINAL @"Prevent CSI 3 J from clearing scrollback history?\nThis is also known as the terminfo E3 capability.");
 DEFINE_SETTABLE_OPTIONAL_BOOL(preventEscapeSequenceFromChangingProfile, PreventEscapeSequenceFromChangingProfile, nil, SECTION_TERMINAL @"Prevent control sequences from changing the current profile?");
+DEFINE_SETTABLE_BOOL(warnAboutSecureKeyboardInputWithOpenCommand, WarnAboutSecureKeyboardInputWithOpenCommand, YES, SECTION_TERMINAL @"Warn if the `open` command appears to fail when secure keyboard input is enabled?")
 DEFINE_INT(maxHistoryLinesToRestore, 20000, SECTION_TERMINAL @"Maximum number of lines of history to restore.\nWhen the app is relaunched, only the last N lines of history are restored to avoid making launch too slow. If you reduce this number, existing sessions won't be affected until their history is cleared.");
 
 DEFINE_FLOAT(verticalBarCursorWidth, 1, SECTION_TERMINAL @"Width of vertical bar cursor.");
@@ -479,6 +481,7 @@ DEFINE_FLOAT(commandHistoryAgePower, 1, SECTION_GENERAL @"When sorting command h
 DEFINE_BOOL(performSQLiteIntegrityCheck, YES, SECTION_GENERAL @"Perform restorable state integrity checks?");
 DEFINE_STRING(lastpassGroups, @"", SECTION_GENERAL @"Comma-separated list of LastPass groups for the password manager to look in for passwords.");
 DEFINE_STRING(onePasswordAccount, @"", SECTION_GENERAL @"1Password account name.\nThis is used if you’ve enabled the 1Password integration in the password manager. Use `op account list` to get the list of accounts. This can be an account shorthand, sign-in address, account ID, or user ID.");
+DEFINE_BOOL(excludeUtunFromNetworkUtilization, YES, SECTION_GENERAL @"Exclude utun interfaces from network utilization?\nThis is useful if you use a VPN and only want to see the traffic that goes over Wi-Fi or Ethernet.");
 
 #pragma mark - Drawing
 
@@ -762,6 +765,8 @@ DEFINE_INT(aiResponseMaxTokens, 1000, SECTION_EXPERIMENTAL @"Maximum tokens for 
 DEFINE_BOOL(addUtilitiesToPATH, YES, SECTION_EXPERIMENTAL @"Add path to iTerm2 utilities to $PATH for new sessions?");
 DEFINE_STRING(aitermURL, @"https://api.openai.com/v1/completions", SECTION_EXPERIMENTAL @"URL for AI API.\nA ChatGPT API endpoint should be here. Note that this URL is only used if the model name does not begin with `gpt-` because those models used an older API.");
 DEFINE_BOOL(autoSearch, NO, SECTION_EXPERIMENTAL @"Automatically search for selected text after making a selection?");
+DEFINE_BOOL(smartLoggingWithAutoComposer, NO, SECTION_EXPERIMENTAL @"Enable more compact logging when using auto composer?\nThis will avoid logging raw data in your prompt and your interactions with it. Instead, the prompt is logged once in plain text and the command is logged when sent.");
+DEFINE_BOOL(disclaimChildren, NO, SECTION_EXPERIMENTAL @"Disclaim ownership of children.\nBy enabling this, when launching a Cocoa app from a terminal window TCC should attribute ownership to the app, not iTerm2, for permissions. In order for changes to this setting to take effect, you must kill iTermServer.");
 
 #pragma mark - Scripting
 #define SECTION_SCRIPTING @"Scripting: "

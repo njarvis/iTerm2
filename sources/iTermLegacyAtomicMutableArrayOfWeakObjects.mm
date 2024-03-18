@@ -1,11 +1,11 @@
 //
-//  iTermAtomicMutableArrayOfWeakObjects.m
+//  iTermLegacyAtomicMutableArrayOfWeakObjects.mm
 //  iTerm2SharedARC
 //
 //  Created by George Nachman on 1/3/23.
 //
 
-#import "iTermAtomicMutableArrayOfWeakObjects.h"
+#import "iTermLegacyAtomicMutableArrayOfWeakObjects.h"
 
 extern "C" {
 #import "DebugLogging.h"
@@ -15,20 +15,21 @@ extern "C" {
 
 #include <atomic>
 
-@implementation iTermAtomicMutableArrayOfWeakObjects {
+@implementation iTermLegacyAtomicMutableArrayOfWeakObjects {
     NSMutableArray<iTermWeakBox *> *_array;
     id _lock;
 }
 
 // Sanity check
-static std::atomic<int> iTermAtomicMutableArrayOfWeakObjectsLockCount;
-static void iTermAtomicMutableArrayOfWeakObjectsLock(void) {
-    iTermAtomicMutableArrayOfWeakObjectsLockCount += 1;
-    assert(iTermAtomicMutableArrayOfWeakObjectsLockCount == 1);
+static std::atomic<int> iTermLegacyAtomicMutableArrayOfWeakObjectsLockCount;
+static void iTermLegacyAtomicMutableArrayOfWeakObjectsLock(void) {
+    iTermLegacyAtomicMutableArrayOfWeakObjectsLockCount += 1;
+    assert(iTermLegacyAtomicMutableArrayOfWeakObjectsLockCount == 1);
 }
-static void iTermAtomicMutableArrayOfWeakObjectsLockUnlock(void) {
-    iTermAtomicMutableArrayOfWeakObjectsLockCount -= 1;
-    assert(iTermAtomicMutableArrayOfWeakObjectsLockCount == 0);
+
+static void iTermLegacyAtomicMutableArrayOfWeakObjectsLockUnlock(void) {
+    iTermLegacyAtomicMutableArrayOfWeakObjectsLockCount -= 1;
+    assert(iTermLegacyAtomicMutableArrayOfWeakObjectsLockCount == 0);
 }
 
 + (id)lock {
@@ -52,51 +53,51 @@ static void iTermAtomicMutableArrayOfWeakObjectsLockUnlock(void) {
 }
 
 - (void)removeObjectsPassingTest:(BOOL (^)(id anObject))block {
-    @synchronized([iTermAtomicMutableArrayOfWeakObjects lock]) {
-        iTermAtomicMutableArrayOfWeakObjectsLock();
+    @synchronized([iTermLegacyAtomicMutableArrayOfWeakObjects lock]) {
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLock();
         @try {
             [_array removeObjectsPassingTest:^(iTermWeakBox *box) {
                 return block(box.object);
             }];
         } @catch (NSException *exception) {
-            const int count = iTermAtomicMutableArrayOfWeakObjectsLockCount;
+            const int count = iTermLegacyAtomicMutableArrayOfWeakObjectsLockCount;
             CrashLog(@"%@ with lock count=%@", exception.debugDescription, @(count));
             @throw exception;
         }
-        iTermAtomicMutableArrayOfWeakObjectsLockUnlock();
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLockUnlock();
     }
 }
 
 - (NSArray *)strongObjects {
-    @synchronized([iTermAtomicMutableArrayOfWeakObjects lock]) {
-        iTermAtomicMutableArrayOfWeakObjectsLock();
+    @synchronized([iTermLegacyAtomicMutableArrayOfWeakObjects lock]) {
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLock();
         NSArray *result = [_array mapWithBlock:^(iTermWeakBox *box) { return box.object; }];
-        iTermAtomicMutableArrayOfWeakObjectsLockUnlock();
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLockUnlock();
         return result;
     }
 }
 
 - (void)removeAllObjects {
-    @synchronized([iTermAtomicMutableArrayOfWeakObjects lock]) {
-        iTermAtomicMutableArrayOfWeakObjectsLock();
+    @synchronized([iTermLegacyAtomicMutableArrayOfWeakObjects lock]) {
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLock();
         [_array removeAllObjects];
-        iTermAtomicMutableArrayOfWeakObjectsLockUnlock();
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLockUnlock();
     }
 }
 
 - (void)addObject:(id)object {
-    @synchronized([iTermAtomicMutableArrayOfWeakObjects lock]) {
-        iTermAtomicMutableArrayOfWeakObjectsLock();
+    @synchronized([iTermLegacyAtomicMutableArrayOfWeakObjects lock]) {
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLock();
         [_array addObject:[iTermWeakBox boxFor:object]];
-        iTermAtomicMutableArrayOfWeakObjectsLockUnlock();
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLockUnlock();
     }
 }
 
 - (NSUInteger)count {
-    @synchronized([iTermAtomicMutableArrayOfWeakObjects lock]) {
-        iTermAtomicMutableArrayOfWeakObjectsLock();
+    @synchronized([iTermLegacyAtomicMutableArrayOfWeakObjects lock]) {
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLock();
         const NSUInteger result = _array.count;
-        iTermAtomicMutableArrayOfWeakObjectsLockUnlock();
+        iTermLegacyAtomicMutableArrayOfWeakObjectsLockUnlock();
         return result;
     }
 }
@@ -107,8 +108,8 @@ static void iTermAtomicMutableArrayOfWeakObjectsLockUnlock(void) {
     }];
 }
 
-- (iTermAtomicMutableArrayOfWeakObjects *)compactMap:(id (^)(id))block {
-    iTermAtomicMutableArrayOfWeakObjects *result = [[iTermAtomicMutableArrayOfWeakObjects alloc] init];
+- (iTermLegacyAtomicMutableArrayOfWeakObjects *)compactMap:(id (^)(id))block {
+    iTermLegacyAtomicMutableArrayOfWeakObjects *result = [[iTermLegacyAtomicMutableArrayOfWeakObjects alloc] init];
     for (id object in [self strongObjects]) {
         id mapped = block(object);
         if (mapped) {
@@ -123,4 +124,3 @@ static void iTermAtomicMutableArrayOfWeakObjectsLockUnlock(void) {
 }
 
 @end
-

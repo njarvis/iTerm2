@@ -37,6 +37,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)minimalComposerOpenHistory:(iTermMinimalComposerViewController *)composer
                             prefix:(NSString *)prefix
                          forSearch:(BOOL)forSearch;
+- (void)minimalComposerShowCompletions:(NSArray<NSString *> *)completions;
 - (BOOL)minimalComposer:(iTermMinimalComposerViewController *)composer wantsKeyEquivalent:(NSEvent *)event;
 - (void)minimalComposer:(iTermMinimalComposerViewController *)composer performFindPanelAction:(id)sender;
 - (void)minimalComposer:(iTermMinimalComposerViewController *)composer
@@ -50,6 +51,8 @@ NS_ASSUME_NONNULL_BEGIN
                                tmuxController:(TmuxController *)tmuxController;
 - (void)minimalComposer:(iTermMinimalComposerViewController *)composer
        fetchSuggestions:(iTermSuggestionRequest *)request;
+- (BOOL)minimalComposerHandleKeyDown:(NSEvent *)event;
+- (NSResponder *)minimalComposerNextResponder;
 
 @end
 

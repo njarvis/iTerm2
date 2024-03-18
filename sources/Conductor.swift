@@ -23,6 +23,7 @@ protocol ConductorDelegate: Any {
     func conductorAbort(reason: String)
     func conductorQuit()
     func conductorStateDidChange()
+    func conductorStopQueueingInput()
     @objc func conductorSendInitialText()
     var guid: String { get }
 }
@@ -249,7 +250,8 @@ class Conductor: NSObject, Codable {
                         request.prefix.base64Encoded,
                         request.directories.map { $0.base64Encoded }.joined(separator: " "),
                         (request.workingDirectory ?? "//").base64Encoded,
-                        request.executable ? "rx" : "r"
+                        request.executable ? "rx" : "r",
+                        "\(request.limit)"
                 ].joined(separator: "\n")
 
             case .rm(let path, let recursive):
@@ -1208,6 +1210,7 @@ class Conductor: NSObject, Codable {
     }
 
     private func execLoginShell() {
+        delegate?.conductorStopQueueingInput()
         if let modifiedCommandArgs = modifiedCommandArgs,
            modifiedCommandArgs.isEmpty {
             send(.execLoginShell(modifiedCommandArgs), .handleNonFramerLogin)
@@ -1488,6 +1491,7 @@ class Conductor: NSObject, Codable {
         framedPID = pid
         sendInitialText()
         delegate?.conductorStateDidChange()
+        delegate?.conductorStopQueueingInput()
     }
 
     @objc(handleLine:depth:) func handle(line: String, depth: Int32) {

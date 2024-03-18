@@ -71,7 +71,6 @@
 #import "iTermScriptConsole.h"
 #import "iTermScriptHistory.h"
 #import "iTermSharedImageStore.h"
-#import "iTermSlownessDetector.h"
 #import "iTermSnippetsModel.h"
 #import "iTermStandardKeyMapper.h"
 #import "iTermStatusBarUnreadCountController.h"
@@ -364,6 +363,9 @@ typedef NS_ENUM(NSUInteger, iTermSSHState) {
     iTermSSHStateProfile,
 };
 
+@interface PTYSession(AppSwitching)<iTermAppSwitchingPreventionDetectorDelegate>
+@end
+
 @implementation PTYSession {
     NSString *_termVariable;
 
@@ -625,10 +627,11 @@ typedef NS_ENUM(NSUInteger, iTermSSHState) {
 
     iTermLocalFileChecker *_localFileChecker;
     BOOL _needsComposerColorUpdate;
-    BOOL _textViewShouldTakeFirstResponder;
 
     // Run this when the composer connects.
     void (^_pendingConductor)(PTYSession *);
+    BOOL _connectingSSH;
+    NSMutableData *_queuedConnectingSSH;
 }
 
 @synthesize isDivorced = _divorced;
@@ -888,14 +891,16 @@ typedef NS_ENUM(NSUInteger, iTermSSHState) {
                    options:NSKeyValueObservingOptionNew
                    context:&iTermEffectiveAppearanceKey];
 
-        [[iTermFindPasteboard sharedInstance] addObserver:self block:^(id sender, NSString * _Nonnull newValue) {
+        [[iTermFindPasteboard sharedInstance] addObserver:self block:^(id sender, NSString * _Nonnull newValue, BOOL internallyGenerated) {
             if (!weakSelf.view.window.isKeyWindow) {
                 return;
             }
             if (![iTermAdvancedSettingsModel synchronizeQueryWithFindPasteboard] && sender != weakSelf) {
                 return;
             }
-            [weakSelf findPasteboardStringDidChangeTo:newValue];
+            if (internallyGenerated) {
+                [weakSelf findPasteboardStringDidChangeTo:newValue];
+            }
         }];
 
         if (!synthetic) {
@@ -1062,6 +1067,9 @@ ITERM_WEAKLY_REFERENCEABLE
     [_desiredComposerPrompt release];
     [_localFileChecker release];
     [_pendingConductor release];
+    [_appSwitchingPreventionDetector release];
+    [_queuedConnectingSSH release];
+
     [super dealloc];
 }
 
@@ -2608,6 +2616,9 @@ ITERM_WEAKLY_REFERENCEABLE
     env[PWD_ENVNAME] = trimmed;
 
     NSString *itermId = [self sessionId];
+    if (!self.isTmuxClient) {
+        env[@"TERM_FEATURES"] = [VT100Output encodedTermFeaturesForCapabilities:[self capabilities]];
+    }
     env[@"ITERM_SESSION_ID"] = itermId;
     env[@"TERM_PROGRAM_VERSION"] = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"CFBundleShortVersionString"];
     env[@"TERM_SESSION_ID"] = itermId;
@@ -3332,7 +3343,7 @@ ITERM_WEAKLY_REFERENCEABLE
     forceEncoding:(BOOL)forceEncoding
         reporting:(BOOL)reporting {
     NSStringEncoding encoding = forceEncoding ? optionalEncoding : _screen.terminalEncoding;
-    if (self.tmuxMode == TMUX_CLIENT || _conductor.handlesKeystrokes) {
+    if (self.tmuxMode == TMUX_CLIENT || _conductor.handlesKeystrokes || _connectingSSH) {
         [self setBell:NO];
         if ([[_delegate realParentWindow] broadcastInputToSession:self]) {
             [[_delegate realParentWindow] sendInputToAllSessions:string
@@ -3340,6 +3351,8 @@ ITERM_WEAKLY_REFERENCEABLE
                                                    forceEncoding:forceEncoding];
         } else if (_conductor.handlesKeystrokes) {
             [_conductor sendKeys:[string dataUsingEncoding:encoding]];
+        } else if (_connectingSSH) {
+            [_queuedConnectingSSH appendData:[string dataUsingEncoding:encoding]];
         } else {
             assert(self.tmuxMode == TMUX_CLIENT);
             [[_tmuxController gateway] sendKeys:string
@@ -3430,6 +3443,8 @@ ITERM_WEAKLY_REFERENCEABLE
                                                                     alpha:1]];
         [terminal setBackgroundColor:ALTSEM_DEFAULT
                   alternateSemantics:YES];
+        [terminal updateDefaultChar];
+        mutableState.currentGrid.defaultChar = terminal.defaultChar;
         int width = (mutableState.width - message.length) / 2;
         if (width > 0) {
             [mutableState appendNativeImageAtCursorWithName:@"BrokenPipeDivider"
@@ -3445,6 +3460,8 @@ ITERM_WEAKLY_REFERENCEABLE
                   alternateSemantics:savedFgColor.foregroundColorMode == ColorModeAlternate];
         [terminal setBackgroundColor:savedBgColor.backgroundColor
                   alternateSemantics:savedBgColor.backgroundColorMode == ColorModeAlternate];
+        [terminal updateDefaultChar];
+        mutableState.currentGrid.defaultChar = terminal.defaultChar;
     }];
 }
 
@@ -4330,6 +4347,7 @@ ITERM_WEAKLY_REFERENCEABLE
                               @(kColorMapSelectedText): k(KEY_SELECTED_TEXT_COLOR),
                               @(kColorMapBold): k(KEY_BOLD_COLOR),
                               @(kColorMapLink): k(KEY_LINK_COLOR),
+                              @(kColorMapMatch): k(KEY_MATCH_COLOR),
                               @(kColorMapCursor): k(KEY_CURSOR_COLOR),
                               @(kColorMapCursorText): k(KEY_CURSOR_TEXT_COLOR),
                               @(kColorMapUnderline): (useUnderline ? k(KEY_UNDERLINE_COLOR) : [NSNull null])
@@ -5848,7 +5866,7 @@ static NSString *const PTYSessionComposerPrefixUserDataKeyDetectedByTrigger = @"
     DLog(@"Reveal auto composer. isAutoComposer <- YES");
     self.composerManager.isAutoComposer = YES;
     NSMutableAttributedString *prompt = [self kernedAttributedStringForScreenChars:promptText];
-    [self.composerManager reveal];
+    [self.composerManager revealMakingFirstResponder:[self textViewOrComposerIsFirstResponder]];
     NSDictionary *userData = nil;
     DLog(@"revealing auto composer");
     if (_screen.lastPromptMark.promptText) {
@@ -6367,6 +6385,7 @@ DLog(args); \
 }
 
 - (void)compose {
+    self.composerManager.isAutoComposer = self.shouldShowAutoComposer;
     if (self.currentCommand.length > 0) {
         [self setComposerString:self.currentCommand];
     }
@@ -7161,13 +7180,15 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         [pboard declareTypes:@[ NSPasteboardTypeString ] owner:self];
         [pboard setData:_pbtext forType:NSPasteboardTypeString];
 
+        const BOOL wasFindPasteboard = [_pasteboard isEqual:NSPasteboardNameFind];
         [_pasteboard release];
         _pasteboard = nil;
         [_pbtext release];
         _pbtext = nil;
 
-        // In case it was the find pasteboard that changed
-        [[iTermFindPasteboard sharedInstance] updateObservers:self];
+        if (wasFindPasteboard) {
+            [[iTermFindPasteboard sharedInstance] updateObservers:self internallyGenerated:YES];
+        }
     }
 }
 
@@ -9773,7 +9794,6 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     DLog(@"PTYSession paste:");
 
     if ([self haveAutoComposer]) {
-        _textViewShouldTakeFirstResponder = NO;
         [self makeComposerFirstResponderIfAllowed];
         [_composerManager paste:sender];
         return;
@@ -10192,7 +10212,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 }
 
 - (void)makeComposerFirstResponderIfAllowed {
-    if (!self.copyMode && self.haveAutoComposer && !_textViewShouldTakeFirstResponder) {
+    if (!self.copyMode && self.haveAutoComposer) {
         [_composerManager makeDropDownComposerFirstResponder];
     }
 }
@@ -11659,12 +11679,16 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                   alternateSemantics:YES];
         [terminal setBackgroundColor:ALTSEM_DEFAULT
                   alternateSemantics:YES];
+        [terminal updateDefaultChar];
+        mutableState.currentGrid.defaultChar = terminal.defaultChar;
         [mutableState appendStringAtCursor:message];
         [mutableState appendCarriageReturnLineFeed];
         [terminal setForegroundColor:savedFgColor.foregroundColor
                   alternateSemantics:savedFgColor.foregroundColorMode == ColorModeAlternate];
         [terminal setBackgroundColor:savedBgColor.backgroundColor
                   alternateSemantics:savedBgColor.backgroundColorMode == ColorModeAlternate];
+        [terminal updateDefaultChar];
+        mutableState.currentGrid.defaultChar = terminal.defaultChar;
     }];
 }
 
@@ -11749,17 +11773,20 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 - (void)screenDidAppendStringToCurrentLine:(NSString * _Nonnull)string
                                isPlainText:(BOOL)plainText
                                 foreground:(screen_char_t)fg
-                                background:(screen_char_t)bg {
+                                background:(screen_char_t)bg
+                                  atPrompt:(BOOL)atPrompt {
     if (plainText) {
         [self logCooked:[string dataUsingEncoding:_screen.terminalEncoding]
              foreground:fg
-             background:bg];
+             background:bg
+               atPrompt:atPrompt];
     }
 }
 
 - (void)logCooked:(NSData *)data
        foreground:(screen_char_t)fg
-       background:(screen_char_t)bg {
+       background:(screen_char_t)bg
+         atPrompt:(BOOL)atPrompt {
     if (!_logging.enabled) {
         return;
     }
@@ -11771,25 +11798,43 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         case iTermLoggingStyleAsciicast:
             break;
         case iTermLoggingStylePlainText:
-            [_logging logData:data];
+            if ([iTermAdvancedSettingsModel smartLoggingWithAutoComposer]) {
+              if (!atPrompt || ![iTermPreferences boolForKey:kPreferenceAutoComposer]) {
+                  [_logging logData:data];
+              }
+            } else {
+                [_logging logData:data];
+            }
             break;
         case iTermLoggingStyleHTML:
-            [_logging logData:[data htmlDataWithForeground:fg
-                                                background:bg
-                                                  colorMap:_screen.colorMap
-                                        useCustomBoldColor:_textview.useCustomBoldColor
-                                              brightenBold:_textview.brightenBold]];
+            if ([iTermAdvancedSettingsModel smartLoggingWithAutoComposer]) {
+                if (!atPrompt || ![iTermPreferences boolForKey:kPreferenceAutoComposer]) {
+                    [_logging logData:[data htmlDataWithForeground:fg
+                                                        background:bg
+                                                          colorMap:_screen.colorMap
+                                                useCustomBoldColor:_textview.useCustomBoldColor
+                                                      brightenBold:_textview.brightenBold]];
+                }
+            } else {
+                [_logging logData:[data htmlDataWithForeground:fg
+                                                    background:bg
+                                                      colorMap:_screen.colorMap
+                                            useCustomBoldColor:_textview.useCustomBoldColor
+                                                  brightenBold:_textview.brightenBold]];
+            }
             break;
     }
 }
 
 - (void)screenDidAppendAsciiDataToCurrentLine:(NSData *)asciiData
                                    foreground:(screen_char_t)fg
-                                   background:(screen_char_t)bg {
+                                   background:(screen_char_t)bg
+                                     atPrompt:(BOOL)atPrompt {
     if (_logging.enabled) {
         [self logCooked:asciiData
              foreground:fg
-             background:bg];
+             background:bg
+               atPrompt:atPrompt];
     }
 }
 
@@ -12107,6 +12152,10 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 }
 
 - (void)screenDidSendAllPendingReports {
+    [self sendDataQueue];
+}
+
+- (void)sendDataQueue {
     for (NSData *data in _dataQueue) {
         DLog(@"Send deferred write of %@", [data stringWithEncoding:NSUTF8StringEncoding]);
         [self writeData:data];
@@ -12393,6 +12442,19 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                                                  toConnectionKey:key];
         }
     }];
+    if ([iTermAdvancedSettingsModel smartLoggingWithAutoComposer]) {
+        if ([iTermPreferences boolForKey:kPreferenceAutoComposer]) {
+            NSArray<ScreenCharArray *> *lines = mark.promptText;
+            for (ScreenCharArray *line in lines) {
+                NSString *string = (line == lines.lastObject) ? line.stringValue : line.stringValueIncludingNewline;
+                string = [string stringByAppendingString:@" "];
+                [self logCooked:[string dataUsingEncoding:_screen.terminalEncoding]
+                     foreground:(screen_char_t){0}
+                     background:(screen_char_t){0}
+                       atPrompt:NO];
+            }
+        }
+    }
     __weak __typeof(self) weakSelf = self;
     // Can't just do it here because it may trigger a resize and this runs as a side-effect.
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -13240,9 +13302,13 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     if (self.isTmuxClient) {
         return;
     }
+    NSData *data = [_screen.terminalOutput reportCapabilities:[self capabilities]];
+    [self screenSendReportData:data];
+}
+
+- (VT100Capabilities)capabilities {
     const BOOL clipboardAccessAllowed = [iTermPreferences boolForKey:kPreferenceKeyAllowClipboardAccessFromTerminal];
-    VT100Capabilities capabilities =
-    VT100OutputMakeCapabilities(YES,                                // compatibility24Bit
+    return VT100OutputMakeCapabilities(YES,                                // compatibility24Bit
                                 YES,                                // full24Bit
                                 clipboardAccessAllowed,             // clipboardWritable
                                 YES,                                // decslrm
@@ -13264,8 +13330,6 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                                 YES,                                // notifications
                                 YES,                                // sixel
                                 YES);                               // file
-    NSData *data = [_screen.terminalOutput reportCapabilities:capabilities];
-    [self screenSendReportData:data];
 }
 
 - (VT100GridRange)screenRangeOfVisibleLines {
@@ -13342,11 +13406,22 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     }
 }
 
+- (iTermAppSwitchingPreventionDetector *)appSwitchingPreventionDetector {
+    if (!_appSwitchingPreventionDetector) {
+        _appSwitchingPreventionDetector = [[iTermAppSwitchingPreventionDetector alloc] init];
+        _appSwitchingPreventionDetector.delegate = self;
+    }
+    return _appSwitchingPreventionDetector;
+}
+
 - (void)screenDidExecuteCommand:(NSString *)command
                           range:(VT100GridCoordRange)range
                          onHost:(id<VT100RemoteHostReading>)host
                     inDirectory:(NSString *)directory
                            mark:(id<VT100ScreenMarkReading>)mark {
+    if (IsSecureEventInputEnabled()) {
+        [[self appSwitchingPreventionDetector] didExecuteCommand:command];
+    }
     NSString *trimmedCommand =
     [command stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (trimmedCommand.length) {
@@ -13386,6 +13461,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 - (void)screenCommandDidAbortOnLine:(int)line
                         outputRange:(VT100GridCoordRange)outputRange
                             command:(NSString *)command {
+    [_appSwitchingPreventionDetector commandDidFinishWithStatus:-1];
     NSDictionary *userInfo = @{ @"remoteHost": (id)[_screen remoteHostOnLine:line] ?: (id)[NSNull null],
                                 @"directory": (id)[_screen workingDirectoryOnLine:line] ?: (id)[NSNull null],
                                 @"snapshot": [self contentSnapshot],
@@ -13399,6 +13475,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 }
 
 - (void)screenCommandDidExitWithCode:(int)code mark:(id<VT100ScreenMarkReading>)maybeMark {
+    [_appSwitchingPreventionDetector commandDidFinishWithStatus:code];
     [_promptSubscriptions enumerateKeysAndObjectsUsingBlock:^(id  _Nonnull key, ITMNotificationRequest * _Nonnull obj, BOOL * _Nonnull stop) {
         if ([obj.promptMonitorRequest.modesArray it_contains:ITMPromptMonitorMode_CommandEnd]) {
             ITMNotification *notification = [[[ITMNotification alloc] init] autorelease];
@@ -14712,8 +14789,12 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
         if (![self haveResizedRecently]) {
             _lastOutputIgnoringOutputAfterResizing = [NSDate timeIntervalSinceReferenceDate];
         }
-        _newOutput = YES;
-
+        // If you're in an interactive app in another tab it'll draw itself on
+        // jiggle but we shouldn't count that as activity.
+        if (self.shell.winSizeController.timeSinceLastJiggle > 0.25) {
+            _newOutput = YES;
+        }
+        
         // Make sure the screen gets redrawn soonish
         self.active = YES;
 
@@ -14838,6 +14919,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
 - (NSInteger)screenEndSSH:(NSString *)uniqueID {
     DLog(@"%@", uniqueID);
+    _connectingSSH = NO;
     if (![_conductor ancestryContainsClientUniqueID:uniqueID]) {
         DLog(@"Ancestry does not contain this unique ID");
         return 0;
@@ -14852,7 +14934,17 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     // it2ssh waits for a newline before exiting. This is in case ssh dies while iTerm2 is sending
     // conductor.sh.
     [self writeTaskNoBroadcast:@"\n"];
+    if (_queuedConnectingSSH.length) {
+        [_queuedConnectingSSH release];
+        _queuedConnectingSSH = nil;
+    }
     return count;
+}
+
+- (void)screenWillBeginSSHIntegration {
+    _connectingSSH = YES;
+    [_queuedConnectingSSH release];
+    _queuedConnectingSSH = [[NSMutableData alloc] init];
 }
 
 - (void)screenBeginSSHIntegrationWithToken:(NSString *)token
@@ -15257,7 +15349,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     if (!findPanelWasOpen) {
         [self.view.findDriver setFilterHidden:YES];
     }
-    [[iTermFindPasteboard sharedInstance] updateObservers:nil];
+    [[iTermFindPasteboard sharedInstance] updateObservers:nil internallyGenerated:YES];
 }
 
 - (void)textViewEnterShortcutNavigationMode {
@@ -15504,8 +15596,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 }
 
 - (void)textViewDidReceiveSingleClick {
-    _textViewShouldTakeFirstResponder = YES;
-    [_textview.window makeFirstResponder:_textview];
+    DLog(@"textViewDidReceiveSingleClick");
 }
 
 - (void)textViewDisableOffscreenCommandLine {
@@ -17250,7 +17341,13 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 - (void)composerManagerOpenHistory:(iTermComposerManager *)composerManager
                             prefix:(nonnull NSString *)prefix
                          forSearch:(BOOL)forSearch {
-    [[_delegate realParentWindow] openCommandHistoryWithPrefix:prefix sortChronologically:!forSearch];
+    [[_delegate realParentWindow] openCommandHistoryWithPrefix:prefix
+                                           sortChronologically:!forSearch
+                                            currentSessionOnly:YES];
+}
+
+- (void)composerManagerShowCompletions:(NSArray<NSString *> *)completions {
+
 }
 
 - (void)composerManagerDidRemoveTemporaryStatusBarComponent:(iTermComposerManager *)composerManager {
@@ -17272,6 +17369,30 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     [self sendCommand:command];
 }
 
+- (BOOL)composerManagerHandleKeyDown:(NSEvent *)event {
+    iTermKeystroke *keystroke = [iTermKeystroke withEvent:event];
+    iTermKeyBindingAction *action = [iTermKeyMappings actionForKeystroke:keystroke
+                                                             keyMappings:self.profile[KEY_KEYBOARD_MAP]];
+
+    if (!action) {
+        return NO;
+    }
+    if (action.sendsText && keystroke.isNavigation) {
+        // Prevent natural text editing preset from interfering with composer navigation.
+        return NO;
+    }
+    DLog(@"PTYSession keyDown action=%@", action);
+    // A special action was bound to this key combination.
+    [self performKeyBindingAction:action event:event];
+
+    DLog(@"Special handler: KEY BINDING ACTION");
+    return YES;
+}
+
+- (NSResponder *)composerManagerNextResponder {
+    return _textview;
+}
+
 - (id<iTermSyntaxHighlighting>)composerManager:(iTermComposerManager *)composerManager
           syntaxHighlighterForAttributedString:(NSMutableAttributedString *)attributedString {
     return [[[iTermSyntaxHighlighter alloc] init:attributedString
@@ -17281,7 +17402,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 }
 
 - (void)composerManagerDidBecomeFirstResponder:(iTermComposerManager *)composerManager {
-    _textViewShouldTakeFirstResponder = NO;
+    DLog(@"composerManagerDidBecomeFirstResponder");
 }
 
 - (BOOL)composerManagerShouldFetchSuggestions:(iTermComposerManager *)composerManager
@@ -17305,15 +17426,23 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
 - (void)composerManager:(iTermComposerManager *)composerManager
        fetchSuggestions:(iTermSuggestionRequest *)request {
+    if (request.executable && ![request.prefix containsString:@"/"]) {
+        // In the future it would be nice to search $PATH and shell builtins for command suggestions.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            request.completion(@[]);
+        });
+        return;
+    }
     if (@available(macOS 11, *)) {
         if ([_conductor framing]) {
-            [_conductor fetchSuggestions:request];
+            [_conductor fetchSuggestions:[request requestWithReducedLimitBy:8]];
+            return;
         }
     }
     [[iTermSlowOperationGateway sharedInstance] findCompletionsWithPrefix:request.prefix
                                                             inDirectories:request.directories
                                                                       pwd:request.workingDirectory
-                                                                 maxCount:1
+                                                                 maxCount:request.limit
                                                                executable:request.executable
                                                                completion:^(NSArray<NSString *> * _Nonnull completions) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -17352,6 +17481,13 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
             // TODO: This may wreak havoc if the shell decides to redraw itself.
             command = [[NSString stringWithLongCharacter:'U' - '@'] stringByAppendingString:command];
         }
+        if ([iTermAdvancedSettingsModel smartLoggingWithAutoComposer]) {
+            NSString *trimmedCommand = [command stringByTrimmingTrailingCharactersFromCharacterSet:[NSCharacterSet newlineCharacterSet]];
+            [self logCooked:[trimmedCommand dataUsingEncoding:_screen.terminalEncoding]
+                 foreground:(screen_char_t){0}
+                 background:(screen_char_t){0} atPrompt:NO];
+        }
+
         const BOOL detectedByTrigger = [_composerManager.prefixUserData[PTYSessionComposerPrefixUserDataKeyDetectedByTrigger] boolValue];
         [_composerManager setPrefix:nil userData:nil];
         [_screen mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
@@ -18203,6 +18339,11 @@ getOptionKeyBehaviorLeft:(iTermOptionKeyBehavior *)left
     [_sshWriteQueue setLength:0];
 }
 
+- (void)conductorStopQueueingInput {
+    _connectingSSH = NO;
+    [_conductor sendKeys:_queuedConnectingSSH];
+}
+
 - (void)conductorStateDidChange {
     DLog(@"conductorDidExfiltrateState");
     [self updateVariablesFromConductor];
@@ -18243,6 +18384,14 @@ getOptionKeyBehaviorLeft:(iTermOptionKeyBehavior *)left
             self.variablesScope.uname = _conductor.uname;
             break;
     }
+}
+
+@end
+
+@implementation PTYSession(AppSwitching)
+
+- (void)appSwitchingPreventionDetectorDidDetectFailure {
+    [_naggingController openCommandDidFailWithSecureInputEnabled];
 }
 
 @end

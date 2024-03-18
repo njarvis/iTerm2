@@ -120,6 +120,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (BOOL)disableWindowShadowWhenTransparencyPreMojave;
 + (BOOL)disableWindowSizeSnap;
 + (BOOL)disallowCopyEmptyString;
++ (BOOL)disclaimChildren;
 // Use PTYScrollView.shouldDismember, since disabling dismemberment is 10.15+
 + (BOOL)dismemberScrollView;
 + (BOOL)disregardDockSettingToOpenTabsInsteadOfWindows;
@@ -136,6 +137,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (double)echoProbeDuration;
 + (void)setEchoProbeDuration:(double)value;
 + (BOOL)enableCharacterAccentMenu;
++ (BOOL)enableCmdClickPromptForShowCommandInfo;
 
 #if ITERM2_SHARED_ARC
 + (BOOL)enableSecureKeyboardEntryAutomatically;
@@ -146,6 +148,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (BOOL)enableUnderlineSemanticHistoryOnCmdHover;
 + (BOOL)escapeWithQuotes;
 + (BOOL)excludeBackgroundColorsFromCopiedStyle;
++ (BOOL)excludeUtunFromNetworkUtilization;
 + (BOOL)experimentalKeyHandling;
 + (double)extraSpaceBeforeCompactTopTabBar;
 + (double)fakeNotchHeight;
@@ -350,6 +353,7 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 // background. If the brightness difference is less than this value then the text color becomes
 // black or white.
 + (double)smartCursorColorFgThreshold;
++ (BOOL)smartLoggingWithAutoComposer;
 + (int)smartSelectionRadius;
 + (BOOL)solidUnderlines;
 + (NSString *)splitPaneColor;
@@ -427,6 +431,10 @@ extern NSString *const iTermAdvancedSettingsDidChange;
 + (BOOL)openProfilesInNewWindow;
 + (BOOL)vs16Supported;
 + (BOOL)vs16SupportedInPrimaryScreen;
+
++ (BOOL)warnAboutSecureKeyboardInputWithOpenCommand;
++ (void)setWarnAboutSecureKeyboardInputWithOpenCommand:(BOOL)value;
+
 + (NSString *)webUserAgent;
 + (BOOL)workAroundBigSurBug;
 + (BOOL)workAroundMultiDisplayOSBug;

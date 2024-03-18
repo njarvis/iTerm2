@@ -51,6 +51,7 @@ minimalFrameDidChangeTo:(NSRect)newFrame;
 - (void)composerManagerOpenHistory:(iTermComposerManager *)composerManager
                             prefix:(NSString *)prefix
                          forSearch:(BOOL)forSearch;
+- (void)composerManagerShowCompletions:(NSArray<NSString *> *)completions;
 - (BOOL)composerManager:(iTermComposerManager *)composerManager wantsKeyEquivalent:(NSEvent *)event;
 - (void)composerManager:(iTermComposerManager *)composerManager performFindPanelAction:(id)sender;
 - (void)composerManager:(iTermComposerManager *)composerManager
@@ -64,7 +65,8 @@ minimalFrameDidChangeTo:(NSRect)newFrame;
                                tmuxController:(TmuxController *)tmuxController;
 - (void)composerManager:(iTermComposerManager *)composerManager
        fetchSuggestions:(iTermSuggestionRequest *)request;
-
+- (BOOL)composerManagerHandleKeyDown:(NSEvent *)event;
+- (NSResponder *)composerManagerNextResponder;
 @end
 
 @interface iTermComposerManager : NSObject
@@ -89,7 +91,7 @@ minimalFrameDidChangeTo:(NSRect)newFrame;
 
 - (void)setCommand:(NSString *)command;
 // Reveal appropriately (focus status bar, open popover, or open minimal)
-- (void)reveal;
+- (void)revealMakingFirstResponder:(BOOL)becomeFirstResponder;
 - (void)toggle;
 // Reveal minimal composer.
 - (void)revealMinimal;
