@@ -632,6 +632,9 @@ typedef NS_ENUM(NSUInteger, iTermSSHState) {
     void (^_pendingConductor)(PTYSession *);
     BOOL _connectingSSH;
     NSMutableData *_queuedConnectingSSH;
+
+    __weak id<VT100ScreenMarkReading> _selectedCommandMark;
+    NSMutableArray<PTYSessionHostState *> *_hostStack;
 }
 
 @synthesize isDivorced = _divorced;
@@ -796,6 +799,7 @@ typedef NS_ENUM(NSUInteger, iTermSSHState) {
         }];
         _expect = [[iTermExpect alloc] initDry:YES];
         _sshState = iTermSSHStateNone;
+        _hostStack = [[NSMutableArray alloc] init];
         [iTermCPUUtilization instanceForSessionID:_guid];
 
         [[NSNotificationCenter defaultCenter] addObserver:self
@@ -1069,6 +1073,8 @@ ITERM_WEAKLY_REFERENCEABLE
     [_pendingConductor release];
     [_appSwitchingPreventionDetector release];
     [_queuedConnectingSSH release];
+    [_hostStack release];
+    [_defaultPointer release];
 
     [super dealloc];
 }
@@ -2536,7 +2542,7 @@ ITERM_WEAKLY_REFERENCEABLE
     }
 
     if ([iTermAdvancedSettingsModel addUtilitiesToPATH]) {
-        NSString *path = env[PATH_ENVNAME] ?: [NSString stringWithUTF8String:_PATH_DEFPATH];
+        NSString *path = env[PATH_ENVNAME] ?: [NSString stringWithUTF8String:_PATH_STDPATH];
         NSArray *pathComponents = [path componentsSeparatedByString:@":"] ?: @[];
         pathComponents = [pathComponents arrayByAddingObject:[iTermPathToSSH() stringByDeletingLastPathComponent]];
         path = [pathComponents componentsJoinedByString:@":"];
@@ -4650,6 +4656,7 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (void)setKeyMappingMode:(iTermKeyMappingMode)mode {
+    DLog(@"setKeyMappingMode:%@", @(mode));
     _keyMappingMode = mode;
     [self updateKeyMapper];
 }
@@ -5851,8 +5858,10 @@ ITERM_WEAKLY_REFERENCEABLE
 static NSString *const PTYSessionComposerPrefixUserDataKeyPrompt = @"prompt";
 static NSString *const PTYSessionComposerPrefixUserDataKeyDetectedByTrigger = @"detected by trigger";
 
-- (NSMutableAttributedString *)kernedAttributedStringForScreenChars:(NSArray<ScreenCharArray *> *)promptText {
-    NSMutableAttributedString *prompt = [self attributedStringForScreenChars:promptText];
+- (NSMutableAttributedString *)kernedAttributedStringForScreenChars:(NSArray<ScreenCharArray *> *)promptText
+                                        elideDefaultBackgroundColor:(BOOL)elideDefaultBackgroundColor {
+    NSMutableAttributedString *prompt = [self attributedStringForScreenChars:promptText
+                                                 elideDefaultBackgroundColor:elideDefaultBackgroundColor];
     const CGFloat kern = [NSMutableAttributedString kernForString:@"W"
                                                       toHaveWidth:_textview.charWidth
                                                          withFont:_textview.fontTable.asciiFont.font];
@@ -5865,7 +5874,8 @@ static NSString *const PTYSessionComposerPrefixUserDataKeyDetectedByTrigger = @"
     assert(_initializationFinished);
     DLog(@"Reveal auto composer. isAutoComposer <- YES");
     self.composerManager.isAutoComposer = YES;
-    NSMutableAttributedString *prompt = [self kernedAttributedStringForScreenChars:promptText];
+    NSMutableAttributedString *prompt = [self kernedAttributedStringForScreenChars:promptText
+                                                       elideDefaultBackgroundColor:YES];
     [self.composerManager revealMakingFirstResponder:[self textViewOrComposerIsFirstResponder]];
     NSDictionary *userData = nil;
     DLog(@"revealing auto composer");
@@ -5880,11 +5890,13 @@ static NSString *const PTYSessionComposerPrefixUserDataKeyDetectedByTrigger = @"
                            userData:userData];
 }
 
-- (NSMutableAttributedString *)attributedStringForScreenChars:(NSArray<ScreenCharArray *> *)promptText {
+- (NSMutableAttributedString *)attributedStringForScreenChars:(NSArray<ScreenCharArray *> *)promptText
+                                  elideDefaultBackgroundColor:(BOOL)elideDefaultBackgroundColor {
     if (!_textview) {
         return nil;
     }
-    NSDictionary *defaultAttributes = [_textview attributeProviderUsingProcessedColors:YES]((screen_char_t){}, nil);
+    NSDictionary *defaultAttributes = [_textview attributeProviderUsingProcessedColors:YES
+                                                           elideDefaultBackgroundColor:elideDefaultBackgroundColor]((screen_char_t){}, nil);
     NSAttributedString *space = [NSAttributedString attributedStringWithString:@" "
                                                                       attributes:defaultAttributes];
 
@@ -5893,7 +5905,8 @@ static NSString *const PTYSessionComposerPrefixUserDataKeyDetectedByTrigger = @"
 
     NSMutableAttributedString *result = [[[NSMutableAttributedString alloc] init] autorelease];
     NSAttributedString *body = [[promptText mapWithBlock:^id _Nullable(ScreenCharArray *sca) {
-        return [sca attributedStringValueWithAttributeProvider:[_textview attributeProviderUsingProcessedColors:YES]];
+        return [sca attributedStringValueWithAttributeProvider:[_textview attributeProviderUsingProcessedColors:YES
+                                                                                    elideDefaultBackgroundColor:elideDefaultBackgroundColor]];
     }] attributedComponentsJoinedByAttributedString:newline];
     [result appendAttributedString:body];
     [result trimTrailingWhitespace];
@@ -6499,12 +6512,21 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     if ([filter isEqualToString:_filter]) {
         return;
     }
-    VT100Screen *source = nil;
-    if ([_asyncFilter canRefineWithQuery:filter]) {
-        source = self.screen;
-    } else {
-        source = self.liveSession.screen;
+    if (!filter) {
+        if (_asyncFilter) {
+            DLog(@"Nuke existing filter %@", _asyncFilter);
+            [_asyncFilter cancel];
+            [self.liveSession removeContentSubscriber:_asyncFilter];
+            [_filter autorelease];
+            _filter = nil;
+            [_asyncFilter release];
+            _asyncFilter = nil;
+        }
+        return;
     }
+
+    PTYSession *sourceSession = self.liveSession;
+    VT100Screen *source = sourceSession.screen;
     [_asyncFilter cancel];
     [self.liveSession removeContentSubscriber:_asyncFilter];
     const BOOL replacingFilter = (_filter != nil);
@@ -6518,13 +6540,18 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 
     DLog(@"Append lines from %@", self.liveSession);
     __weak __typeof(self) weakSelf = self;
+    DLog(@"Will create new async filter for query %@ refining %@", filter, refining.it_addressString);
     _asyncFilter = [source newAsyncFilterWithDestination:self
                                                    query:filter
                                                 refining:refining
+                                            absLineRange:sourceSession.textview.findOnPageHelper.absLineRange
                                                 progress:^(double progress) {
         [weakSelf setFilterProgress:progress];
     }];
-    [self.liveSession addContentSubscriber:_asyncFilter];
+    if (sourceSession.textview.findOnPageHelper.absLineRange.length == 0 ||
+        (_selectedCommandMark == [_screen lastPromptMark] && sourceSession.selectedCommandMark.isRunning)) {
+        [self.liveSession addContentSubscriber:_asyncFilter];
+    }
     if (replacingFilter) {
         DLog(@"Clear buffer because there is a pre-existing filter");
         [self.screen performBlockWithJoinedThreads:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
@@ -6532,6 +6559,10 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         }];
     }
     [_asyncFilter start];
+}
+
+- (id<VT100ScreenMarkReading>)selectedCommandMark {
+    return _selectedCommandMark;
 }
 
 - (void)setFilterProgress:(double)progress {
@@ -7680,6 +7711,29 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     }
 }
 
+- (NSString *)regularExpressonForNonLowPrecisionSmartSelectionRulesCombined {
+    NSArray<NSDictionary *> *rules = [iTermProfilePreferences objectForKey:KEY_SMART_SELECTION_RULES
+                                                                 inProfile:self.profile];
+    if (!rules) {
+        rules = [SmartSelectionController defaultRules];
+    }
+    NSArray<NSString *> *regexes = [rules mapWithBlock:^id _Nullable(NSDictionary * _Nonnull rule) {
+        const double precision = [SmartSelectionController precisionInRule:rule];
+        if (precision < SmartSelectionNormalPrecision) {
+            return  nil;
+        }
+        NSString *bare = [SmartSelectionController regexInRule:rule];
+        NSError *error = nil;
+        NSRegularExpression *expr = [[NSRegularExpression alloc] initWithPattern:bare options:0 error:&error];
+        if (error || !expr) {
+            return nil;
+        }
+        [expr release];
+        return [NSString stringWithFormat:@"(?:%@)", bare];
+    }];
+    return [regexes componentsJoinedByString:@"|"];
+}
+
 - (VT100GridCoordRange)smartSelectionRangeAt:(VT100GridCoord)coord {
     if (coord.x < 0 || coord.y < 0 || coord.x >= _screen.width || coord.y >= _screen.height) {
         return VT100GridCoordRangeMake(0, 0, 0, 0);
@@ -8578,6 +8632,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 }
 
 - (BOOL)textViewShouldAcceptKeyDownEvent:(NSEvent *)event {
+    [self removeSelectedCommandRange];
     [self enableOffscreenMarkAlertsIfNeeded];
     const BOOL accept = [self shouldAcceptKeyDownEvent:event];
     if (accept) {
@@ -9273,6 +9328,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                 [session performKeyBindingAction:subaction event:event];
                 session = [[[iTermController sharedInstance] currentTerminal] currentSession] ?: self;
             }
+            break;
         case KEY_ACTION_SWAP_WITH_NEXT_PANE:
             [self.delegate sessionSwapWithSessionInDirection:1];
             break;
@@ -9844,8 +9900,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 - (BOOL)textViewDrawBackgroundImageInView:(NSView *)view
                                  viewRect:(NSRect)dirtyRect
                    blendDefaultBackground:(BOOL)blendDefaultBackground
+                               deselected:(BOOL)deselected
                             virtualOffset:(CGFloat)virtualOffset NS_DEPRECATED_MAC(10_0, 10_16) {
-    if (!self.shouldDrawBackgroundImageManually) {
+    if (!deselected && !self.shouldDrawBackgroundImageManually) {
         return NO;
     }
     if (!_backgroundDrawingHelper) {
@@ -9863,11 +9920,15 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                                                   dirtyRect:dirtyRect
                                      visibleRectInContainer:NSMakeRect(0, 0, contentRect.size.width, contentRect.size.height)
                                      blendDefaultBackground:blendDefaultBackground
+                                                 deselected:deselected
                                                        flip:NO
                                               virtualOffset:virtualOffset];
     } else {
         NSView *container = [self.delegate sessionContainerView:self];
-        NSRect clippedDirtyRect = NSIntersectionRect(dirtyRect, view.enclosingScrollView.documentVisibleRect);;
+        NSRect visibleRect = view.enclosingScrollView.documentVisibleRect;
+        const CGFloat marginHeight = [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
+        visibleRect.origin.y -= marginHeight;
+        NSRect clippedDirtyRect = NSIntersectionRect(dirtyRect, visibleRect);
         NSRect windowVisibleRect = [self.view insetRect:container.bounds
                                                 flipped:YES
                                  includeBottomStatusBar:![iTermPreferences boolForKey:kPreferenceKeySeparateStatusBarsPerPane]];
@@ -9876,6 +9937,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                                                   dirtyRect:clippedDirtyRect
                                      visibleRectInContainer:windowVisibleRect
                                      blendDefaultBackground:blendDefaultBackground
+                                                 deselected:deselected
                                                        flip:YES
                                               virtualOffset:virtualOffset];
     }
@@ -9927,7 +9989,14 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 
 - (NSColor *)processedBackgroundColor {
     NSColor *unprocessedColor = [_screen.colorMap colorForKey:kColorMapBackground];
-    return [_screen.colorMap processedBackgroundColorForBackgroundColor:unprocessedColor];
+    return [_screen.colorMap processedBackgroundColorForBackgroundColor:unprocessedColor
+                                              inDeselectedCommandRegion:NO];
+}
+
+- (NSColor *)processedDeselectedBackgroundColor {
+    NSColor *unprocessedColor = [_screen.colorMap colorForKey:kColorMapBackground];
+    return [_screen.colorMap processedBackgroundColorForBackgroundColor:unprocessedColor
+                                              inDeselectedCommandRegion:YES];
 }
 
 - (void)textViewPostTabContentsChangedNotification
@@ -10522,7 +10591,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     DLog(@"Fetching range of last command output...");
     if (![[iTermShellHistoryController sharedInstance] commandHistoryHasEverBeenUsed]) {
         DLog(@"Command history has never been used.");
-        [iTermShellHistoryController showInformationalMessage];
+        [iTermShellHistoryController showInformationalMessageInWindow:_view.window];
         return VT100GridAbsCoordRangeMake(-1, -1, -1, -1);
     } else {
         iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:_screen];
@@ -10552,7 +10621,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     DLog(@"Fetching range of current command");
     if (![[iTermShellHistoryController sharedInstance] commandHistoryHasEverBeenUsed]) {
         DLog(@"Command history has never been used.");
-        [iTermShellHistoryController showInformationalMessage];
+        [iTermShellHistoryController showInformationalMessageInWindow:_view.window];
         return VT100GridAbsCoordRangeMake(-1, -1, -1, -1);
     } else {
         VT100GridAbsCoordRange range;
@@ -11575,6 +11644,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     more = [_screen continueFindAllResults:results
                                   rangeOut:&ignore
                                  inContext:_tailFindContext
+                              absLineRange:_textview.findOnPageHelper.absLineRange
                              rangeSearched:&rangeSearched];
     DLog(@"Continue tail find found %@ results, more=%@", @(results.count), @(more));
     if (VT100GridAbsCoordRangeIsValid(rangeSearched)) {
@@ -11633,7 +11703,8 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                startingAtY:0
                 withOffset:0
                  inContext:_tailFindContext
-           multipleResults:YES];
+           multipleResults:YES
+              absLineRange:_textview.findOnPageHelper.absLineRange];
 
     // Set the starting position to the block & offset that the backward search
     // began at. Do a forward search from that location.
@@ -13041,6 +13112,9 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     // Ignore changes to username; only update on hostname changes. See issue 8030.
     if (previousHostName && ![previousHostName isEqualToString:host.hostname] && !ssh) {
         [self maybeResetTerminalStateOnHostChange:host];
+        if ([iTermAdvancedSettingsModel restoreKeyModeAutomaticallyOnHostChange]) {
+            [self pushOrPopHostState:host];
+        }
     }
     self.currentHost = host;
     [self updateVariablesFromConductor];
@@ -13079,6 +13153,27 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             [self maybeTurnOffPasteBracketing];
         }
     }];
+}
+
+- (void)pushOrPopHostState:(id<VT100RemoteHostReading>)host {
+    DLog(@"Search host stack %@ for %@", _hostStack, host);
+    const NSInteger i = [_hostStack indexOfObjectPassingTest:^BOOL(PTYSessionHostState * _Nonnull state, NSUInteger idx, BOOL * _Nonnull stop) {
+        return state.remoteHost == host || [state.remoteHost isEqualToRemoteHost:host];
+    }];
+    if (i == NSNotFound) {
+        DLog(@"Not found. Save current key mapping mode %@", @(_keyMappingMode));
+        PTYSessionHostState *state = [[[PTYSessionHostState alloc] init] autorelease];
+        state.keyMappingMode = _keyMappingMode;
+        state.remoteHost = self.currentHost;
+        [_hostStack addObject:state];
+        return;
+    }
+    PTYSessionHostState *state = [[_hostStack[i] retain] autorelease];
+    DLog(@"Found at %@: %@. Restore mode and pop", @(i), state);
+    [_hostStack removeObjectsInRange:NSMakeRange(i, _hostStack.count - i)];
+    if (_keyMappingMode != state.keyMappingMode) {
+        [self setKeyMappingMode:state.keyMappingMode];
+    }
 }
 
 - (NSArray<iTermCommandHistoryCommandUseMO *> *)commandUses {
@@ -13334,6 +13429,39 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 
 - (VT100GridRange)screenRangeOfVisibleLines {
     return [_textview rangeOfVisibleLines];
+}
+
+- (void)screenSetPointerShape:(NSString *)pointerShape {
+    NSDictionary *cursors = @{
+        @"X_cursor": ^{ return [NSCursor arrowCursor]; },
+        @"arrow": ^{ return[NSCursor arrowCursor]; },
+        @"based_arrow_down": ^{ return[NSCursor resizeDownCursor]; },
+        @"based_arrow_up": ^{ return[NSCursor resizeUpCursor]; },
+        @"cross": ^{ return[NSCursor crosshairCursor]; },
+        @"cross_reverse": ^{ return[NSCursor crosshairCursor]; },
+        @"crosshair": ^{ return[NSCursor crosshairCursor]; },
+        @"hand1": ^{ return[NSCursor pointingHandCursor]; },
+        @"hand2": ^{ return[NSCursor pointingHandCursor]; },
+        @"left_ptr": ^{ return[NSCursor arrowCursor]; },
+        @"left_side": ^{ return[NSCursor resizeLeftCursor]; },
+        @"right_side": ^{ return[NSCursor resizeRightCursor]; },
+        @"sb_h_double_arrow": ^{ return[NSCursor resizeLeftRightCursor]; },
+        @"sb_left_arrow": ^{ return[NSCursor resizeLeftCursor]; },
+        @"sb_right_arrow": ^{ return[NSCursor resizeRightCursor]; },
+        @"sb_up_arrow": ^{ return[NSCursor resizeUpCursor]; },
+        @"sb_v_double_arrow": ^{ return[NSCursor resizeUpDownCursor]; },
+        @"tcross": ^{ return[NSCursor crosshairCursor]; },
+        @"xterm": ^{ return [iTermMouseCursor mouseCursorOfType:iTermMouseCursorTypeIBeam]; },
+    };
+    NSCursor *(^f)(void) = cursors[pointerShape];
+    if (!f) {
+        self.defaultPointer = nil;
+    } else {
+        self.defaultPointer = f();
+    }
+    NSLog(@"invalidateCursorRectsForView");
+    [_textview.window invalidateCursorRectsForView:_textview];
+    [_textview updateCursor:[NSApp currentEvent]];
 }
 
 #pragma mark - FinalTerm
@@ -14453,8 +14581,8 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 // When this would be idempotent then it's called via a flag change.
 // When this is not idempotent it is called as a side effect, which is slower.
 // -appendLineFeed contains an idempotency test that must match the implementation of this method.
-- (void)screenDidReceiveLineFeed {
-    [self publishNewline];  // Idempotent exactly when not publishing
+- (void)screenDidReceiveLineFeedAtLineBufferGeneration:(long long)lineBufferGeneration {
+    [self publishNewlineWithLineBufferGeneration:lineBufferGeneration];  // Idempotent exactly when not publishing
     [_pwdPoller didReceiveLineFeed];  // Idempotent
     if (_logging.enabled && !self.isTmuxGateway) {  // Idempotent if condition is false
         switch (_logging.style) {
@@ -14477,6 +14605,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     [self.tmuxForegroundJobMonitor updateOnce];
     [self.variablesScope setValue:@(showing)
                  forVariableNamed:iTermVariableKeySessionShowingAlternateScreen];
+    [self removeSelectedCommandRange];
 }
 
 - (void)screenReportKeyUpDidChange:(BOOL)reportKeyUp {
@@ -14649,8 +14778,11 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 }
 
 - (void)screenAppendScreenCharArray:(ScreenCharArray *)sca
-                           metadata:(iTermImmutableMetadata)metadata {
-    [self publishScreenCharArray:sca metadata:metadata];
+                           metadata:(iTermImmutableMetadata)metadata
+               lineBufferGeneration:(long long)lineBufferGeneration {
+    [self publishScreenCharArray:sca
+                        metadata:metadata
+            lineBufferGeneration:lineBufferGeneration];
 }
 
 - (NSString *)screenStringForKeypressWithCode:(unsigned short)keycode
@@ -15405,7 +15537,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
         query = self.currentCommand;
     }
     if (query.length == 0) {
-        return nil;
+        return [self requestNaturalLanguageQuery];
     }
     if (query.length >= [iTermAdvancedSettingsModel aiResponseMaxTokens] / 8) {
         return nil;
@@ -15413,10 +15545,45 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     return query;
 }
 
+- (NSString *)requestNaturalLanguageQuery {
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setMessageText:@"Describe the command you want to run in plain English. Press ⇧⏎ to send."];
+    [alert addButtonWithTitle:@"OK"];
+    [alert addButtonWithTitle:@"Cancel"];
+
+    ShiftEnterTextView *input = [[[ShiftEnterTextView alloc] initWithFrame:NSMakeRect(0, 0, 400, 200)] autorelease];
+    input.richText = NO;
+    [input setVerticallyResizable:YES];
+    [input setHorizontallyResizable:NO];
+    [input setAutoresizingMask:NSViewWidthSizable];
+    [[input textContainer] setContainerSize:NSMakeSize(200, FLT_MAX)];
+    [[input textContainer] setWidthTracksTextView:YES];
+    [input setTextContainerInset:NSMakeSize(4, 4)];
+    __weak __typeof(alert) weakAlert = alert;
+    input.shiftEnterPressed = ^{
+        [weakAlert.buttons.firstObject performClick:nil];
+    };
+    NSScrollView *scrollview = [[[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 400, 200)] autorelease];
+    [scrollview setHasVerticalScroller:YES];
+    [scrollview setDocumentView:input];
+    scrollview.borderType = NSLineBorder;
+
+    [alert setAccessoryView:scrollview];
+    alert.window.initialFirstResponder = input;
+    const NSInteger button = [alert runSheetModalForWindow:self.view.window];
+
+    if (button == NSAlertFirstButtonReturn) {
+        return [[input string] copy];
+    } else if (button == NSAlertSecondButtonReturn) {
+        return nil;
+    }
+
+    return nil;
+}
+
 - (void)textViewPerformNaturalLanguageQuery {
     NSString *query = [self naturalLanguageQuery];
     if (!query) {
-        NSBeep();
         return;
     }
     [_aiterm release];
@@ -15465,6 +15632,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     }
     [self setComposerString:choices[0]];
     [self.composerManager toggle];
+    [self makeComposerFirstResponderIfAllowed];
 }
 
 - (BOOL)sessionViewTerminalIsFirstResponder {
@@ -15568,6 +15736,14 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     return [_composerManager dropDownComposerViewIsVisible] && _composerManager.isAutoComposer && !_composerManager.temporarilyHidden;
 }
 
+- (CGFloat)textViewPointsOnBottomToSuppressDrawing {
+    if ([_composerManager dropDownComposerViewIsVisible] && _composerManager.isAutoComposer && !_composerManager.temporarilyHidden) {
+        const NSRect rect = _composerManager.dropDownFrame;
+        return NSMaxY(rect);
+    }
+    return 0;
+}
+
 - (VT100GridRange)textViewLinesToSuppressDrawing {
     if ([_composerManager dropDownComposerViewIsVisible] && _composerManager.isAutoComposer && !_composerManager.temporarilyHidden) {
         const NSRect rect = _composerManager.dropDownFrame;
@@ -15637,6 +15813,103 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     const BOOL bottom = _textview.scrolledToBottom;
     DLog(@"alt=%@ bottom=%@", @(alt), @(bottom));
     return !(alt && bottom);    
+}
+
+- (id<VT100ScreenMarkReading>)textViewSelectedCommandMark {
+    return _selectedCommandMark;
+}
+
+- (void)textViewSelectCommandRegionAtCoord:(VT100GridCoord)coord {
+    if (_screen.terminalSoftAlternateScreenMode) {
+        return;
+    }
+    id<VT100ScreenMarkReading> mark = [_screen commandMarkAtOrBeforeLine:coord.y];
+    id<VT100ScreenMarkReading> previous = _selectedCommandMark;
+    const BOOL allowed = [iTermPreferences boolForKey:kPreferenceKeyClickToSelectCommand];
+    if (!allowed || _selectedCommandMark == mark) {
+        _selectedCommandMark = nil;
+    } else {
+        _selectedCommandMark = mark;
+    }
+    [self updateSearchRange];
+    _screen.savedFindContextAbsPos = 0;
+    if (previous != _selectedCommandMark) {
+        [_textview requestDelegateRedraw];
+    }
+    if (allowed) {
+        NSString *const warningKey = @"NoSyncUserHasSelectedCommand";
+        if (mark != nil && ![[NSUserDefaults standardUserDefaults] boolForKey:warningKey]) {
+            [[NSUserDefaults standardUserDefaults] setBool:YES forKey:warningKey];
+            [self showCommandSelectionInfo];
+        }
+    }
+}
+
+- (VT100GridAbsCoordRange)textViewCoordRangeForCommandAndOutputAtMark:(id<iTermMark>)mark {
+    if ([mark conformsToProtocol:@protocol(VT100ScreenMarkReading)]) {
+        return [self rangeOfCommandAndOutputForMark:(id<VT100ScreenMarkReading>)mark];
+    }
+    return [_screen absCoordRangeForInterval:mark.entry.interval];
+}
+
+- (void)showCommandSelectionInfo {
+    const NSPoint point = [_view convertPoint:NSApp.currentEvent.locationInWindow
+                                     fromView:nil];
+    NSString *html = @"You’ve selected a command by clicking on it. This restricts Find, Filter, and Select All to the content of the command. You can turn this feature off in Settings > General > Selection. <a href=\"iterm2:disable-command-selection\">Click here to disable this feature.</a>";
+    NSAttributedString *attributedString = [NSAttributedString attributedStringWithHTML:html
+                                                                                   font:[NSFont systemFontOfSize:[NSFont systemFontSize]]
+                                                                         paragraphStyle:[NSParagraphStyle defaultParagraphStyle]];
+    [_view it_showWarningWithAttributedString:attributedString
+                                         rect:NSMakeRect(point.x, point.y, 1, 1)];
+}
+
+- (void)textViewRemoveSelectedCommand {
+    if (!_selectedCommandMark) {
+        return;
+    }
+    [self removeSelectedCommandRange];
+}
+
+- (NSCursor *)textViewDefaultPointer {
+    return self.defaultPointer;
+}
+
+- (void)removeSelectedCommandRange {
+    if (!_selectedCommandMark) {
+        return;
+    }
+    _selectedCommandMark = nil;
+    [self updateSearchRange];
+    _screen.savedFindContextAbsPos = 0;
+    [_textview requestDelegateRedraw];
+}
+
+- (void)updateSearchRange {
+    if (!_selectedCommandMark) {
+        _textview.findOnPageHelper.absLineRange = NSMakeRange(0, 0);
+        return;
+    }
+    VT100GridAbsCoordRange range = [self rangeOfCommandAndOutputForMark:_selectedCommandMark];
+    if (_selectedCommandMark.lineStyle) {
+        _textview.findOnPageHelper.absLineRange = NSMakeRange(MAX(0, range.start.y - 1),
+                                                              range.end.y - range.start.y + 1);
+    } else {
+        _textview.findOnPageHelper.absLineRange = NSMakeRange(range.start.y, range.end.y - range.start.y + 1);
+    }
+}
+
+- (VT100GridAbsCoordRange)rangeOfCommandAndOutputForMark:(id<VT100ScreenMarkReading>)mark {
+    VT100GridAbsCoordRange range;
+    range.start = [_screen absCoordRangeForInterval:mark.entry.interval].start;
+
+    id<VT100ScreenMarkReading> successor = [_screen promptMarkAfterPromptMark:mark];
+    if (successor) {
+        range.end = [_screen absCoordRangeForInterval:successor.entry.interval].start;
+        range.end.y -= 1;
+    } else {
+        range.end = VT100GridAbsCoordMake(_screen.width - 1, _screen.numberOfLines + _screen.totalScrollbackOverflow);
+    }
+    return range;
 }
 
 #pragma mark - iTermHotkeyNavigableSession
@@ -15905,11 +16178,13 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     if (!_contentSubscribers) {
         _contentSubscribers = [[NSMutableArray alloc] init];
     }
+    DLog(@"Add content subscriber %@\n%@", contentSubscriber, [NSThread callStackSymbols]);
     [_contentSubscribers addObject:contentSubscriber];
     [self sync];
 }
 
 - (void)removeContentSubscriber:(id<iTermContentSubscriber>)contentSubscriber {
+    DLog(@"Remove content subscriber %@\n%@", contentSubscriber, [NSThread callStackSymbols]);
     [_contentSubscribers removeObject:contentSubscriber];
     [self sync];
 }
@@ -16298,6 +16573,10 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
 - (NSColor *)backgroundDrawingHelperDefaultBackgroundColor {
     return [self processedBackgroundColor];
+}
+
+- (NSColor *)backgroundDrawingHelperDeselectedDefaultBackgroundColor {
+    return [self processedDeselectedBackgroundColor];
 }
 
 - (CGFloat)backgroundDrawingHelperBlending {
@@ -16729,7 +17008,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
 #pragma mark - iTermShortcutNavigationModeHandlerDelegate
 
-- (void (^)(void))shortcutNavigationActionForKeyEquivalent:(NSString *)characters {
+- (void (^)(NSEvent *))shortcutNavigationActionForKeyEquivalent:(NSString *)characters {
     return [[_textview contentNavigationShortcuts] objectPassingTest:^BOOL(iTermContentNavigationShortcut *shortcut, NSUInteger index, BOOL *stop) {
         if (shortcut.view.terminating) {
             return NO;
@@ -17312,6 +17591,10 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     return newFrame;
 }
 
+- (void)composerManagerAutoComposerTextDidChange:(iTermComposerManager *)composerManager {
+    [self removeSelectedCommandRange];
+}
+
 - (void)composerManager:(iTermComposerManager *)composerManager desiredHeightDidChange:(CGFloat)desiredHeight {
     DLog(@"Desired height changed to %@", @(desiredHeight));
     [self sync];
@@ -17326,6 +17609,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 
 - (void)screenDidSynchronize {
     [self updateAutoComposerFrame];
+    [self updateSearchRange];
 }
 
 - (CGFloat)composerManagerLineHeight:(iTermComposerManager *)composerManager {
@@ -17377,7 +17661,7 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     if (!action) {
         return NO;
     }
-    if (action.sendsText && keystroke.isNavigation) {
+    if (action.sendsText || keystroke.isNavigation) {
         // Prevent natural text editing preset from interfering with composer navigation.
         return NO;
     }
@@ -17947,7 +18231,8 @@ getOptionKeyBehaviorLeft:(iTermOptionKeyBehavior *)left
     if (!promptText) {
         return;
     }
-    NSMutableAttributedString *prompt = [self kernedAttributedStringForScreenChars:promptText];
+    NSMutableAttributedString *prompt = [self kernedAttributedStringForScreenChars:promptText
+                                                       elideDefaultBackgroundColor:YES];
     [_composerManager setPrefix:prompt userData:[_composerManager prefixUserData]];
 }
 

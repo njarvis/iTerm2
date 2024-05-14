@@ -1432,15 +1432,20 @@ void TurnOnDebugLoggingAutomatically(void) {
     }
 }
 
-- (void)handleiTerm2URL:(NSURL *)url {
+- (BOOL)handleInternalURL:(NSURL *)url {
+    return [self handleiTerm2URL:url internal:YES];
+}
+
+// Internal means we don't go through AppKit's URL handling; it's a direct call within the app.
+- (BOOL)handleiTerm2URL:(NSURL *)url internal:(BOOL)internal {
     NSURLComponents *components = [[[NSURLComponents alloc] initWithURL:url resolvingAgainstBaseURL:NO] autorelease];
     if ([components.path isEqualToString:@"reveal"]) {
         [self revealWithURL:url];
-        return;
+        return YES;
     }
     if ([components.path isEqualToString:@"explain"]) {
         [[iTermCommandExplainer instance] explainWithURL:url];
-        return;
+        return YES;
     }
     if ([components.path isEqualToString:@"copy-block"]) {
         NSString *guid = [components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
@@ -1456,17 +1461,31 @@ void TurnOnDebugLoggingAutomatically(void) {
             PTYSession *session = [[iTermController sharedInstance] sessionWithGUID:guid];
             if (!session) {
                 DLog(@"No session with guid %@", guid);
-                return;
+                return YES;
             }
             [session copyTextFromBlockWithID:blockID];
         }
+        return YES;
     }
     if ([components.path isEqualToString:@"/command"]) {
-        [self runCommandFromURL:components];
+        [self runCommandFromURL:components internal:internal];
+        return YES;
     }
+    if (internal) {
+        if ([components.path isEqualToString:@"disable-command-selection"]) {
+            [self disableCommandSelection];
+            return YES;
+        }
+    }
+    return NO;
 }
 
-- (void)runCommandFromURL:(NSURLComponents *)components {
+- (void)disableCommandSelection {
+    [iTermPreferences setBool:NO forKey:kPreferenceKeyClickToSelectCommand];
+    [[PreferencePanel sharedInstance] openToPreferenceWithKey:kPreferenceKeyClickToSelectCommand];
+}
+
+- (void)runCommandFromURL:(NSURLComponents *)components internal:(BOOL)internal {
     NSString *hostname = [components.host sanitizedHostname];
     NSString *username = [components.user sanitizedUsername];
     NSString *command = [[[components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
@@ -1475,32 +1494,43 @@ void TurnOnDebugLoggingAutomatically(void) {
     NSString *directory = [components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
         return [element.name isEqualToString:@"d"];
     }].value;
-
+    const BOOL silent = [components.queryItems objectPassingTest:^BOOL(NSURLQueryItem *element, NSUInteger index, BOOL *stop) {
+        return [element.name isEqualToString:@"silent"];
+    }];
     if (@available(macOS 11, *)) {
         iTermCommandURLHandler *handler = [[[iTermCommandURLHandler alloc] initWithCommand:command
                                                                                   hostname:hostname
                                                                                   username:username
                                                                                  directory:directory
-                                                                                  offerTab:(iTermController.sharedInstance.currentTerminal != nil)] autorelease];
-        [handler show];
-        if ([handler.action isEqualTo: iTermCommandURLHandler.openInWindow]) {
-            [[iTermController sharedInstance] openWindow:YES
-                                                 command:handler.command
-                                               directory:handler.directory
-                                                hostname:handler.hostname
-                                                username:handler.username];
-        } else if ([handler.action isEqualTo: iTermCommandURLHandler.openInTab]) {
-            [[iTermController sharedInstance] openWindow:NO
-                                                 command:handler.command
-                                               directory:handler.directory
-                                                hostname:handler.hostname
-                                                username:handler.username];
-        } else if ([handler.action isEqualTo: iTermCommandURLHandler.runInCurrentTab]) {
-            [[[[iTermController sharedInstance] currentTerminal] currentSession] runCommand:handler.command
-                                                                                inDirectory:handler.directory
-                                                                                     onHost:handler.hostname
-                                                                                     asUser:handler.username];
-        }
+                                                                                  offerTab:(iTermController.sharedInstance.currentTerminal != nil)
+                                                                                    silent:silent] autorelease];
+        [handler showWithCompletion:^(iTermCommandURLHandler *handler) {
+            if ([handler.action isEqualTo: iTermCommandURLHandler.openInWindow]) {
+                [[iTermController sharedInstance] openWindow:YES
+                                                     command:handler.command
+                                                   directory:handler.directory
+                                                    hostname:handler.hostname
+                                                    username:handler.username];
+            } else if ([handler.action isEqualTo: iTermCommandURLHandler.openInTab]) {
+                [[iTermController sharedInstance] openWindow:NO
+                                                     command:handler.command
+                                                   directory:handler.directory
+                                                    hostname:handler.hostname
+                                                    username:handler.username];
+            } else if ([handler.action isEqualTo: iTermCommandURLHandler.runInCurrentTab]) {
+                [[[[iTermController sharedInstance] currentTerminal] currentSession] runCommand:handler.command
+                                                                                    inDirectory:handler.directory
+                                                                                         onHost:handler.hostname
+                                                                                         asUser:handler.username];
+            } else if ([handler.action isEqual:iTermCommandURLHandler.runSilently] && internal) {
+                NSArray<NSString *> *parts = [handler.command componentsInShellCommand];
+                if (parts.count > 0) {
+                    [iTermBufferedCommandRunner runCommandWithPath:@"/bin/sh"
+                                                         arguments:@[ @"-c", handler.command ?: @"" ]
+                                                            window:[[[iTermController sharedInstance] currentTerminal] window]];
+                }
+            }
+        }];
     }
 }
 
@@ -1510,7 +1540,7 @@ void TurnOnDebugLoggingAutomatically(void) {
     NSString *scheme = [url scheme];
 
     if ([scheme isEqualToString:@"iterm2"]) {
-        [self handleiTerm2URL:url];
+        [self handleiTerm2URL:url internal:NO];
         return;
     }
     Profile *profile = [[iTermLaunchServices sharedInstance] profileForScheme:scheme];

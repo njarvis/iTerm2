@@ -93,6 +93,7 @@ extern NSNotificationName PTYTextViewWillChangeFontNotification;
 - (BOOL)textViewDrawBackgroundImageInView:(NSView *)view
                                  viewRect:(NSRect)rect
                    blendDefaultBackground:(BOOL)blendDefaultBackground
+                               deselected:(BOOL)deselected
                             virtualOffset:(CGFloat)virtualOffset;
 - (BOOL)textViewHasBackgroundImage;
 - (void)sendEscapeSequence:(NSString *)text;
@@ -287,6 +288,7 @@ extern NSNotificationName PTYTextViewWillChangeFontNotification;
 - (void)textViewOpenComposer:(NSString *)string;
 - (BOOL)textViewIsAutoComposerOpen;
 - (VT100GridRange)textViewLinesToSuppressDrawing;
+- (CGFloat)textViewPointsOnBottomToSuppressDrawing;
 - (NSRect)textViewCursorFrameInScreenCoords;
 - (void)textViewDidReceiveSingleClick;
 - (void)textViewDisableOffscreenCommandLine;
@@ -294,6 +296,12 @@ extern NSNotificationName PTYTextViewWillChangeFontNotification;
 - (void)textViewRemoveBookmarkForMark:(id<VT100ScreenMarkReading>)mark;
 - (BOOL)textViewEnclosingTabHasMultipleSessions;
 - (BOOL)textViewSelectionScrollAllowed;
+- (void)textViewRemoveSelectedCommand;
+- (void)textViewSelectCommandRegionAtCoord:(VT100GridCoord)coord;
+- (id<VT100ScreenMarkReading>)textViewSelectedCommandMark;
+- (NSCursor *)textViewDefaultPointer;
+- (BOOL)textViewOrComposerIsFirstResponder;
+- (VT100GridAbsCoordRange)textViewCoordRangeForCommandAndOutputAtMark:(id<iTermMark>)mark;
 
 @end
 
@@ -693,6 +701,8 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                   cursorCoord:(VT100GridCoord)cursorCoord;
 
 - (void)selectCoordRange:(VT100GridCoordRange)range;
+- (void)selectAbsWindowedCoordRange:(VT100GridAbsWindowedRange)windowedRange;
+
 - (NSRect)frameForCoord:(VT100GridCoord)coord;
 
 - (iTermLogicalMovementHelper *)logicalMovementHelperForCursorCoordinate:(VT100GridCoord)cursorCoord;
@@ -718,7 +728,8 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 - (void)setAlphaValue:(CGFloat)alphaValue NS_UNAVAILABLE;
 - (NSRect)rectForCoord:(VT100GridCoord)coord;
 - (void)updateSubviewFrames;
-- (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProviderUsingProcessedColors:(BOOL)processed;
+- (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProviderUsingProcessedColors:(BOOL)processed
+                                                                        elideDefaultBackgroundColor:(BOOL)elideDefaultBackgroundColor;
 - (BOOL)copyBlock:(NSString *)block includingAbsLine:(long long)absLine;
 - (void)setNeedsDisplay:(BOOL)needsDisplay NS_UNAVAILABLE;
 - (void)setNeedsDisplayInRect:(NSRect)invalidRect NS_UNAVAILABLE;  // Use this instead of setNeedsDisplay:

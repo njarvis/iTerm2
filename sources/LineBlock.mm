@@ -260,7 +260,7 @@ NS_INLINE void iTermLineBlockDidChange(__unsafe_unretained LineBlock *lineBlock)
             data = [dictionary[kLineBlockRawBufferV1Key] migrateV1ToV3:&migrationIndex];
             _generation = 1;
         }
-        if (!data) {
+        if (!data || data.length / sizeof(screen_char_t) >= INT_MAX) {
             return nil;
         }
         _characterBuffer = [[iTermCharacterBuffer alloc] initWithData:data];
@@ -442,7 +442,7 @@ static void iTermLineBlockFreeMetadata(LineBlockMetadata *metadata, int count) {
 
         // Preserve these so delta encoding will continue to work when you encode a copy.
         theCopy->_generation = _generation;
-        theCopy->_guid = [_guid copy];
+        theCopy->_guid = [[NSUUID UUID] UUIDString];
         theCopy.hasBeenCopied = YES;
 
         return theCopy;
@@ -465,7 +465,7 @@ static void iTermLineBlockFreeMetadata(LineBlockMetadata *metadata, int count) {
     theCopy->cached_numlines = cached_numlines;
     theCopy->cached_numlines_width = cached_numlines_width;
     theCopy->_generation = _generation;
-    theCopy->_guid = [_guid copy];
+    theCopy->_guid = [[NSUUID UUID] UUIDString];
     theCopy->_mayHaveDoubleWidthCharacter = _mayHaveDoubleWidthCharacter;
     theCopy.hasBeenCopied = YES;
     
@@ -567,6 +567,10 @@ static char* formatsct(const screen_char_t* src, int len, char* dest) {
     }
 }
 - (NSString *)dumpString {
+    return [self dumpStringWithDroppedChars:0];
+}
+
+- (NSString *)dumpStringWithDroppedChars:(long long)droppedChars {
     NSMutableArray<NSString *> *strings = [NSMutableArray array];
     [strings addObject:[NSString stringWithFormat:@"numRawLines=%@", @([self numRawLines])]];
 
@@ -581,16 +585,23 @@ static char* formatsct(const screen_char_t* src, int len, char* dest) {
     }
     for (i = first_entry; i < cll_entries; ++i) {
         BOOL iscont = (i == cll_entries-1) && is_partial;
-        NSString *message = [NSString stringWithFormat:@"Line %d, length %d, offset from raw=%d, abs pos=%d, continued=%s: %s\n", i, cumulative_line_lengths[i] - prev, prev, prev + rawOffset, iscont?"yes":"no",
-                             formatsct(_characterBuffer.pointer + _startOffset + prev - self.bufferStartOffset, cumulative_line_lengths[i]-prev, temp)];
         NSString *md = iTermMetadataShortDescription(metadata_[i].lineMetadata, cumulative_line_lengths[i] - prev);
-        [strings addObject:[message stringByAppendingString:md]];
+        NSString *message = [NSString stringWithFormat:@"Line %d, length %d, offset from raw=%d, abs pos=%lld, continued=%s %@: %s\n",
+                             i,
+                             cumulative_line_lengths[i] - prev,
+                             prev,
+                             prev + rawOffset + droppedChars,
+                             iscont?"yes":"no",
+                             md,
+                             formatsct(_characterBuffer.pointer + _startOffset + prev - self.bufferStartOffset,
+                                       cumulative_line_lengths[i]-prev, temp)];
+        [strings addObject:message];
         prev = cumulative_line_lengths[i];
     }
     return [strings componentsJoinedByString:@"\n"];
 }
 
-- (void)dump:(int)rawOffset toDebugLog:(BOOL)toDebugLog {
+- (void)dump:(int)rawOffset droppedChars:(long long)droppedChars toDebugLog:(BOOL)toDebugLog {
     if (toDebugLog) {
         DLog(@"numRawLines=%@", @([self numRawLines]));
     } else {
@@ -606,13 +617,19 @@ static char* formatsct(const screen_char_t* src, int len, char* dest) {
     }
     for (i = first_entry; i < cll_entries; ++i) {
         BOOL iscont = (i == cll_entries-1) && is_partial;
-        NSString *message = [NSString stringWithFormat:@"Line %d, length %d, offset from raw=%d, abs pos=%d, continued=%s: %s\n", i, cumulative_line_lengths[i] - prev, prev, prev + rawOffset, iscont?"yes":"no",
-                             formatsct(_characterBuffer.pointer + _startOffset + prev - self.bufferStartOffset, cumulative_line_lengths[i]-prev, temp)];
         NSString *md = iTermMetadataShortDescription(metadata_[i].lineMetadata, cumulative_line_lengths[i] - prev);
+        NSString *message = [NSString stringWithFormat:@"Line %d, length %d, offset from raw=%d, abs pos=%lld, continued=%s %@: %s\n",
+                             i,
+                             cumulative_line_lengths[i] - prev,
+                             prev,
+                             prev + rawOffset + droppedChars,
+                             iscont?"yes":"no",
+                             md,
+                             formatsct(_characterBuffer.pointer + _startOffset + prev - self.bufferStartOffset, cumulative_line_lengths[i]-prev, temp)];
         if (toDebugLog) {
-            DLog(@"%@%@", message, md);
+            DLog(@"%@", message);
         } else {
-            NSLog(@"%@%@", message, md);
+            NSLog(@"%@", message);
         }
         prev = cumulative_line_lengths[i];
     }
@@ -825,6 +842,17 @@ static int iTermLineBlockNumberOfFullLinesImpl(const screen_char_t *buffer,
 
 - (LineBlockMetadata)internalMetadataForLine:(int)line {
     return metadata_[line];
+}
+
+- (int)offsetOfStartOfLineIncludingOffset:(int)offset {
+    int i = [self _findEntryBeforeOffset:offset];
+    if (i < 0) {
+        i = cll_entries - 2;
+    }
+    if (i < 1) {
+        return 0;
+    }
+    return cumulative_line_lengths[i - 1];
 }
 
 - (int)getPositionOfLine:(int *)lineNum
@@ -1247,6 +1275,15 @@ int OffsetOfWrappedLine(const screen_char_t* p, int n, int length, int width, BO
                                                         metadata:metadata
                                                     continuation:continuation];
     return [sca paddedToLength:paddedSize eligibleForDWC:eligibleForDWC];
+}
+
+- (NSNumber *)rawLineNumberAtWrappedLineOffset:(int)lineNum width:(int)width {
+    int temp = lineNum;
+    const LineBlockLocation location = [self locationOfRawLineForWidth:width lineNum:&temp];
+    if (!location.found) {
+        return nil;
+    }
+    return @(location.index);
 }
 
 - (ScreenCharArray *)rawLineAtWrappedLineOffset:(int)lineNum width:(int)width {
@@ -2239,7 +2276,7 @@ includesPartialLastLine:(BOOL *)includesPartialLastLine {
 
         // Don't search arbitrarily long lines. If someone has a 10 million character long line then
         // it'll hang for a long time.
-        static const int MAX_SEARCHABLE_LINE_LENGTH = 500000;
+        static const int MAX_SEARCHABLE_LINE_LENGTH = 30000000;
         [self _findInRawLine:entry
                       needle:substring
                      options:options
@@ -2320,7 +2357,7 @@ includesPartialLastLine:(BOOL *)includesPartialLastLine {
                 //     bytes_to_consume_in_this_line % (consume * width);
                 *x = position - (prev + offset);
             } else {
-                *x = bytes_to_consume_in_this_line;
+                *x = MAX(0, bytes_to_consume_in_this_line);
             }
             return YES;
         }

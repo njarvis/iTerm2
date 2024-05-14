@@ -85,6 +85,7 @@ typedef struct {
     BOOL shouldAntiAlias;
     NSColor *foregroundColor;
     BOOL boxDrawing;
+    BOOL contrastIneligible;
     NSFont *font;
     BOOL bold;
     BOOL faint;
@@ -171,7 +172,8 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
     NSRect _frame;
 
     // The -visibleRect of the view we're drawing into.
-    NSRect _visibleRect;
+    NSRect _visibleRectExcludingTopMargin;
+    NSRect _visibleRectIncludingTopMargin;
 
     NSSize _scrollViewContentSize;
     NSRect _scrollViewDocumentVisibleRect;
@@ -305,6 +307,7 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         }
     }
 
+    [NSGraphicsContext saveGraphicsState];
     [self drawRanges:ranges
                count:numRowsInRect
               origin:boundingCoordRange.start
@@ -312,9 +315,14 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         visibleLines:visibleLines
        virtualOffset:virtualOffset];
 
+    if (_selectedCommandRegion.length > 0) {
+        [self drawOutlineAroundSelectedCommand:virtualOffset];
+    }
+
     if (_showDropTargets) {
         [self drawDropTargetsWithVirtualOffset:virtualOffset];
     }
+    [NSGraphicsContext restoreGraphicsState];
 
     [self stopTiming];
 
@@ -350,6 +358,8 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
     return count;
 }
 
+// NOTE: This will set a clip rect on the graphics state if pointsOnBottomToSuppressDrawing is positive.
+// The caller must restoreGraphicsState after this returns in that case.
 - (void)drawRanges:(NSRange *)ranges
              count:(NSInteger)numRanges
             origin:(VT100GridCoord)origin
@@ -403,10 +413,14 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                                      withinRange:charRange
                                                          matches:matches
                                                         anyBlink:&_blinkingFound
-                                                               y:y];
+                                                               y:y
+                                              nonSelectedCommand:[self lineIsInDeselectedRegion:line]];
             [backgroundRunArrays addObject:runsInLine];
         } else {
-            [backgroundRunArrays addObject:[iTermBackgroundColorRunsInLine defaultRunOfLength:_gridSize.width row:line y:y]];
+            [backgroundRunArrays addObject:[iTermBackgroundColorRunsInLine defaultRunOfLength:_gridSize.width
+                                                                                          row:line
+                                                                                            y:y
+                                                                           nonSelectedCommand:[self lineIsInDeselectedRegion:line]]];
         }
         iTermPreciseTimerStatsMeasureAndAccumulate(&_stats[TIMER_CONSTRUCT_BACKGROUND_RUNS]);
     }
@@ -416,8 +430,12 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
     if (_hasBackgroundImage) {
         [self.delegate drawingHelperDrawBackgroundImageInRect:boundingRect
                                        blendDefaultBackground:NO
+                                                   deselected:NO
                                                 virtualOffset:virtualOffset];
     }
+
+    [NSGraphicsContext saveGraphicsState];
+    [self clipOutSuppressedBottomIfNeeded:virtualOffset];
 
     NSColor *cursorBackgroundColor = nil;
     const int cursorY = self.cursorCoord.y + origin.y;
@@ -430,7 +448,8 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
             cursorY < runArray.line + runArray.numberOfEquivalentRows) {
             NSColor *color = [self unprocessedColorForBackgroundRun:[runArray runAtIndex:self.cursorCoord.x] ?: runArray.lastRun
                                                      enableBlending:NO];
-            cursorBackgroundColor = [_colorMap processedBackgroundColorForBackgroundColor:color];
+            cursorBackgroundColor = [_colorMap processedBackgroundColorForBackgroundColor:color
+                                                                inDeselectedCommandRegion:NO];
         }
         [self drawBackgroundForLine:runArray.line
                                 atY:runArray.y
@@ -445,12 +464,16 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         i += rows;
     }
     iTermPreciseTimerStatsMeasureAndAccumulate(&_stats[TIMER_DRAW_BACKGROUND]);
+    [NSGraphicsContext restoreGraphicsState];
 
     // Draw default background color over the line under the last drawn line so the tops of
     // characters aren't visible there. If there is an IME, that could be many lines tall.
-    VT100GridCoordRange drawableCoordRange = [self drawableCoordRangeForRect:_visibleRect];
+    VT100GridCoordRange drawableCoordRange = [self drawableCoordRangeForRect:_visibleRectExcludingTopMargin];
     [self drawExcessAtLine:drawableCoordRange.end.y
              virtualOffset:virtualOffset];
+
+    [NSGraphicsContext saveGraphicsState];
+    [self clipOutSuppressedBottomIfNeeded:virtualOffset];
 
     // Draw other background-like stuff that goes behind text.
     [self drawAccessoriesInRect:boundingRect
@@ -479,7 +502,9 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                                 virtualOffset:virtualOffset];
     }
 
+    [NSGraphicsContext restoreGraphicsState];
     [self drawTopMarginWithVirtualOffset:virtualOffset];
+    [self clipOutSuppressedBottomIfNeeded:virtualOffset];
 
     // If the IME is in use, draw its contents over top of the "real" screen
     // contents.
@@ -511,6 +536,17 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                       virtualOffset:virtualOffset];
     }
     [self drawButtons:virtualOffset];
+}
+
+- (void)clipOutSuppressedBottomIfNeeded:(CGFloat)virtualOffset {
+    if (_pointsOnBottomToSuppressDrawing > 0) {
+        NSRect clipRect = NSMakeRect(0, _visibleRectIncludingTopMargin.origin.y, _visibleRectIncludingTopMargin.size.width, _visibleRectIncludingTopMargin.size.height - _pointsOnBottomToSuppressDrawing);
+        if (_debug) {
+            [[NSColor redColor] set];
+            iTermFrameRect(clipRect, virtualOffset);
+        }
+        iTermRectClip(clipRect, virtualOffset);
+    }
 }
 
 - (BOOL)textAppearanceDependsOnBackgroundColor {
@@ -563,7 +599,8 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                                  enableBlending:enableBlending];
         // The unprocessed color is needed for minimum contrast computation for text color.
         box.unprocessedBackgroundColor = color;
-        color = [_colorMap processedBackgroundColorForBackgroundColor:color];
+        color = [_colorMap processedBackgroundColorForBackgroundColor:color
+                                            inDeselectedCommandRegion:run->nonSelectedCommand];
         box.backgroundColor = color;
 
         [box.backgroundColor set];
@@ -581,10 +618,19 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
             iTermRectFillUsingOperation(temp,
                                         enableBlending ? NSCompositingOperationSourceOver : NSCompositingOperationCopy,
                                         virtualOffset);
+
+            if (_debug) {
+                [[NSColor greenColor] set];
+                iTermFrameRect(temp, virtualOffset);
+            }
         } else {
             iTermRectFillUsingOperation(rect,
                                         enableBlending ? NSCompositingOperationSourceOver : NSCompositingOperationCopy,
                                         virtualOffset);
+            if (_debug) {
+                [[NSColor greenColor] set];
+                iTermFrameRect(rect, virtualOffset);
+            }
         }
 
         if (_debug) {
@@ -595,6 +641,10 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
             [path stroke];
         }
     }
+}
+
+- (BOOL)lineIsInDeselectedRegion:(int)line {
+    return _selectedCommandRegion.length > 0 && (line < 0 || !NSLocationInRange(line, _selectedCommandRegion));
 }
 
 - (NSColor *)unprocessedColorForBackgroundRun:(iTermBackgroundColorRun *)run
@@ -616,6 +666,8 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         // consistent with their separator glyphs opacity(foreground).
         if (_transparencyAffectsOnlyDefaultBackgroundColor && !defaultBackground) {
             alpha = 1;
+        } else if (run->nonSelectedCommand) {
+            alpha = _transparencyAlpha;
         }
         if (_reverseVideo && defaultBackground) {
             // Reverse video is only applied to default background-
@@ -638,7 +690,7 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                             isBackground:YES];
         }
 
-        if (defaultBackground) {
+        if (defaultBackground && !run->nonSelectedCommand) {
             alpha = iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(_hasBackgroundImage,
                                                                               enableBlending,
                                                                               _reverseVideo,
@@ -686,15 +738,17 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         // Draw the excess bar at the bottom of the visible rect the in case
         // that some other tab has a larger font and these lines don't fit
         // evenly in the available space.
-        NSRect visibleRect = _visibleRect;
+        NSRect visibleRect = _visibleRectExcludingTopMargin;
         excessRect.origin.x = 0;
         excessRect.origin.y = NSMaxY(visibleRect) - _excess;
         excessRect.size.width = _scrollViewContentSize.width;
         excessRect.size.height = _excess;
     }
 
+    const NSRange range = [self rangeOfVisibleRows];
     [self.delegate drawingHelperDrawBackgroundImageInRect:excessRect
                                    blendDefaultBackground:YES
+                                               deselected:!_forceRegularBottomMargin && [self lineIsInDeselectedRegion:((NSInteger)NSMaxRange(range))]
                                             virtualOffset:virtualOffset];
 
     if (_debug) {
@@ -704,7 +758,7 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
         [path lineToPoint:NSMakePoint(NSMaxX(excessRect), NSMaxY(excessRect))];
         [path stroke];
 
-        NSFrameRect(excessRect);
+        iTermFrameRect(excessRect, virtualOffset);
     }
 
     if (_showStripes) {
@@ -714,12 +768,14 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
 
 - (void)drawTopMarginWithVirtualOffset:(CGFloat)virtualOffset {
     // Draw a margin at the top of the visible area.
-    NSRect topMarginRect = _visibleRect;
+    NSRect topMarginRect = _visibleRectExcludingTopMargin;
     topMarginRect.origin.y -= [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
 
     topMarginRect.size.height = [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
+    NSInteger firstLine = [self rangeOfVisibleRows].location;
     [self.delegate drawingHelperDrawBackgroundImageInRect:topMarginRect
                                    blendDefaultBackground:YES
+                                               deselected:[self lineIsInDeselectedRegion:firstLine - 1]
                                             virtualOffset:virtualOffset];
 
     if (_showStripes) {
@@ -732,18 +788,21 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                     virtualOffset:(CGFloat)virtualOffset {
     NSRect leftMargin = NSMakeRect(0, y, MAX(0, [iTermPreferences intForKey:kPreferenceKeySideMargins]), _cellSize.height);
     NSRect rightMargin;
-    NSRect visibleRect = _visibleRect;
+    NSRect visibleRect = _visibleRectExcludingTopMargin;
     rightMargin.origin.x = _cellSize.width * _gridSize.width + [iTermPreferences intForKey:kPreferenceKeySideMargins];
     rightMargin.origin.y = y;
     rightMargin.size.width = visibleRect.size.width - rightMargin.origin.x;
     rightMargin.size.height = _cellSize.height;
 
+    const BOOL deselected = [self lineIsInDeselectedRegion:line];
     // Draw background in margins
     [self.delegate drawingHelperDrawBackgroundImageInRect:leftMargin
                                    blendDefaultBackground:YES
+                                               deselected:deselected
                                             virtualOffset:virtualOffset];
     [self.delegate drawingHelperDrawBackgroundImageInRect:rightMargin
                                    blendDefaultBackground:YES
+                                               deselected:deselected
                                             virtualOffset:virtualOffset];
 
     [self drawMarkIfNeededOnLine:line
@@ -767,6 +826,36 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                        _cellSize.height);
         iTermRectFillUsingOperation(rect, NSCompositingOperationSourceOver, virtualOffset);
     }
+}
+
+- (NSArray<NSColor *> *)selectedCommandOutlineColors {
+    NSColor *bg = [[self defaultBackgroundColor] colorWithAlphaComponent:1.0];
+    return @[
+        [[NSColor colorWithDisplayP3Red:0.2 green:0.2 blue:1 alpha:1] blendedWithColor:bg weight:0.5],
+        [[NSColor colorWithDisplayP3Red:0 green:0 blue:0.8 alpha:1] blendedWithColor:bg weight:0.5]
+    ];
+}
+
+- (void)drawOutlineAroundSelectedCommand:(CGFloat)virtualOffset {
+    const CGFloat commandRegionOutlineThickness = 2.0;
+
+    const CGFloat hMargin = [iTermPreferences intForKey:kPreferenceKeySideMargins];
+    const CGFloat y = _selectedCommandRegion.location * _cellSize.height;
+
+    NSRect rect = NSMakeRect(0,
+                             y - commandRegionOutlineThickness,
+                             _cellSize.width * _gridSize.width + 2 * hMargin,
+                             _selectedCommandRegion.length * _cellSize.height + commandRegionOutlineThickness * 2);
+
+    NSArray<NSColor *> *colors = self.selectedCommandOutlineColors;
+    [colors[0] set];
+
+    iTermFrameRect(rect, virtualOffset);
+
+    rect = NSInsetRect(rect, 1, 1);
+
+    [colors[1] set];
+    iTermFrameRect(rect, virtualOffset);
 }
 
 - (void)drawStripesInRect:(NSRect)rect
@@ -991,6 +1080,14 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
     id<VT100ScreenMarkReading> mark = [self.delegate drawingHelperMarkOnLine:line];
     if (mark != nil && self.drawMarkIndicators) {
         if (mark.lineStyle) {
+            if (_selectedCommandRegion.length > 0 && NSLocationInRange(line, _selectedCommandRegion)) {
+                // Don't draw line-style mark in selected command region.
+                return;
+            }
+            if (_selectedCommandRegion.length > 0 && line == NSMaxRange(_selectedCommandRegion) + 1) {
+                // Don't draw line-style mark immediately after selected command region.
+                return;
+            }
             NSColor *bgColor = [self defaultBackgroundColor];
             NSColor *merged = [iTermTextDrawingHelper colorForLineStyleMark:[iTermTextDrawingHelper markIndicatorTypeForMark:mark]
                                                             backgroundColor:bgColor];
@@ -1148,12 +1245,15 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
 
 // Assumes that updateButtonFrames was invoked by caller first.
 - (void)drawButtons:(CGFloat)virtualOffset {
-    NSColor *background = [self.delegate drawingHelperColorForCode:ALTSEM_DEFAULT green:0 blue:0 colorMode:ColorModeAlternate bold:NO faint:NO isBackground:YES];
+    NSColor *background = [[self.delegate drawingHelperColorForCode:ALTSEM_DEFAULT green:0 blue:0 colorMode:ColorModeAlternate bold:NO faint:NO isBackground:YES] colorWithAlphaComponent:_transparencyAlpha];
     NSColor *foreground = [self.delegate drawingHelperColorForCode:ALTSEM_DEFAULT green:0 blue:0 colorMode:ColorModeAlternate bold:NO faint:NO isBackground:NO];
     NSColor *selectedColor = [self.delegate drawingHelperColorForCode:ALTSEM_SELECTED green:0 blue:0 colorMode:ColorModeAlternate bold:NO faint:NO isBackground:YES];
 
     if (@available(macOS 11, *)) {
         for (iTermTerminalButton *button in [self.delegate drawingHelperTerminalButtons]) {
+            if (![self canDrawLine:button.absCoordForDesiredFrame.y - _totalScrollbackOverflow]) {
+                continue;
+            }
             [button drawWithBackgroundColor:background
                             foregroundColor:foreground
                               selectedColor:selectedColor
@@ -1164,14 +1264,14 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
 }
 
 - (void)updateButtonFrames NS_AVAILABLE_MAC(11) {
-    VT100GridCoordRange drawableCoordRange = [self drawableCoordRangeForRect:_visibleRect];
+    VT100GridCoordRange drawableCoordRange = [self drawableCoordRangeForRect:_visibleRectExcludingTopMargin];
     const CGFloat margin = [iTermPreferences intForKey:kPreferenceKeySideMargins];
     for (iTermTerminalButton *button in [self.delegate drawingHelperTerminalButtons]) {
         CGFloat x;
         button.enclosingSessionWidth = _gridSize.width;
         VT100GridAbsCoord absCoord = [_delegate absCoordForButton:button];
         if (absCoord.x < 0) {
-            x = _scrollViewDocumentVisibleRect.size.width - margin;
+            x = _scrollViewDocumentVisibleRect.size.width - margin - [button sizeWithCellSize:_cellSize].width;
         } else {
             x = margin + absCoord.x * self.cellSize.width;
         }
@@ -1181,8 +1281,16 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                                       minAbsLine:minAbsY
                                 cumulativeOffset:_totalScrollbackOverflow
                                         cellSize:_cellSize];
+        if (_selectedCommandRegion.length > 0 && absCoord.y - self.totalScrollbackOverflow == NSMaxRange(_selectedCommandRegion)) {
+            NSRect frame = button.desiredFrame;
+            button.shift = 2;
+            frame.origin.y += button.shift;
+            button.desiredFrame = frame;
+        } else {
+            button.shift = 0;
+        }
         if (absCoord.x < 0) {
-            absCoord.x =  1; //self.gridSize.width;
+            absCoord.x = self.gridSize.width - 1;
         }
         absCoord.y = MAX(absCoord.y, minAbsY);
         button.absCoordForDesiredFrame = absCoord;
@@ -1192,7 +1300,7 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
              @(drawableCoordRange.start.y + _totalScrollbackOverflow),
              @(drawableCoordRange.start.y),
              @(_totalScrollbackOverflow),
-             NSStringFromRect(_visibleRect),
+             NSStringFromRect(_visibleRectExcludingTopMargin),
              @(_totalScrollbackOverflow),
              @(_cellSize.height));
     }
@@ -1295,6 +1403,7 @@ static CGFloat iTermTextDrawingHelperAlphaValueForDefaultBackgroundColor(BOOL ha
                 previousRun = *run.valuePointer;
             } else if (run.valuePointer->selected == previousRun.selected &&
                        run.valuePointer->isMatch == previousRun.isMatch &&
+                       run.valuePointer->nonSelectedCommand == previousRun.nonSelectedCommand &&
                        !run.valuePointer->beneathFaintText &&
                        !previousRun.beneathFaintText) {
                 // Combine with preceding run.
@@ -2287,7 +2396,7 @@ NSColor *iTermTextDrawingHelperGetTextColor(iTermTextDrawingHelper *self,
                                             int index,
                                             iTermTextColorContext *context,
                                             iTermBackgroundColorRun *colorRun,
-                                            BOOL isBoxDrawingCharacter) {
+                                            BOOL disableMinimumContrast) {
     NSColor *rawColor = nil;
     BOOL isMatch = NO;
     if (c->faint && colorRun && !context->backgroundColor) {
@@ -2372,7 +2481,7 @@ NSColor *iTermTextDrawingHelperGetTextColor(iTermTextDrawingHelper *self,
     if (needsProcessing) {
         result = [context->colorMap processedTextColorForTextColor:rawColor
                                                overBackgroundColor:context->backgroundColor
-                                            disableMinimumContrast:isBoxDrawingCharacter];
+                                            disableMinimumContrast:disableMinimumContrast];
     } else {
         result = rawColor;
     }
@@ -2431,6 +2540,7 @@ static inline BOOL iTermCharacterAttributesUnderlineColorEqual(iTermCharacterAtt
             *combinedAttributesChanged = (newAttributes->shouldAntiAlias != previousAttributes->shouldAntiAlias ||
                                           ![newAttributes->foregroundColor isEqual:previousAttributes->foregroundColor] ||
                                           newAttributes->boxDrawing != previousAttributes->boxDrawing ||
+                                          newAttributes->contrastIneligible != previousAttributes ->contrastIneligible ||
                                           ![newAttributes->font isEqual:previousAttributes->font] ||
                                           newAttributes->ligatureLevel != previousAttributes->ligatureLevel ||
                                           newAttributes->bold != previousAttributes->bold ||
@@ -2490,6 +2600,7 @@ static inline BOOL iTermCharacterAttributesUnderlineColorEqual(iTermCharacterAtt
     const unichar code = c->code;
 
     attributes->boxDrawing = !isComplex && [[iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:_useNativePowerlineGlyphs] characterIsMember:code];
+    attributes->contrastIneligible = !isComplex && [[iTermBoxDrawingBezierCurveFactory blockDrawingCharacters] characterIsMember:code];
 
     if (forceTextColor) {
         attributes->foregroundColor = forceTextColor;
@@ -2500,7 +2611,7 @@ static inline BOOL iTermCharacterAttributesUnderlineColorEqual(iTermCharacterAtt
                                                                          i,
                                                                          textColorContext,
                                                                          colorRun,
-                                                                         attributes->boxDrawing);
+                                                                         attributes->contrastIneligible);
     }
 
     attributes->bold = c->bold;
@@ -3199,7 +3310,7 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
 }
 
 - (NSRect)offscreenCommandLineFrame {
-    return [iTermTextDrawingHelper offscreenCommandLineFrameForVisibleRect:_visibleRect
+    return [iTermTextDrawingHelper offscreenCommandLineFrameForVisibleRect:_visibleRectExcludingTopMargin
                                                                   cellSize:_cellSize
                                                                   gridSize:_gridSize];
 }
@@ -3244,8 +3355,9 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
                                              withinRange:NSMakeRange(0, _gridSize.width)
                                                  matches:nil
                                                 anyBlink:&blink
-                                                       y:row * _cellSize.height];
-    
+                                                       y:row * _cellSize.height
+                                      nonSelectedCommand:NO];
+
     if ([self textAppearanceDependsOnBackgroundColor]) {
         [self drawForegroundForBackgroundRunArrays:@[backgroundRuns]
                           drawOffscreenCommandLine:YES
@@ -3268,8 +3380,8 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
     const NSRect rect = self.offscreenCommandLineFrame;
 
     NSRect outline = rect;
-    outline.origin.x = 1;
-    outline.size.width = _visibleRect.size.width - 2;
+    outline.origin.x = 0;
+    outline.size.width = _visibleRectExcludingTopMargin.size.width;
 
     [[self offscreenCommandLineBackgroundColor] set];
     iTermRectFill(outline, virtualOffset);
@@ -3432,7 +3544,8 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
         [[colorMap processedBackgroundColorForBackgroundColor:[NSColor colorWithCalibratedRed:1.0
                                                                                         green:1.0
                                                                                          blue:0
-                                                                                        alpha:1.0]] set];
+                                                                                        alpha:1.0]
+                                    inDeselectedCommandRegion:NO] set];
         iTermRectFill(cursorFrame, virtualOffset);
 
         return YES;
@@ -3849,7 +3962,22 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
                                                       bold:NO
                                                      faint:NO
                                               isBackground:YES];
-    aColor = [_colorMap processedBackgroundColorForBackgroundColor:aColor];
+    aColor = [_colorMap processedBackgroundColorForBackgroundColor:aColor
+                                         inDeselectedCommandRegion:NO];
+    aColor = [aColor colorWithAlphaComponent:_transparencyAlpha];
+    return aColor;
+}
+
+- (NSColor *)deselectedDefaultBackgroundColor {
+    NSColor *aColor = [_delegate drawingHelperColorForCode:ALTSEM_DEFAULT
+                                                     green:0
+                                                      blue:0
+                                                 colorMode:ColorModeAlternate
+                                                      bold:NO
+                                                     faint:NO
+                                              isBackground:YES];
+    aColor = [_colorMap processedBackgroundColorForBackgroundColor:aColor
+                                         inDeselectedCommandRegion:YES];
     aColor = [aColor colorWithAlphaComponent:_transparencyAlpha];
     return aColor;
 }
@@ -3862,7 +3990,8 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
 
 - (NSColor *)selectionColorForCurrentFocus {
     if (_isFrontTextView) {
-        return [_colorMap processedBackgroundColorForBackgroundColor:[_colorMap colorForKey:kColorMapSelection]];
+        return [_colorMap processedBackgroundColorForBackgroundColor:[_colorMap colorForKey:kColorMapSelection]
+                                           inDeselectedCommandRegion:NO];
     } else {
         return _unfocusedSelectionColor;
     }
@@ -3872,9 +4001,10 @@ withExtendedAttributes:(iTermExternalAttribute *)ea2 {
 
 - (void)updateCachedMetrics {
     _frame = _delegate.frame;
-    _visibleRect = [_delegate textDrawingHelperVisibleRect];
+    _visibleRectExcludingTopMargin = [_delegate textDrawingHelperVisibleRectExcludingTopMargin];
+    _visibleRectIncludingTopMargin = [_delegate textDrawingHelperVisibleRectIncludingTopMargin];
     _scrollViewContentSize = _delegate.enclosingScrollView.contentSize;
-    _scrollViewDocumentVisibleRect = _delegate.textDrawingHelperVisibleRect;
+    _scrollViewDocumentVisibleRect = _visibleRectExcludingTopMargin;
     _preferSpeedToFullLigatureSupport = [iTermAdvancedSettingsModel preferSpeedToFullLigatureSupport];
 
     BOOL ignore1 = NO, ignore2 = NO;

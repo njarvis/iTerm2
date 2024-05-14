@@ -52,7 +52,7 @@ typedef struct {
     unsigned int faint : 1;
     vector_float4 background;
     ColorMode mode : 2;
-    unsigned int isBoxDrawing : 1;
+    unsigned int isBlock : 1;
 } iTermTextColorKey;
 
 typedef struct {
@@ -63,6 +63,7 @@ typedef struct {
     BOOL selected;
     BOOL isMatch;
     BOOL image;
+    BOOL inDeselectedRegion;
 } iTermBackgroundColorKey;
 
 static vector_float4 VectorForColor(NSColor *colorInUnknownSpace, NSColorSpace *colorSpace) {
@@ -119,6 +120,7 @@ typedef struct {
     BOOL _haveOffscreenCommandLine;
 
     VT100GridRange _linesToSuppressDrawing;
+    CGFloat _pointsOnBottomToSuppressDrawing;
 }
 @end
 
@@ -180,7 +182,7 @@ typedef struct {
 - (void)loadMetricsWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper
                             textView:(PTYTextView *)textView
                               screen:(VT100Screen *)screen {
-    _documentVisibleRect = textView.textDrawingHelperVisibleRect;
+    _documentVisibleRect = textView.textDrawingHelperVisibleRectExcludingTopMargin;
 
     _visibleRange = [drawingHelper coordRangeForRect:_documentVisibleRect];
     DLog(@"Visible range for document visible rect %@ is %@",
@@ -199,6 +201,7 @@ typedef struct {
 
     _linesToSuppressDrawing = drawingHelper.linesToSuppress;
     _linesToSuppressDrawing.location -= _visibleRange.start.y;
+    _pointsOnBottomToSuppressDrawing = drawingHelper.pointsOnBottomToSuppressDrawing;
 }
 
 - (void)loadLinesWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper
@@ -243,7 +246,8 @@ typedef struct {
 
 - (vector_float4)backgroundColorForCharacter:(screen_char_t)c
                                 selected:(BOOL)selected
-                               findMatch:(BOOL)findMatch{
+                               findMatch:(BOOL)findMatch
+                          inDeselectedRegion:(BOOL)inDeselectedRegion {
     iTermBackgroundColorKey backgroundKey = {
         .bgColor = c.backgroundColor,
         .bgGreen = c.bgGreen,
@@ -251,12 +255,14 @@ typedef struct {
         .bgColorMode = c.backgroundColorMode,
         .selected = selected,
         .isMatch = findMatch,
-        .image = c.image != 0
+        .image = c.image != 0,
+        .inDeselectedRegion = inDeselectedRegion
     };
     BOOL isDefaultBackgroundColor = NO;
     const vector_float4 unprocessedBackgroundColor = [self unprocessedColorForBackgroundColorKey:&backgroundKey
                                                                    isDefault:&isDefaultBackgroundColor];
-    return [_configuration->_colorMap fastProcessedBackgroundColorForBackgroundColor:unprocessedBackgroundColor];
+    return [_configuration->_colorMap fastProcessedBackgroundColorForBackgroundColor:unprocessedBackgroundColor
+                                                                  inDeselectedRegion:inDeselectedRegion];
 
 }
 - (void)loadCursorInfoWithDrawingHelper:(iTermTextDrawingHelper *)drawingHelper
@@ -298,7 +304,8 @@ typedef struct {
             iTermMetalPerFrameStateRow *row = _rows[_cursorInfo.coord.y];
             _cursorInfo.backgroundColor = [self backgroundColorForCharacter:screenChar
                                                                    selected:[row->_selectedIndexSet containsIndex:_cursorInfo.coord.x]
-                                                                  findMatch:row->_matches && CheckFindMatchAtIndex(row->_matches, _cursorInfo.coord.x)];
+                                                                  findMatch:row->_matches && CheckFindMatchAtIndex(row->_matches, _cursorInfo.coord.x)
+                                                         inDeselectedRegion:row->_inDeselectedRegion];
             if (_cursorInfo.type == CURSOR_BOX) {
                 _cursorInfo.shouldDrawText = YES;
                 const BOOL focused = ((_configuration->_isInKeyWindow && _configuration->_textViewIsActiveSession) || _configuration->_shouldDrawFilledInCursor);
@@ -443,6 +450,10 @@ typedef struct {
     return _linesToSuppressDrawing;
 }
 
+- (CGFloat)pointsOnBottomToSuppressDrawing {
+    return _pointsOnBottomToSuppressDrawing;
+}
+
 // Populate _rowToAnnotationRanges.
 - (void)loadAnnotationRangesFromTextView:(PTYTextView *)textView {
     NSRange rangeOfRows = NSMakeRange(_visibleRange.start.y, _visibleRange.end.y - _visibleRange.start.y + 1);
@@ -487,20 +498,22 @@ typedef struct {
     NSRect frame = drawingHelper.indicatorFrame;
     frame.origin.y -= MAX(0, textView.virtualOffset);
     
-    [textView.indicatorsHelper enumerateTopRightIndicatorsInFrame:frame andDraw:NO block:^(NSString *identifier, NSImage *image, NSRect rect) {
+    [textView.indicatorsHelper enumerateTopRightIndicatorsInFrame:frame andDraw:NO block:^(NSString *identifier, NSImage *image, NSRect rect, BOOL dark) {
         iTermIndicatorDescriptor *indicator = [[iTermIndicatorDescriptor alloc] init];
         indicator.identifier = identifier;
         indicator.image = image;
         indicator.frame = rect;
         indicator.alpha = 0.75;
+        indicator.dark = dark;
         [self->_indicators addObject:indicator];
     }];
-    [textView.indicatorsHelper enumerateCenterIndicatorsInFrame:frame block:^(NSString *identifier, NSImage *image, NSRect rect, CGFloat alpha) {
+    [textView.indicatorsHelper enumerateCenterIndicatorsInFrame:frame block:^(NSString *identifier, NSImage *image, NSRect rect, CGFloat alpha, BOOL dark) {
         iTermIndicatorDescriptor *indicator = [[iTermIndicatorDescriptor alloc] init];
         indicator.identifier = identifier;
         indicator.image = image;
         indicator.frame = rect;
         indicator.alpha = alpha;
+        indicator.dark = dark;
         [self->_indicators addObject:indicator];
     }];
     [textView.indicatorsHelper didDraw];
@@ -720,6 +733,33 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                             alpha);
 }
 
+- (vector_float4)processedDeselectedDefaultBackgroundColor {
+    float alpha;
+    if (iTermTextIsMonochrome()) {
+        if (_backgroundImage) {
+            alpha = iTermAlphaValueForTopView(1 - _configuration->_transparencyAlpha,
+                                              _configuration->_backgroundImageBlend);
+        } else {
+            alpha = iTermAlphaValueForTopView(1 - _configuration->_transparencyAlpha, 0);
+        }
+    } else {
+        // Can assume transparencyAlpha is 1
+        alpha = iTermAlphaValueForTopView(0, _configuration->_backgroundImageBlend);
+    }
+    return simd_make_float4((float)_configuration->_processedDeselectedDefaultBackgroundColor.redComponent,
+                            (float)_configuration->_processedDeselectedDefaultBackgroundColor.greenComponent,
+                            (float)_configuration->_processedDeselectedDefaultBackgroundColor.blueComponent,
+                            alpha);
+}
+
+- (const vector_float4 *)selectedCommandOutlineColors {
+    return _configuration->_selectedCommandOutlineColors;
+}
+
+- (BOOL)forceRegularBottomMargin {
+    return _configuration->_forceRegularBottomMargin;
+}
+
 - (vector_float4)processedDefaultTextColor {
     return simd_make_float4((float)_configuration->_processedDefaultTextColor.redComponent,
                             (float)_configuration->_processedDefaultTextColor.greenComponent,
@@ -728,6 +768,28 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
 }
 - (iTermLineStyleMarkColors)lineStyleMarkColors {
     return _configuration->_lineStyleMarkColors;
+}
+
+- (BOOL)hasSelectedCommand {
+    return _configuration->_selectedCommandRegion.length > 0;
+}
+
+- (VT100GridRect)selectedCommandRect {
+    long long minY = ((long long)_configuration->_selectedCommandRegion.location) - _visibleRange.start.y;
+    minY -= _configuration->_totalScrollbackOverflow;
+    long long maxY = ((long long)NSMaxRange(_configuration->_selectedCommandRegion)) - _visibleRange.start.y;
+    maxY -= _configuration->_totalScrollbackOverflow;
+    minY = MAX(-1, minY);
+    maxY = MIN(_configuration->_gridSize.height + 1, maxY);
+
+    return VT100GridRectMake(0,
+                             minY,
+                             _configuration->_gridSize.width,
+                             MAX(0, maxY - minY));
+}
+
+- (NSRange)selectedCommandRegion {
+    return _configuration->_selectedCommandRegion;
 }
 
 // Private queue
@@ -758,6 +820,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                      date:(out NSDate **)datePtr
            belongsToBlock:(out BOOL *)belongsToBlockPtr {
     NSCharacterSet *boxCharacterSet = [iTermBoxDrawingBezierCurveFactory boxDrawingCharactersWithBezierPathsIncludingPowerline:_configuration->_useNativePowerlineGlyphs];
+    NSCharacterSet *blockCharacterSert = [iTermBoxDrawingBezierCurveFactory blockDrawingCharacters];
     if (_configuration->_timestampsEnabled) {
         *datePtr = _rows[row]->_date;
     }
@@ -767,6 +830,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
     NSData *findMatches = _rows[row]->_matches;
     NSIndexSet *selectedIndexes = _rows[row]->_selectedIndexSet;
     NSRange underlinedRange = _rows[row]->_underlinedRange;
+    const BOOL inDeselectedRegion = _rows[row]->_inDeselectedRegion;
     NSIndexSet *annotatedIndexes = _rowToAnnotationRanges[@(row)];
     if (VT100GridRangeContains(_linesToSuppressDrawing, row)) {
         lineData = [ScreenCharArray emptyLineOfLength:width];
@@ -823,7 +887,8 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
             .bgColorMode = line[x].backgroundColorMode,
             .selected = selected,
             .isMatch = findMatch,
-            .image = line[x].image
+            .image = line[x].image,
+            .inDeselectedRegion = inDeselectedRegion
         };
 
         vector_float4 backgroundColor;
@@ -835,7 +900,8 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
             backgroundKey.bgColorMode == lastBackgroundKey.bgColorMode &&
             backgroundKey.selected == lastBackgroundKey.selected &&
             backgroundKey.isMatch == lastBackgroundKey.isMatch &&
-            backgroundKey.image == lastBackgroundKey.image) {
+            backgroundKey.image == lastBackgroundKey.image &&
+            backgroundKey.inDeselectedRegion == lastBackgroundKey.inDeselectedRegion) {
 
             const int previousRLE = rles - 1;
             backgroundColor = backgroundRLE[previousRLE].color;
@@ -847,7 +913,8 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                                                                            isDefault:&isDefaultBackgroundColor];
             lastUnprocessedBackgroundColor = unprocessedBackgroundColor;
             // The unprocessed color is needed for minimum contrast computation for text color.
-            backgroundColor = [_configuration->_colorMap fastProcessedBackgroundColorForBackgroundColor:unprocessedBackgroundColor];
+            backgroundColor = [_configuration->_colorMap fastProcessedBackgroundColorForBackgroundColor:unprocessedBackgroundColor
+                                                                                     inDeselectedRegion:inDeselectedRegion];
             backgroundRLE[rles].color = backgroundColor;
             backgroundRLE[rles].origin = x;
             backgroundRLE[rles].count = 1;
@@ -870,6 +937,10 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                                             !line[x].complexChar &&
                                             line[x].code > 127 &&
                                             [boxCharacterSet characterIsMember:line[x].code]);
+        const BOOL isBlockCharacter = (characterIsDrawable &&
+                                       !line[x].complexChar &&
+                                       line[x].code > 127 &&
+                                       [blockCharacterSert characterIsMember:line[x].code]);
         // Foreground colors
         // Build up a compact key describing all the inputs to a text color
         currentColorKey->isMatch = findMatch;
@@ -882,7 +953,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
         currentColorKey->bold = line[x].bold;
         currentColorKey->faint = line[x].faint;
         currentColorKey->background = backgroundColor;
-        currentColorKey->isBoxDrawing = isBoxDrawingCharacter;
+        currentColorKey->isBlock = isBlockCharacter;
         if (x > 0 &&
             currentColorKey->isMatch == previousColorKey->isMatch &&
             currentColorKey->inUnderlinedRange == previousColorKey->inUnderlinedRange &&
@@ -894,7 +965,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
             currentColorKey->bold == previousColorKey->bold &&
             currentColorKey->faint == previousColorKey->faint &&
             simd_equal(currentColorKey->background, previousColorKey->background) &&
-            currentColorKey->isBoxDrawing == previousColorKey->isBoxDrawing) {
+            currentColorKey->isBlock == previousColorKey->isBlock) {
             attributes[x].foregroundColor = attributes[x - 1].foregroundColor;
         } else {
             vector_float4 textColor = [self textColorForCharacter:&line[x]
@@ -904,7 +975,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                                                         findMatch:findMatch
                                                 inUnderlinedRange:inUnderlinedRange && !annotated
                                                             index:x
-                                                       boxDrawing:isBoxDrawingCharacter
+                                           disableMinimumContrast:isBlockCharacter
                                                            caches:&caches];
             attributes[x].foregroundColor = textColor;
             attributes[x].foregroundColor.w = 1;
@@ -1059,7 +1130,8 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
 
 - (vector_float4)selectionColorForCurrentFocus {
     if (_configuration->_isFrontTextView) {
-        return VectorForColor([_configuration->_colorMap processedBackgroundColorForBackgroundColor:[_configuration->_colorMap colorForKey:kColorMapSelection]],
+        return VectorForColor([_configuration->_colorMap processedBackgroundColorForBackgroundColor:[_configuration->_colorMap colorForKey:kColorMapSelection]
+                                                                          inDeselectedCommandRegion:NO],
                               _configuration->_colorSpace);
     } else {
         return _configuration->_unfocusedSelectionColor;
@@ -1085,7 +1157,8 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
             .bgColorMode = ColorModeAlternate,
             .selected = NO,
             .isMatch = NO,
-            .image = NO
+            .image = NO,
+            .inDeselectedRegion = NO
         };
         return [self unprocessedColorForBackgroundColorKey:&temp isDefault:isDefault];
     } else if (colorKey->isMatch) {
@@ -1111,7 +1184,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                                  faint:NO
                           isBackground:NO];
         } else {
-            *isDefault = defaultBackground;
+            *isDefault = (defaultBackground && !colorKey->inDeselectedRegion);
             // Use the regular background color.
             color = [self colorForCode:colorKey->bgColor
                                  green:colorKey->bgGreen
@@ -1120,7 +1193,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                                   bold:NO
                                  faint:NO
                           isBackground:YES];
-            if (defaultBackground) {
+            if (*isDefault) {
                 alpha = 0;
             }
         }
@@ -1388,7 +1461,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
                              findMatch:(BOOL)findMatch
                      inUnderlinedRange:(BOOL)inUnderlinedRange
                                  index:(int)index
-                            boxDrawing:(BOOL)isBoxDrawingCharacter
+                disableMinimumContrast:(BOOL)disableMinimumContrast
                                 caches:(iTermMetalPerFrameStateCaches *)caches {
     vector_float4 rawColor = { 0, 0, 0, 0 };
     iTermColorMap *colorMap = _configuration->_colorMap;
@@ -1459,7 +1532,7 @@ ambiguousIsDoubleWidth:(BOOL)ambiguousIsDoubleWidth
     if (needsProcessing) {
       result = VectorForColor([_configuration->_colorMap processedTextColorForTextColor:ColorForVector(rawColor)
                                                                     overBackgroundColor:ColorForVector(unprocessedBackgroundColor)
-                                                                 disableMinimumContrast:isBoxDrawingCharacter],
+                                                                 disableMinimumContrast:disableMinimumContrast],
                               _configuration->_colorSpace);
     } else {
         result = rawColor;

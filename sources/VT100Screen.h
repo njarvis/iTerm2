@@ -135,6 +135,7 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 - (iTermAsyncFilter *)newAsyncFilterWithDestination:(id<iTermFilterDestination>)destination
                                               query:(NSString *)query
                                            refining:(iTermAsyncFilter *)refining
+                                       absLineRange:(NSRange)absLineRange
                                            progress:(void (^)(double))progress;
 
 - (NSString *)compactLineDump;
@@ -179,6 +180,9 @@ extern const NSInteger VT100ScreenBigFileDownloadThreshold;
 
 - (NSArray *)annotationsBefore:(Interval *)location;
 - (NSArray *)annotationsAfter:(Interval *)location;
+
+- (id<VT100ScreenMarkReading>)commandMarkAtOrBeforeLine:(int)line;
+- (id<VT100ScreenMarkReading>)promptMarkAfterPromptMark:(id<VT100ScreenMarkReading>)predecessor;
 
 - (BOOL)containsMark:(id<iTermMark>)mark;
 - (void)clearToLastMark;

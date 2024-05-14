@@ -379,10 +379,12 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 - (BOOL)continueFindAllResults:(NSMutableArray *)results
                       rangeOut:(NSRange *)rangePtr
                      inContext:(FindContext *)context
+                  absLineRange:(NSRange)absLineRange
                  rangeSearched:(VT100GridAbsCoordRange *)rangeSearched {
     return [self continueFindAllResultsImpl:results
                                    rangeOut:rangePtr
                                   inContext:context
+                               absLineRange:absLineRange
                               rangeSearched:rangeSearched];
 }
 
@@ -858,6 +860,14 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
     return [_state commandMarkAt:coord range:range];
 }
 
+- (id<VT100ScreenMarkReading>)commandMarkAtOrBeforeLine:(int)line {
+    return [_state commandMarkAtOrBeforeLine:line];
+}
+
+- (id<VT100ScreenMarkReading>)promptMarkAfterPromptMark:(id<VT100ScreenMarkReading>)predecessor {
+    return [_state promptMarkAfterPromptMark:predecessor];
+}
+
 - (void)removeNamedMark:(id<VT100ScreenMarkReading>)mark {
     [self mutateAsynchronously:^(VT100Terminal *terminal, VT100ScreenMutableState *mutableState, id<VT100ScreenDelegate> delegate) {
         [mutableState removeNamedMark:(VT100ScreenMark *)mark.progenitor];
@@ -1052,6 +1062,7 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
 - (iTermAsyncFilter *)newAsyncFilterWithDestination:(id<iTermFilterDestination>)destination
                                               query:(NSString *)query
                                            refining:(iTermAsyncFilter *)refining
+                                       absLineRange:(NSRange)absLineRange
                                            progress:(void (^)(double))progress {
     [self.delegate screenEnsureDefaultMode];
     return [[iTermAsyncFilter alloc] initWithQuery:query
@@ -1061,6 +1072,8 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
                                        destination:destination
                                            cadence:1.0 / 60.0
                                           refining:refining
+                                      absLineRange:absLineRange
+                                cumulativeOverflow:_state.cumulativeScrollbackOverflow
                                           progress:progress];
 }
 
@@ -1460,7 +1473,8 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
           startingAtY:(int)y
            withOffset:(int)offset
             inContext:(FindContext*)context
-      multipleResults:(BOOL)multipleResults {
+      multipleResults:(BOOL)multipleResults
+         absLineRange:(NSRange)absLineRange {
     [self setFindStringImpl:aString
            forwardDirection:direction
                        mode:mode
@@ -1468,7 +1482,8 @@ const NSInteger VT100ScreenBigFileDownloadThreshold = 1024 * 1024 * 1024;
                 startingAtY:y
                  withOffset:offset
                   inContext:context
-            multipleResults:multipleResults];
+            multipleResults:multipleResults
+               absLineRange:absLineRange];
 }
 
 - (void)addNote:(PTYAnnotation *)note

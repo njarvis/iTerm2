@@ -354,6 +354,7 @@ static iTermPreferencesSearchEngine *gSearchEngine;
 
     iTermPrefsScrim *_scrim;
     iTermPreferencesSearchEngineResultsWindowController *_serpWindowController;
+    BOOL _revealingControl;
 }
 
 + (instancetype)sharedInstance {
@@ -430,9 +431,11 @@ static iTermPreferencesSearchEngine *gSearchEngine;
 
     if (_editCurrentSessionMode) {
         [self layoutSubviewsForEditCurrentSessionMode];
+        self.window.title = @"Edit Session";
     } else {
         [_toolbar setVisible:YES];
         [self resizeWindowForTabViewItem:_globalTabViewItem animated:NO];
+        self.window.title = @"Settings";
     }
 
     iTermPrefsPanel *panel = (iTermPrefsPanel *)self.window;
@@ -614,7 +617,7 @@ andEditComponentWithIdentifier:(NSString *)identifier
     NSSearchField *searchField = self.searchField;
     if (responder == searchField && searchField.stringValue.length > 0) {
         [self showScrimAndSERP];
-    } else if (responder != nil) {
+    } else if (responder != nil && !_revealingControl) {
         [self hideScrimAndSERP];
     }
 }
@@ -1108,9 +1111,13 @@ andEditComponentWithIdentifier:(NSString *)identifier
     [self selectTabForViewController:viewController];
     const BOOL waitForTabToSwitch = (tabViewItemBefore != _tabView.selectedTabViewItem);
     BOOL waitForInnerTabToSwitch = NO;
+     [self showScrimIfNeeded];
+    // Revealing can cause a first responder change which removes the scrim, so note that we shouldn't do that.
+    _revealingControl = YES;
     _scrim.cutoutView = [viewController searchableViewControllerRevealItemForDocument:document
                                                                              forQuery:self.searchField.stringValue
                                                                         willChangeTab:&waitForInnerTabToSwitch];
+    _revealingControl = NO;
     if (switchingTabsOut) {
         *switchingTabsOut = waitForTabToSwitch;
     }

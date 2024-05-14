@@ -6,6 +6,7 @@
 //
 
 #import "iTermMetalPerFrameStateConfiguration.h"
+#import "NSArray+iTerm.h"
 #import "NSColor+iTerm.h"
 #import "PTYTextView.h"
 #import "VT100Terminal.h"
@@ -54,12 +55,18 @@ static vector_float4 VectorForColor(NSColor *color) {
     _showBroadcastStripes = drawingHelper.showStripes;
     NSColorSpace *colorSpace = textView.window.screen.colorSpace ?: [NSColorSpace it_defaultColorSpace];
     _processedDefaultBackgroundColor = [[drawingHelper defaultBackgroundColor] colorUsingColorSpace:colorSpace];
+    _processedDeselectedDefaultBackgroundColor = [[drawingHelper deselectedDefaultBackgroundColor] colorUsingColorSpace:colorSpace];
+    _forceRegularBottomMargin = drawingHelper.forceRegularBottomMargin;
     _processedDefaultTextColor = [[drawingHelper defaultTextColor] colorUsingColorSpace:colorSpace];
     NSColor *selectionColor = [[_colorMap colorForKey:kColorMapSelection] colorUsingColorSpace:colorSpace];
     _selectionColor = simd_make_float4((float)selectionColor.redComponent,
                                        (float)selectionColor.greenComponent,
                                        (float)selectionColor.blueComponent,
                                        1.0);
+    NSArray<NSColor *> *scoc = drawingHelper.selectedCommandOutlineColors;
+    _selectedCommandOutlineColors[0] = scoc[0].vector;
+    _selectedCommandOutlineColors[1] = scoc[1].vector;
+
     _lineStyleMarkColors = (iTermLineStyleMarkColors) {
         .success = [[[drawingHelper defaultBackgroundColor] blendedWithColor:[iTermTextDrawingHelper successMarkColor] weight:0.5] colorUsingColorSpace:colorSpace].vector,
         .other = [[[drawingHelper defaultBackgroundColor] blendedWithColor:[iTermTextDrawingHelper otherMarkColor] weight:0.5] colorUsingColorSpace:colorSpace].vector,
@@ -112,7 +119,9 @@ static vector_float4 VectorForColor(NSColor *color) {
     _strikethroughUnderlineDescriptor.thickness = [drawingHelper strikethroughThicknessForFont:_fontTable.asciiFont.font];
 
     if (@available(macOS 11, *)) {
-        _terminalButtons = textView.terminalButtons;
+        _terminalButtons = [textView.terminalButtons mapWithBlock:^id _Nullable(iTermTerminalButton * _Nonnull button) {
+            return [button clone];
+        }];
     }
 
     // Indicators
@@ -132,6 +141,10 @@ static vector_float4 VectorForColor(NSColor *color) {
         _offscreenCommandLineOutlineColor = [textView.drawingHelper.offscreenCommandLineOutlineColor colorUsingColorSpace:_colorSpace];
         _offscreenCommandLineBackgroundColor = [textView.drawingHelper.offscreenCommandLineBackgroundColor colorUsingColorSpace:_colorSpace];
     }
+
+    _selectedCommandRegion = drawingHelper.selectedCommandRegion;
+    _selectedCommandRegion.location += drawingHelper.totalScrollbackOverflow;
+    _totalScrollbackOverflow = drawingHelper.totalScrollbackOverflow;
 }
 
 @end

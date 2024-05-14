@@ -7,13 +7,13 @@
 
 import Foundation
 
-class UnsafeReallocatableMutableBuffer<T: Equatable>: Equatable {
+class UnsafeReallocatableMutableBuffer<T: DefaultInitializable & Equatable>: Equatable {
     private(set) var buffer: UnsafeMutableBufferPointer<T>
     var count: Int { buffer.count }
 
     init(count: Int) {
         precondition(count >= 0)
-        let pointer = UnsafeMutableRawPointer(calloc(count, MemoryLayout<T>.stride))!
+        let pointer = UnsafeMutableRawPointer(calloc(max(1, count), MemoryLayout<T>.stride))!
         buffer = UnsafeMutableBufferPointer<T>(start: pointer.assumingMemoryBound(to: T.self),
                                                count: count)
     }
@@ -63,7 +63,7 @@ class UnsafeReallocatableMutableBuffer<T: Equatable>: Equatable {
 
     func resize(to count: Int) {
         var pointer = UnsafeMutableRawPointer(buffer.baseAddress)!
-        pointer = realloc(pointer, Int(count) * MemoryLayout<T>.stride)!
+        pointer = realloc(pointer, Int(max(1, count)) * MemoryLayout<T>.stride)!
         buffer = UnsafeMutableBufferPointer<T>(
             start: pointer.assumingMemoryBound(to: T.self),
             count: Int(count))
@@ -110,6 +110,61 @@ extension screen_char_t: Equatable {
 class EfficientDecoderError: Error {
 }
 
+protocol DefaultInitializable {
+    init()
+}
+
+extension screen_char_t: DefaultInitializable {
+    init() {
+        self = screen_char_t(code: 0,
+                             foregroundColor: 0,
+                             fgGreen: 0,
+                             fgBlue: 0,
+                             backgroundColor: 0,
+                             bgGreen: 0,
+                             bgBlue: 0,
+                             foregroundColorMode: 0,
+                             backgroundColorMode: 0,
+                             complexChar: 0,
+                             bold: 0,
+                             faint: 0,
+                             italic: 0,
+                             blink: 0,
+                             underline: 0,
+                             image: 0,
+                             strikethrough: 0,
+                             underlineStyle: .single,
+                             invisible: 0,
+                             inverse: 0,
+                             guarded: 0,
+                             unused: 0)
+    }
+}
+
+extension Int: DefaultInitializable {
+    init() {
+        self = 0
+    }
+}
+
+extension Int32: DefaultInitializable {
+    init() {
+        self = 0
+    }
+}
+
+extension UInt8: DefaultInitializable {
+    init() {
+        self = 0
+    }
+}
+
+extension unichar: DefaultInitializable {
+    init() {
+        self = 0
+    }
+}
+
 struct EfficientDecoder {
     private let data: Data
     private var offset = 0
@@ -120,36 +175,22 @@ struct EfficientDecoder {
         self.data = data
     }
 
-    mutating func getScalar<T>() throws -> T {
+    mutating func getScalar<T: DefaultInitializable>() throws -> T {
         let size = MemoryLayout<T>.stride
-        if data.count < size {
+        if data.count + offset < size {
             throw EfficientDecoderError()
         }
         defer {
             offset += size
         }
-        let result = data.withUnsafeBytes { pointer in
-            return pointer.baseAddress!.advanced(by: offset).assumingMemoryBound(to: T.self).pointee
+        var result = T()
+        _ = withUnsafeMutableBytes(of: &result) { buffer in
+            data.copyBytes(to: buffer, from: offset..<(offset + size))
         }
         return result
     }
 
-    mutating func getScalar() throws -> Data {
-        let count: Int = try getScalar()
-        if count <= 0 {
-            throw EfficientDecoderError()
-        }
-        var data = Data(count: count)
-        data.withUnsafeMutableBytes { mutableRawBufferPointer in
-            self.data.subdata(in: offset..<(offset + count)).withUnsafeBytes { unsafeRawBufferPointer in
-                _ = memcpy(mutableRawBufferPointer.baseAddress!, unsafeRawBufferPointer.baseAddress!, count)
-            }
-        }
-        offset += count
-        return data
-    }
-
-    mutating func getArray<T>() throws -> [T] {
+    mutating func getArray<T: DefaultInitializable>() throws -> [T] {
         let count: Int32 = try getScalar()
         let lengthInBytes = Int(count) * MemoryLayout<T>.stride
         if offset < 0 {
@@ -158,16 +199,14 @@ struct EfficientDecoder {
         if offset + lengthInBytes > data.count {
             throw EfficientDecoderError()
         }
-        let subdata = data.subdata(in: offset..<(offset + lengthInBytes))
         defer {
             offset += lengthInBytes
         }
-        return subdata.withUnsafeBytes {
-            (pointer: UnsafeRawBufferPointer) -> [T] in
-            let buffer = UnsafeBufferPointer<T>(start: pointer.baseAddress!.assumingMemoryBound(to: T.self),
-                                                count: Int(count))
-            return Array<T>(buffer)
+        var result = Array<T>(repeating: T(), count: Int(count))
+        result.withUnsafeMutableBufferPointer { buffer in
+            data.copyBytes(to: buffer, from: offset..<(offset + lengthInBytes))
         }
+        return result
     }
 }
 
@@ -713,20 +752,35 @@ class CompressibleCharacterBuffer: NSObject, UniqueWeakBoxable {
         return encoded.data
     }
 
+    private var placeholder: UnsafeMutablePointer<screen_char_t>?
+
+    deinit {
+        placeholder?.deallocate()
+    }
+
     @objc
     var mutablePointer: UnsafeMutablePointer<screen_char_t> {
         lastAccess = mach_absolute_time()
         let result = write { state in
             switch state.buffer {
             case .uninitialized:
-                return state.realize().buffer.baseAddress!
+                return state.realize().buffer.baseAddress
             case .compressed:
-                return state.decompress().buffer.baseAddress!
+                return state.decompress().buffer.baseAddress
             case .uncompressed(let buffer), .superposition(_, let buffer):
-                return buffer.buffer.baseAddress!
+                return buffer.buffer.baseAddress
             }
         }
-        return result
+        if let result {
+            return result
+        }
+        // There won't be a base address if the buffer is empty so return a placeholder.
+        if let placeholder {
+            return placeholder
+        }
+        let np = UnsafeMutablePointer<screen_char_t>.allocate(capacity: max(1, size))
+        placeholder = np
+        return np
     }
 
     @objc

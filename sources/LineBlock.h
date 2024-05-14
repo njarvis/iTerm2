@@ -103,6 +103,7 @@ typedef struct {
                                                  eligibleForDWC:(BOOL)eligibleForDWC;
 
 - (ScreenCharArray *)rawLineAtWrappedLineOffset:(int)lineNum width:(int)width;
+- (NSNumber *)rawLineNumberAtWrappedLineOffset:(int)lineNum width:(int)width;
 
 // Get the number of lines in this block at a given screen width.
 - (int)getNumLinesWithWrapWidth:(int)width;
@@ -154,7 +155,7 @@ typedef struct {
 - (const screen_char_t *)rawLine:(int)linenum;
 
 // NSLog the contents of the block. For debugging.
-- (void)dump:(int)rawOffset toDebugLog:(BOOL)toDebugLog;
+- (void)dump:(int)rawOffset droppedChars:(long long)droppedChars toDebugLog:(BOOL)toDebugLog;
 
 // Returns the metadata associated with a line when wrapped to the specified width.
 - (iTermImmutableMetadata)metadataForLineNumber:(int)lineNum width:(int)width;
@@ -196,6 +197,9 @@ includesPartialLastLine:(BOOL *)includesPartialLastLine;
                withWidth:(int)width
                  yOffset:(int *)yOffsetPtr
                  extends:(BOOL *)extendsPtr;
+
+// Offset into the block of the start of the wrapped line that includes the character at `offset`.
+- (int)offsetOfStartOfLineIncludingOffset:(int)offset;
 
 // Count the number of "full lines" in buffer up to position 'length'. A full
 // line is one that, after wrapping, goes all the way to the edge of the screen
@@ -258,5 +262,6 @@ void EnableDoubleWidthCharacterLineCache(void);
 
 - (instancetype)copyWithAbsoluteBlockNumber:(long long)absoluteBlockNumber;
 - (NSString *)dumpString;
+- (NSString *)dumpStringWithDroppedChars:(long long)droppedChars;
 
 @end

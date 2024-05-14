@@ -113,6 +113,42 @@ typedef struct {
     return _findInProgress || _searchingForNextResult;
 }
 
+- (void)setAbsLineRange:(NSRange)absLineRange {
+    if (NSEqualRanges(absLineRange, _absLineRange)) {
+        return;
+    }
+    _absLineRange = absLineRange;
+    // Remove search results outside this range.
+    NSMutableIndexSet *indexes = [NSMutableIndexSet indexSet];
+    [_searchResults enumerateObjectsUsingBlock:^(SearchResult * _Nonnull obj, NSUInteger idx, BOOL * _Nonnull stop) {
+        if (obj.isExternal) {
+            if (!NSLocationInRange(obj.externalAbsY, absLineRange)) {
+                [indexes addIndex:idx];
+                [_locations removeIndex:obj.externalAbsY];
+                [_highlightMap removeObjectForKey:@(obj.externalAbsY)];
+                [_delegate findOnPageHelperRemoveExternalHighlightsFrom:obj.externalResult];
+            }
+        } else {
+            if (!NSLocationInRange(obj.internalAbsStartY, absLineRange) &&
+                !NSLocationInRange(obj.internalAbsEndY, absLineRange)) {
+                [indexes addIndex:idx];
+                [_locations removeIndex:obj.internalAbsStartY];
+                [_highlightMap removeObjectForKey:@(obj.internalAbsStartY)];
+            }
+        }
+    }];
+    if (indexes.count) {
+        [_searchResults removeObjectsAtIndexes:indexes];
+
+        [self locationsDidChange];
+        _cachedCounts.valid = NO;
+
+        if (_numberOfProcessedSearchResults > _searchResults.count) {
+            _numberOfProcessedSearchResults = _searchResults.count;
+        }
+    }
+}
+
 - (void)findString:(NSString *)aString
   forwardDirection:(BOOL)direction
               mode:(iTermFindMode)mode
@@ -122,7 +158,7 @@ typedef struct {
     totalScrollbackOverflow:(long long)totalScrollbackOverflow
 scrollToFirstResult:(BOOL)scrollToFirstResult 
              force:(BOOL)force {
-    DLog(@"begin self=%@ aString=%@", self, aString);
+    DLog(@"Initialize search for %@ dir=%@ offset=%@", aString, direction > 0 ? @"forwards" : @"backwards", @(offset));
     _searchingForward = direction;
     _findOffset = offset;
     if ([_lastStringSearchedFor isEqualToString:aString] &&
@@ -147,14 +183,38 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         // Search backwards from the end. This is slower than searching
         // forwards, but most searches are reverse searches begun at the end,
         // so it will get a result sooner.
+        VT100GridCoord startCoord = VT100GridCoordMake(0, numberOfLines + 1 + totalScrollbackOverflow);
+        if (_findCursor) {
+            switch (_findCursor.type) {
+                case FindCursorTypeCoord: {
+                    BOOL ok;
+                    startCoord = VT100GridCoordFromAbsCoord(_findCursor.coord,
+                                                            totalScrollbackOverflow,
+                                                            &ok);
+                    if (!ok) {
+                        DLog(@"Failed to convert find cursor coord so using end");
+                    }
+                    break;
+                }
+
+                case FindCursorTypeExternal:
+                    // TODO
+                    break;
+
+                case FindCursorTypeInvalid:
+                    break;
+            }
+        }
+        DLog(@"Start search at %@", VT100GridCoordDescription(startCoord));
         [_delegate findOnPageSetFindString:aString
                           forwardDirection:NO
                                       mode:mode
-                               startingAtX:0
-                               startingAtY:numberOfLines + 1 + totalScrollbackOverflow
+                               startingAtX:startCoord.x
+                               startingAtY:startCoord.y
                                 withOffset:0
                                  inContext:findContext
-                           multipleResults:YES];
+                           multipleResults:YES
+                              absLineRange:self.absLineRange];
 
         [_copiedContext copyFromFindContext:findContext];
         _copiedContext.results = nil;
@@ -223,6 +283,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         more = [_delegate continueFindAllResults:newSearchResults
                                         rangeOut:rangePtr
                                        inContext:context
+                                    absLineRange:self.absLineRange
                                    rangeSearched:NULL];
         *progress = [context progress];
     } else {
@@ -346,6 +407,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                           width:(int)width
                   numberOfLines:(int)numberOfLines
              overflowAdjustment:(long long)overflowAdjustment {
+    // Range of positions before backwards find cursor or after forwards find cursor. Stays empty if no cursor.
     NSRange range = NSMakeRange(NSNotFound, 0);
     int start;
     int stride;
@@ -414,6 +476,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             found = NSLocationInRange(pos, range);
         }
         if (found) {
+            DLog(@"Result %@ is in the desired range", r);
             found = YES;
             wrapAroundResult = nil;
             wrapAroundResultPosition = -1;
@@ -456,6 +519,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             selectedRange = [_delegate findOnPageSelectExternalResult:wrapAroundResult.externalResult];
             external = wrapAroundResult.externalResult;
         } else {
+            DLog(@"Because no results were found in the desired range use %@ as wraparound result", wrapAroundResult);
             selectedRange =
                 VT100GridCoordRangeMake(wrapAroundResult.internalStartX,
                                         MAX(0, wrapAroundResult.internalAbsStartY - overflowAdjustment),

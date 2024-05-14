@@ -43,6 +43,9 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
     // The most recent mouse-down was a "first mouse" (activated the window).
     BOOL _mouseDownWasFirstMouse;
 
+    // At the time of the most recent mouse-down, were we or the composer first responder?
+    BOOL _mouseDownWasFirstResponder;
+
     // Saves the monotonically increasing event number of a first-mouse click, which disallows
     // selection.
     NSInteger _firstMouseEventNumber;
@@ -150,6 +153,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
         return NO;  // Don't call super because we handled it.
     }
     _mouseDownWasFirstMouse = ([event eventNumber] == _firstMouseEventNumber) || ![NSApp keyWindow];
+    _mouseDownWasFirstResponder = [self.mouseDelegate mouseHandlerViewIsFirstResponder:self];
     _lastMouseDownOnSelectedText = NO;  // This may get updated to YES later.
     const BOOL altPressed = ([event it_modifierFlags] & NSEventModifierFlagOption) != 0;
     BOOL cmdPressed = ([event it_modifierFlags] & NSEventModifierFlagCommand) != 0;
@@ -271,7 +275,8 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
 
     const VT100GridCoord clickPointCoord = [self.mouseDelegate mouseHandler:self
                                                                  clickPoint:event
-                                                              allowOverflow:YES];
+                                                              allowOverflow:YES
+                                                                 firstMouse:_mouseDownWasFirstMouse];
     const int x = clickPointCoord.x;
     const int y = clickPointCoord.y;
     if ([self.mouseDelegate mouseHandler:self coordIsMutable:VT100GridCoordMake(x, y)] &&
@@ -398,7 +403,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
     if ([_threeFingerTapGestureRecognizer mouseUp:event]) {
         return iTermClickSideEffectsNone;
     }
-    if (event.clickCount == 1 && [self.mouseDelegate mouseHandlerMouseUpAt:event.locationInWindow]) {
+    if ([self.mouseDelegate mouseHandlerMouseUp:event]) {
         return iTermClickSideEffectsNone;
     }
     int numTouches = _numTouches;
@@ -555,7 +560,8 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
             clickCoord =
             [self.mouseDelegate mouseHandler:self
                                   clickPoint:event
-                               allowOverflow:NO];
+                               allowOverflow:NO
+                                  firstMouse:_mouseDownWasFirstMouse || !_mouseDownWasFirstResponder];
             if (clickCoord.x >= 0 && clickCoord.y >= 0) {
                 [self.mouseDelegate mouseHandlerSetFindOnPageCursorCoord:clickCoord];
                 result |= iTermClickSideEffectsMoveFindOnPageCursor;
@@ -568,7 +574,8 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
                 clickCoord =
                 [self.mouseDelegate mouseHandler:self
                                       clickPoint:event
-                                   allowOverflow:NO];
+                                   allowOverflow:NO
+                                      firstMouse:_mouseDownWasFirstMouse];
             }
             const VT100GridCoord cursorCoord =
             [self.mouseDelegate mouseHandlerCursorCoord:self];
@@ -587,7 +594,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
                                           append:NO];
 
         const VT100GridCoord newEndPoint =
-        [self.mouseDelegate mouseHandler:self clickPoint:event allowOverflow:YES];
+        [self.mouseDelegate mouseHandler:self clickPoint:event allowOverflow:YES firstMouse:_mouseDownWasFirstMouse];
         [self.selection moveSelectionEndpointTo:VT100GridAbsCoordFromCoord(newEndPoint, overflow)];
         [self.selection endLiveSelection];
 
@@ -655,7 +662,7 @@ static double EuclideanDistance(NSPoint p1, NSPoint p2) {
     [self.mouseDelegate mouseHandler:self viewCoordForEvent:event clipped:YES];
 
     const VT100GridCoord clickPointGridCoord =
-    [self.mouseDelegate mouseHandler:self clickPoint:event allowOverflow:YES];
+    [self.mouseDelegate mouseHandler:self clickPoint:event allowOverflow:YES firstMouse:_mouseDownWasFirstMouse];
     const int x = clickPointGridCoord.x;
     const int y = clickPointGridCoord.y;
 

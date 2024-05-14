@@ -14,25 +14,26 @@ protocol ContentNavigationShortcutViewProtocol {
     var terminating: Bool { get }
     func pop(completion: @escaping () -> ())
     func dissolve(completion: @escaping () -> ())
+    var centerScreenCoordinate: NSPoint { get }
 }
 
 @objc(iTermContentNavigationShortcut)
 class ContentNavigationShortcut: NSObject {
     @objc let range: VT100GridAbsCoordRange
-    @objc var action: (() -> ())!
+    @objc var action: ((NSEvent) -> ())!
     @objc var view: (NSView & ContentNavigationShortcutViewProtocol)?
     @objc let keyEquivalent: String
 
     @objc
     init(range: VT100GridAbsCoordRange,
          keyEquivalent: String,
-         action: @escaping (ContentNavigationShortcutViewProtocol) -> ()) {
+         action: @escaping (ContentNavigationShortcutViewProtocol, NSEvent) -> ()) {
         self.range = range
         self.keyEquivalent = keyEquivalent
         super.init()
-        self.action = { [weak self] in
+        self.action = { [weak self] event in
             if let view = self?.view {
-                action(view)
+                action(view, event)
             }
         }
     }
@@ -183,6 +184,17 @@ class ContentNavigationShortcutView: NSView, ContentNavigationShortcutViewProtoc
     }
 
     @objc
+    var centerScreenCoordinate: NSPoint {
+        guard let windowCoord = superview?.convert(NSPoint(x: frame.midX, y: frame.midY), to: nil) else {
+            return NSPoint(x: Double.nan, y: Double.nan)
+        }
+        guard let screen = window?.convertToScreen(NSRect(origin: windowCoord, size: CGSize.zero)) else {
+            return NSPoint(x: Double.nan, y: Double.nan)
+        }
+        return screen.origin
+    }
+
+    @objc
     func pop(completion: @escaping () -> ()) {
         guard let layer = layer else {
             return
@@ -297,7 +309,7 @@ class ContentNavigationShortcutView: NSView, ContentNavigationShortcutViewProtoc
 
     override func mouseUp(with event: NSEvent) {
         if let shortcut = shortcut, event.clickCount == 1 {
-            shortcut.action()
+            shortcut.action(event)
         } else {
             CATransaction.begin()
             let animation = CAKeyframeAnimation()

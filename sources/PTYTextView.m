@@ -856,12 +856,45 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     [self scrollRectToVisible:aFrame];
 }
 
-- (void)scrollLineNumberRangeIntoView:(VT100GridRange)range {
+- (NSRange)visibleRelativeRange {
     NSRect visibleRect = [[self enclosingScrollView] documentVisibleRect];
-    int firstVisibleLine = visibleRect.origin.y / _lineHeight;
+    const int firstVisibleLine = visibleRect.origin.y / _lineHeight;
     const int lastVisibleLine = firstVisibleLine + [_dataSource height];
-    const NSRange desiredRange = NSMakeRange(range.location, range.length);
     const NSRange currentlyVisibleRange = NSMakeRange(firstVisibleLine, lastVisibleLine - firstVisibleLine);
+    return currentlyVisibleRange;
+}
+
+- (NSRange)visibleAbsoluteRangeIncludingOffscreenCommandLineIfVisible:(BOOL)includeOffscreenCommandLine {
+    NSRange range = [self visibleRelativeRange];
+    range.location += _dataSource.totalScrollbackOverflow;
+    if (includeOffscreenCommandLine) {
+        return range;
+    }
+    const int topBottomMargin = [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
+    if (![_delegate textViewShouldShowOffscreenCommandLine]) {
+        return range;
+    }
+    if (self.enclosingScrollView.contentView.bounds.origin.y <= topBottomMargin) {
+        return range;
+    }
+    iTermOffscreenCommandLine *offscreenCommandLine = [self.dataSource offscreenCommandLineBefore:range.location - _dataSource.totalScrollbackOverflow];
+    if (!offscreenCommandLine) {
+        return range;
+    }
+    const NSRect visibleRect = [self adjustedDocumentVisibleRectIncludingTopMargin:NO];
+    const NSRect frame = [iTermTextDrawingHelper offscreenCommandLineFrameForVisibleRect:visibleRect
+                                                                                cellSize:NSMakeSize(_charWidth, _lineHeight)
+                                                                                gridSize:VT100GridSizeMake(_dataSource.width, _dataSource.height)];
+    const int numLines = ceil(frame.size.height / _lineHeight);
+    if (range.length <= numLines) {
+        return NSMakeRange(range.location, 0);
+    }
+    return NSMakeRange(range.location + numLines, range.length - numLines);
+}
+
+- (void)scrollLineNumberRangeIntoView:(VT100GridRange)range {
+    const NSRange desiredRange = NSMakeRange(range.location, range.length);
+    const NSRange currentlyVisibleRange = [self visibleRelativeRange];
     if (NSIntersectionRange(desiredRange, currentlyVisibleRange).length == MIN(desiredRange.length, currentlyVisibleRange.length)) {
       // Already visible
       return;
@@ -1243,16 +1276,21 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 // on then we want to draw the rect you have scrolled to in order to keep it from bouncing around.
 // Note also that this excludes the top margin.
 - (NSRect)adjustedDocumentVisibleRect {
+    return [self adjustedDocumentVisibleRectIncludingTopMargin:NO];
+}
+
+- (NSRect)adjustedDocumentVisibleRectIncludingTopMargin:(BOOL)includeTopMargin {
     const BOOL userScroll = [(PTYScroller*)([[self enclosingScrollView] verticalScroller]) userScroll];
     if (!userScroll) {
-        const NSRect result = [self bottommostRectExcludingTopMargin];
+        const NSRect result = [self bottommostRectExcludingTopMargin:!includeTopMargin];
         DLog(@"User scroll is off so return bottommost rect of %@", NSStringFromRect(result));
         return result;
     }
     const NSRect documentVisibleRect = self.enclosingScrollView.documentVisibleRect;
     const int overflow = [_dataSource scrollbackOverflow];
     const int firstRow = MAX(0, documentVisibleRect.origin.y / _lineHeight - overflow) + _drawingHelper.numberOfIMELines;
-    const NSRect result = [self visibleRectExcludingTopMarginStartingAtRow:firstRow];
+    const NSRect result = [self visibleRectExcludingTopMargin:!includeTopMargin
+                                                startingAtRow:firstRow];
     DLog(@"adjustedDocumentVisibleRect is %@", NSStringFromRect(result));
     return result;
 }
@@ -1260,7 +1298,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 - (CGFloat)virtualOffset {
     const BOOL userScroll = [(PTYScroller*)([[self enclosingScrollView] verticalScroller]) userScroll];
     if (userScroll) {
-        const NSRect rectToDraw = [self textDrawingHelperVisibleRect];
+        const NSRect rectToDraw = [self textDrawingHelperVisibleRectExcludingTopMargin];
         DLog(@"rectToDraw=%@", NSStringFromRect(rectToDraw));
         const CGFloat virtualOffset = NSMinY(rectToDraw) - [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
         DLog(@"Draw document visible rect. virtualOffset=%@", @(virtualOffset));
@@ -1291,7 +1329,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         ITCriticalError(_dataSource.width < 0, @"Negative datasource width of %@", @(_dataSource.width));
         return;
     }
-    DLog(@"drawing document visible rect %@ for %@", NSStringFromRect(self.textDrawingHelperVisibleRect), self);
+    DLog(@"drawing document visible rect %@ for %@", NSStringFromRect(self.textDrawingHelperVisibleRectExcludingTopMargin), self);
     DLog(@"numberOfLines=%@", @(self.dataSource.numberOfLines));
 
     const CGFloat virtualOffset = [self virtualOffset];
@@ -1311,8 +1349,8 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         // Initialize drawing helper
         [self drawingHelper];
         DLog(@"draw: minY=%@, absLine=%@",
-             @(self.textDrawingHelperVisibleRect.origin.y),
-             @([_drawingHelper coordRangeForRect:self.textDrawingHelperVisibleRect].start.y + _dataSource.totalScrollbackOverflow));
+             @(self.textDrawingHelperVisibleRectExcludingTopMargin.origin.y),
+             @([_drawingHelper coordRangeForRect:self.textDrawingHelperVisibleRectExcludingTopMargin].start.y + _dataSource.totalScrollbackOverflow));
 
         if (_drawingHook) {
             // This is used by tests to customize the draw helper.
@@ -1371,21 +1409,31 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 }
 
 // Note that this isn't actually the visible rect because it starts below the top margin.
-- (NSRect)textDrawingHelperVisibleRect {
-    return [self adjustedDocumentVisibleRect];
+- (NSRect)textDrawingHelperVisibleRectExcludingTopMargin {
+    return [self adjustedDocumentVisibleRectIncludingTopMargin:NO];
 }
 
-- (NSRect)bottommostRectExcludingTopMargin {
+- (NSRect)textDrawingHelperVisibleRectIncludingTopMargin {
+    return [self adjustedDocumentVisibleRectIncludingTopMargin:YES];
+}
+
+- (NSRect)bottommostRectExcludingTopMargin:(BOOL)excludeTopMargin {
     const int height = _dataSource.height;
-    return [self visibleRectExcludingTopMarginStartingAtRow:_dataSource.numberOfLines - height + _drawingHelper.numberOfIMELines];
+    return [self visibleRectExcludingTopMargin:excludeTopMargin
+                                 startingAtRow:_dataSource.numberOfLines - height + _drawingHelper.numberOfIMELines];
 }
 
-- (NSRect)visibleRectExcludingTopMarginStartingAtRow:(int)row {
+- (NSRect)visibleRectExcludingTopMargin:(BOOL)excludeTopMargin
+                          startingAtRow:(int)row {
     // This is necessary because of the special case in -drawRect:inView:
     NSRect rect = self.enclosingScrollView.documentVisibleRect;
     // Subtract the top margin's height.
-    rect.size.height -= [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
     rect.origin.y = row * _lineHeight;
+    if (excludeTopMargin) {
+        rect.size.height -= [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
+    } else {
+        rect.origin.y -= [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins];
+    }
     return rect;
 }
 
@@ -1503,6 +1551,10 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     const BOOL autoComposerOpen = [self.delegate textViewIsAutoComposerOpen];
     _drawingHelper.isCursorVisible = _cursorVisible && !autoComposerOpen;
     _drawingHelper.linesToSuppress = self.delegate.textViewLinesToSuppressDrawing;
+    _drawingHelper.pointsOnBottomToSuppressDrawing = self.delegate.textViewPointsOnBottomToSuppressDrawing;
+    _drawingHelper.forceRegularBottomMargin = autoComposerOpen;
+    // TODO: Don't leave find on page helper as the source of truth for this!
+    _drawingHelper.selectedCommandRegion = [self relativeRangeFromAbsLineRange:self.findOnPageHelper.absLineRange];
     [_drawingHelper updateCachedMetrics];
     [_drawingHelper updateButtonFrames];
     
@@ -1525,6 +1577,17 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     return _drawingHelper;
 }
 
+- (NSRange)relativeRangeFromAbsLineRange:(NSRange)absRange {
+    long long first = absRange.location;
+    long long last = NSMaxRange(absRange);
+    long long offset = _dataSource.totalScrollbackOverflow;
+    first -= offset;
+    last -= offset;
+    first = MAX(0, first);
+    last = MAX(first, last);
+    return NSMakeRange(first, last - first);
+}
+
 - (NSPoint)currentMouseCursorCoordinate:(out BOOL *)validPtr {
     NSEvent *currentEvent = [NSApp currentEvent];
     if (!currentEvent || !self.window) {
@@ -1543,7 +1606,8 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 
 - (NSColor *)defaultBackgroundColor {
     CGFloat alpha = [self useTransparency] ? 1 - _transparency : 1;
-    return [[_colorMap processedBackgroundColorForBackgroundColor:[_colorMap colorForKey:kColorMapBackground]] colorWithAlphaComponent:alpha];
+    return [[_colorMap processedBackgroundColorForBackgroundColor:[_colorMap colorForKey:kColorMapBackground]
+                                        inDeselectedCommandRegion:NO] colorWithAlphaComponent:alpha];
 }
 
 - (NSColor *)defaultTextColor {
@@ -1653,33 +1717,48 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 #pragma mark - Indicators
 
 - (NSRect)configureIndicatorsHelperWithRightMargin:(CGFloat)rightMargin {
+    NSColor *backgroundColor = [_colorMap colorForKey:kColorMapBackground];
+    const BOOL isDark = [backgroundColor isDark];
+
     [_indicatorsHelper setIndicator:kiTermIndicatorMaximized
-                            visible:[_delegate textViewIsMaximized]];
+                            visible:[_delegate textViewIsMaximized]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kItermIndicatorBroadcastInput
-                            visible:[_delegate textViewSessionIsBroadcastingInput]];
+                            visible:[_delegate textViewSessionIsBroadcastingInput]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorCoprocess
-                            visible:[_delegate textViewHasCoprocess]];
+                            visible:[_delegate textViewHasCoprocess]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorAlert
-                            visible:[_delegate alertOnNextMark]];
+                            visible:[_delegate alertOnNextMark]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorAllOutputSuppressed
-                            visible:[_delegate textViewSuppressingAllOutput]];
+                            visible:[_delegate textViewSuppressingAllOutput]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorZoomedIn
-                            visible:[_delegate textViewIsZoomedIn]];
+                            visible:[_delegate textViewIsZoomedIn]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorCopyMode
-                            visible:[_delegate textViewCopyMode]];
+                            visible:[_delegate textViewCopyMode]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorDebugLogging
-                            visible:gDebugLogging];
+                            visible:gDebugLogging
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorFilter
-                            visible:[_delegate textViewIsFiltered]];
+                            visible:[_delegate textViewIsFiltered]
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorPinned
-                            visible:[_delegate textViewInPinnedHotkeyWindow]];
+                            visible:[_delegate textViewInPinnedHotkeyWindow]
+                     darkBackground:isDark];
 
     const BOOL secureByUser = [[iTermSecureKeyboardEntryController sharedInstance] enabledByUserDefault];
     const BOOL secure = [[iTermSecureKeyboardEntryController sharedInstance] isEnabled];
     [_indicatorsHelper setIndicator:kiTermIndicatorSecureKeyboardEntry_User
-                            visible:secure && secureByUser];
+                            visible:secure && secureByUser
+                     darkBackground:isDark];
     [_indicatorsHelper setIndicator:kiTermIndicatorSecureKeyboardEntry_Forced
-                            visible:secure && !secureByUser];
+                            visible:secure && !secureByUser
+                     darkBackground:isDark];
 
     NSRect rect = self.visibleRect;
     rect.size.width -= rightMargin;
@@ -2540,18 +2619,26 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 }
 
 - (IBAction)revealContentNavigationShortcuts:(id)sender {
-    [self convertVisibleSearchResultsToContentNavigationShortcuts];
+    [self convertVisibleSearchResultsToContentNavigationShortcutsWithAction:iTermContentNavigationActionOpen];
 }
 
 - (IBAction)selectAll:(id)sender {
+    NSRange absRangeToSelect;
+
+    if (_findOnPageHelper.absLineRange.length > 0 &&
+        _findOnPageHelper.absLineRange.location != NSNotFound) {
+        absRangeToSelect = _findOnPageHelper.absLineRange;
+    } else {
+        const long long overflow = _dataSource.totalScrollbackOverflow;
+        absRangeToSelect = NSMakeRange(overflow, [_dataSource numberOfLines]);
+    }
     // Set the selection region to the whole text.
-    const long long overflow = _dataSource.totalScrollbackOverflow;
-    [_selection beginSelectionAtAbsCoord:VT100GridAbsCoordMake(0, overflow)
+    [_selection beginSelectionAtAbsCoord:VT100GridAbsCoordMake(0, absRangeToSelect.location)
                                     mode:kiTermSelectionModeCharacter
                                   resume:NO
                                   append:NO];
     [_selection moveSelectionEndpointTo:VT100GridAbsCoordMake([_dataSource width],
-                                                              overflow + [_dataSource numberOfLines] - 1)];
+                                                              NSMaxRange(absRangeToSelect) - 1)];
     [_selection endLiveSelection];
     if ([iTermPreferences boolForKey:kPreferenceKeySelectionCopiesText]) {
         [self copySelectionAccordingToUserPreferences];
@@ -2988,9 +3075,10 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     return [self contentWithAttributes:NO timestamps:NO];
 }
 
-- (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProviderUsingProcessedColors:(BOOL)processed {
+- (NSDictionary *(^)(screen_char_t, iTermExternalAttribute *))attributeProviderUsingProcessedColors:(BOOL)processed
+                                                                        elideDefaultBackgroundColor:(BOOL)elideDefaultBackgroundColor {
     return [[^NSDictionary *(screen_char_t theChar, iTermExternalAttribute *ea) {
-        return [self charAttributes:theChar externalAttributes:ea processed:processed];
+        return [self charAttributes:theChar externalAttributes:ea processed:processed elideDefaultBackgroundColor:elideDefaultBackgroundColor];
     } copy] autorelease];
 }
 
@@ -3003,7 +3091,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
                                                            [_dataSource numberOfLines] - 1);
     NSDictionary *(^attributeProvider)(screen_char_t, iTermExternalAttribute *) = nil;
     if (attributes) {
-        attributeProvider = [self attributeProviderUsingProcessedColors:NO];
+        attributeProvider = [self attributeProviderUsingProcessedColors:NO elideDefaultBackgroundColor:NO];
     }
     return [extractor contentInRange:VT100GridWindowedRangeMake(theRange, 0, 0)
                    attributeProvider:attributeProvider
@@ -3123,7 +3211,9 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
         [iTermAdvancedSettingsModel traditionalVisualBell]) {
         [_indicatorsHelper beginFlashingFullScreen];
     } else {
-        [_indicatorsHelper beginFlashingIndicator:flashIdentifier];
+        NSColor *backgroundColor = [_colorMap colorForKey:kColorMapBackground];
+        const BOOL isDark = [backgroundColor isDark];
+        [_indicatorsHelper beginFlashingIndicator:flashIdentifier darkBackground:isDark];
     }
 }
 
@@ -3887,7 +3977,7 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
                                                                      lineOffset + numLines - 1);
             [self printContent:[extractor contentInRange:VT100GridWindowedRangeMake(coordRange, 0, 0)
                                        attributeProvider:^NSDictionary *(screen_char_t theChar, iTermExternalAttribute *ea) {
-                return [self charAttributes:theChar externalAttributes:ea processed:NO];
+                return [self charAttributes:theChar externalAttributes:ea processed:NO elideDefaultBackgroundColor:NO];
             }
                                               nullPolicy:kiTermTextExtractorNullPolicyTreatAsSpace
                                                      pad:NO
@@ -4191,10 +4281,12 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
 - (BOOL)continueFindAllResults:(NSMutableArray *)results
                       rangeOut:(NSRange *)rangePtr
                      inContext:(FindContext *)context
+                  absLineRange:(NSRange)absLineRange
                  rangeSearched:(VT100GridAbsCoordRange *)rangeSearched {
     return [_dataSource continueFindAllResults:results
                                       rangeOut:rangePtr
                                      inContext:context
+                                  absLineRange:absLineRange
                                  rangeSearched:rangeSearched];
 }
 
@@ -4205,7 +4297,8 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
                     startingAtY:(int)y
                      withOffset:(int)offset
                       inContext:(FindContext*)context
-                multipleResults:(BOOL)multipleResults {
+                multipleResults:(BOOL)multipleResults
+                   absLineRange:(NSRange)absLineRange {
     DLog(@"begin self=%@ aString=%@ dataSource=%@", self, aString, _dataSource);
     [_dataSource setFindString:aString
               forwardDirection:direction
@@ -4214,7 +4307,8 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
                    startingAtY:y
                     withOffset:offset
                      inContext:context
-               multipleResults:multipleResults];
+               multipleResults:multipleResults
+                  absLineRange:absLineRange];
 }
 
 - (void)findOnPageHelperSearchExternallyFor:(NSString *)query mode:(iTermFindMode)mode {
@@ -4230,6 +4324,10 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
     [self removePortholeHighlights];
 }
 
+- (void)findOnPageHelperRemoveExternalHighlightsFrom:(iTermExternalSearchResult *)externalSearchResult {
+    [self removePortholeHighlightsFrom:externalSearchResult];
+}
+
 - (void)selectCoordRange:(VT100GridCoordRange)range {
     [_selection clearSelection];
     VT100GridAbsCoordRange absRange = VT100GridAbsCoordRangeFromCoordRange(range, _dataSource.totalScrollbackOverflow);
@@ -4239,6 +4337,16 @@ NSNotificationName PTYTextViewWillChangeFontNotification = @"PTYTextViewWillChan
                                               width:_dataSource.width];
     [_selection addSubSelection:sub];
     [_delegate textViewDidSelectRangeForFindOnPage:range];
+}
+
+- (void)selectAbsWindowedCoordRange:(VT100GridAbsWindowedRange)windowedRange {
+    [_selection clearSelection];
+    iTermSubSelection *sub =
+        [iTermSubSelection subSelectionWithAbsRange:windowedRange
+                                               mode:kiTermSelectionModeCharacter
+                                              width:_dataSource.width];
+    [_selection addSubSelection:sub];
+    [_delegate textViewDidSelectRangeForFindOnPage:VT100GridWindowedRangeFromVT100GridAbsWindowedRange(windowedRange, self.dataSource.totalScrollbackOverflow).coordRange];
 }
 
 - (NSRect)frameForCoord:(VT100GridCoord)coord {
@@ -4881,8 +4989,13 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 
 - (void)drawingHelperDrawBackgroundImageInRect:(NSRect)rect
                         blendDefaultBackground:(BOOL)blend
+                                    deselected:(BOOL)deselected
                                  virtualOffset:(CGFloat)virtualOffset {
-    [_delegate textViewDrawBackgroundImageInView:self viewRect:rect blendDefaultBackground:blend virtualOffset:virtualOffset];
+    [_delegate textViewDrawBackgroundImageInView:self
+                                        viewRect:rect
+                          blendDefaultBackground:blend
+                                      deselected:deselected
+                                   virtualOffset:virtualOffset];
 }
 
 - (id<VT100ScreenMarkReading>)drawingHelperMarkOnLine:(int)line {
@@ -4980,13 +5093,22 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
             return VT100GridAbsCoordMake(-1, y);
         }
     }
+    iTermTerminalMarkButton *markButton = [iTermTerminalMarkButton castFrom:button];
     id<iTermMark> mark = button.mark;
+    if (markButton.shouldFloat) {
+        const VT100GridAbsCoordRange markAbsCoordRange = [_delegate textViewCoordRangeForCommandAndOutputAtMark:mark];
+        const NSRange markRange = NSMakeRange(markAbsCoordRange.start.y,
+                                              markAbsCoordRange.end.y - markAbsCoordRange.start.y + 1);
+        const NSRange intersectionRange = NSIntersectionRange(markRange,
+                                                              [self visibleAbsoluteRangeIncludingOffscreenCommandLineIfVisible:NO]);
+        return VT100GridAbsCoordMake(self.dataSource.width + markButton.dx,
+                                     intersectionRange.location);
+    }
     Interval *interval = mark.entry.interval;
     if (!interval) {
         return VT100GridAbsCoordMake(-1, -1);
     }
     const VT100GridAbsCoord markCoord = [self.dataSource absCoordRangeForInterval:interval].start;
-    iTermTerminalMarkButton *markButton = [iTermTerminalMarkButton castFrom:button];
     if (markButton) {
         return VT100GridAbsCoordMake(self.dataSource.width + markButton.dx, markCoord.y - 1);
     }
@@ -4999,6 +5121,20 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     if (_hoverBlockCopyButton) {
         [updated addObject:_hoverBlockCopyButton];
     }
+
+    {
+        id<VT100ScreenMarkReading> mark = [_delegate textViewSelectedCommandMark];
+        if (!mark.lineStyle && mark.command.length > 0) {
+            const NSRange intersectionRange = NSIntersectionRange(self.findOnPageHelper.absLineRange,
+                                                                  [self visibleAbsoluteRangeIncludingOffscreenCommandLineIfVisible:NO]);
+            if (intersectionRange.length > 0) {
+                [updated addObjectsFromArray:[self commandButtonsForMark:mark
+                                                                    line:intersectionRange.location - _dataSource.totalScrollbackOverflow + 1
+                                                             shouldFloat:YES]];
+            }
+        }
+    }
+
     NSArray<iTermTerminalButtonPlace *> *places = [self.dataSource buttonsInRange:self.rangeOfVisibleLines];
     __weak __typeof(self) weakSelf = self;
     [places enumerateObjectsUsingBlock:^(iTermTerminalButtonPlace * _Nonnull place, NSUInteger idx, BOOL * _Nonnull stop) {
@@ -5026,9 +5162,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
     }];
 
     const int height = [self.dataSource height];
-    const int width = [self.dataSource width];
     const int firstLine = self.rangeOfVisibleLines.location;
-    const long long offset = self.dataSource.totalScrollbackOverflow;
     for (int i = firstLine; i < firstLine + height - 1; i++) {
         const int markLine = i + 1;
         id<VT100ScreenMarkReading> mark = [self.dataSource markOnLine:markLine];
@@ -5038,53 +5172,70 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         if (!mark.command.length) {
             continue;
         }
-        iTermTerminalButton *existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalCopyCommandButton class]];
-        int x = width - 2;
-        if (existing) {
-            [updated addObject:existing];
-        } else {
-            iTermTerminalButton *button = [[iTermTerminalCopyCommandButton alloc] initWithMark:mark
-                                                                                            dx:x - width];
-            __weak __typeof(mark) weakMark = mark;
-            button.action = ^(NSPoint locationInWindow) {
-                [weakSelf popCommandCopyMenuAt:locationInWindow for:weakMark];
-            };
-            [updated addObject:button];
-        }
-        x -= 3;
-        existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalBookmarkButton class]];
-        if (existing) {
-            [updated addObject:existing];
-        } else {
-            iTermTerminalButton *button = [[iTermTerminalBookmarkButton alloc] initWithMark:mark
-                                                                                         dx:x - width];
-            __weak __typeof(mark) weakMark = mark;
-            button.action = ^(NSPoint locationInWindow) {
-                NSString *command = weakMark.command;
-                if (command.length) {
-                    [weakSelf toggleBookmarkForMark:weakMark];
-                }
-            };
-            [updated addObject:button];
-        }
-        x -= 3;
-        existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalShareButton class]];
-        if (existing) {
-            [updated addObject:existing];
-        } else {
-            iTermTerminalButton *button = [[iTermTerminalShareButton alloc] initWithMark:mark
-                                                                                      dx:x - width];
-            __weak __typeof(mark) weakMark = mark;
-            button.action = ^(NSPoint locationInWindow) {
-                [weakSelf popShareMenuAt:locationInWindow absLine:markLine + offset for:weakMark];
-            };
-            [updated addObject:button];
-        }
+        [updated addObjectsFromArray:[self commandButtonsForMark:mark line:markLine shouldFloat:NO]];
     }
 
     [_buttons autorelease];
     _buttons = [updated retain];
     return _buttons;
+}
+
+- (NSArray<iTermTerminalButton *> *)commandButtonsForMark:(id<VT100ScreenMarkReading>)mark
+                                                     line:(int)markLine
+                                              shouldFloat:(BOOL)shouldFloat NS_AVAILABLE_MAC(11) {
+    const int width = [self.dataSource width];
+    const long long offset = self.dataSource.totalScrollbackOverflow;
+    __weak __typeof(self) weakSelf = self;
+    NSMutableArray<iTermTerminalButton *> *updated = [NSMutableArray array];
+    iTermTerminalMarkButton *existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalCopyCommandButton class]];
+    int x = width - 2;
+    if (existing) {
+        existing.shouldFloat = shouldFloat;
+        [updated addObject:existing];
+    } else {
+        iTermTerminalCopyCommandButton *button = [[iTermTerminalCopyCommandButton alloc] initWithMark:mark
+                                                                                                   dx:x - width];
+        button.shouldFloat = shouldFloat;
+        __weak __typeof(mark) weakMark = mark;
+        button.action = ^(NSPoint locationInWindow) {
+            [weakSelf popCommandCopyMenuAt:locationInWindow for:weakMark];
+        };
+        [updated addObject:button];
+    }
+    x -= 3;
+    existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalBookmarkButton class]];
+    if (existing) {
+        existing.shouldFloat = shouldFloat;
+        [updated addObject:existing];
+    } else {
+        iTermTerminalBookmarkButton *button = [[iTermTerminalBookmarkButton alloc] initWithMark:mark
+                                                                                             dx:x - width];
+        button.shouldFloat = shouldFloat;
+        __weak __typeof(mark) weakMark = mark;
+        button.action = ^(NSPoint locationInWindow) {
+            NSString *command = weakMark.command;
+            if (command.length) {
+                [weakSelf toggleBookmarkForMark:weakMark];
+            }
+        };
+        [updated addObject:button];
+    }
+    x -= 3;
+    existing = [self cachedTerminalButtonForMark:mark ofClass:[iTermTerminalShareButton class]];
+    if (existing) {
+        existing.shouldFloat = shouldFloat;
+        [updated addObject:existing];
+    } else {
+        iTermTerminalShareButton *button = [[iTermTerminalShareButton alloc] initWithMark:mark
+                                                                                       dx:x - width];
+        button.shouldFloat = shouldFloat;
+        __weak __typeof(mark) weakMark = mark;
+        button.action = ^(NSPoint locationInWindow) {
+            [weakSelf popShareMenuAt:locationInWindow absLine:markLine + offset for:weakMark];
+        };
+        [updated addObject:button];
+    }
+    return updated;
 }
 
 - (void)popCommandCopyMenuAt:(NSPoint)locationInWindow for:(id<VT100ScreenMarkReading>)mark {
@@ -5169,7 +5320,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
         [menu addItemWithTitle:@"Copy Command URL to Clipboard" action:^{
             NSPasteboard *pasteBoard = [NSPasteboard generalPasteboard];
             [pasteBoard clearContents];
-            [pasteBoard writeObjects:@[ url ]];
+            [pasteBoard writeObjects:@[ url, url.absoluteString ]];
         }];
         [menu addItemWithTitle:@"Open Share Sheet…" action:^{
             if (!weakSelf) {
@@ -5449,6 +5600,7 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 }
 
 - (void)accessibilityHelperSetSelectedRange:(VT100GridCoordRange)coordRange {
+    DLog(@"accessibilityHelperSetSelectedRange:%@", VT100GridCoordRangeDescription(coordRange));
     coordRange.start.y =
         [self accessibilityHelperLineNumberForAccessibilityLineNumber:coordRange.start.y];
     coordRange.end.y =
@@ -5825,7 +5977,8 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
 
 - (VT100GridCoord)mouseHandler:(PTYMouseHandler *)handler
                     clickPoint:(NSEvent *)event
-                 allowOverflow:(BOOL)allowRightMarginOverflow {
+                 allowOverflow:(BOOL)allowRightMarginOverflow
+                    firstMouse:(BOOL)firstMouse {
     if (event.type == NSEventTypeLeftMouseUp && event.clickCount == 1) {
         const NSPoint windowPoint = [event locationInWindow];
         const NSPoint enclosingViewPoint = [self.enclosingScrollView convertPoint:windowPoint fromView:nil];
@@ -5846,6 +5999,11 @@ scrollToFirstResult:(BOOL)scrollToFirstResult
                 [self scrollToAbsoluteOffset:_drawingHelper.offscreenCommandLine.absoluteLineNumber height:1];
                 return VT100GridCoordMake(-1, -1);
             }
+        }
+        if (!firstMouse) {
+            const NSPoint temp =
+            [self clickPoint:event allowRightMarginOverflow:allowRightMarginOverflow];
+            [_delegate textViewSelectCommandRegionAtCoord:VT100GridCoordMake(temp.x, temp.y)];
         }
     }
     const NSPoint temp =
@@ -6041,7 +6199,7 @@ allowDragBeforeMouseDown:(BOOL)allowDragBeforeMouseDown
 }
 
 - (BOOL)mouseHandlerViewIsFirstResponder:(PTYMouseHandler *)mouseHandler {
-    return self.window.firstResponder == self;
+    return [_delegate textViewOrComposerIsFirstResponder];
 }
 
 - (BOOL)mouseHandlerShouldReportClicksAndDrags:(PTYMouseHandler *)mouseHandler {
@@ -6294,7 +6452,12 @@ dragSemanticHistoryWithEvent:(NSEvent *)event
     return NO;
 }
 
-- (BOOL)mouseHandlerMouseUpAt:(NSPoint)locationInWindow {
+- (BOOL)mouseHandlerMouseUp:(NSEvent *)event {
+    if (event.clickCount != 1) {
+        [self.delegate textViewRemoveSelectedCommand];
+        return NO;
+    }
+    const NSPoint locationInWindow = event.locationInWindow;
     NSPoint point = [self convertPoint:locationInWindow fromView:nil];
     if (!NSPointInRect(point, self.bounds)) {
         return NO;

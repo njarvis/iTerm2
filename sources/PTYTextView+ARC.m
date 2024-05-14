@@ -101,7 +101,7 @@ iTermCommandInfoViewControllerDelegate>
         }
     }
     if (item.action == @selector(performNaturalLanguageQuery:)) {
-        return [self.delegate textViewNaturalLanguageQuery] != nil;
+        return YES;
     }
     return NO;
 }
@@ -439,7 +439,7 @@ iTermCommandInfoViewControllerDelegate>
                                    mode:kiTermSelectionModeLine
                                  resume:NO
                                  append:NO];
-    [selection moveSelectionEndpointTo:VT100GridAbsCoordMake(0, coordRange.end.y + overflow - 1)];
+    [selection moveSelectionEndpointTo:VT100GridAbsCoordMake(self.dataSource.width, coordRange.end.y + overflow - 1)];
     [selection endLiveSelection];
     return [self promisedStringForSelectedTextCappedAtSize:INT_MAX
                                          minimumLineNumber:0
@@ -476,7 +476,7 @@ iTermCommandInfoViewControllerDelegate>
         DLog(@"Mouse is over a button");
         changed = [self setCursor:[NSCursor arrowCursor]];
     } else {
-        changed = [self setCursor:[iTermMouseCursor mouseCursorOfType:iTermMouseCursorTypeIBeam]];
+        changed = [self setCursor:self.delegate.textViewDefaultPointer ?: [iTermMouseCursor mouseCursorOfType:iTermMouseCursorTypeIBeam]];
     }
     if (changed) {
         [self.enclosingScrollView setDocumentCursor:cursor_];
@@ -578,7 +578,8 @@ iTermCommandInfoViewControllerDelegate>
                                        attributeProvider:^NSDictionary *(screen_char_t theChar, iTermExternalAttribute *ea) {
         return [self charAttributes:theChar
                  externalAttributes:ea
-                          processed:NO];
+                          processed:NO
+        elideDefaultBackgroundColor:NO];
     }
                                               nullPolicy:kiTermTextExtractorNullPolicyMidlineAsSpaceIgnoreTerminal
                                                      pad:NO
@@ -636,7 +637,8 @@ iTermCommandInfoViewControllerDelegate>
 // Returns a dictionary to pass to NSAttributedString.
 - (NSDictionary *)charAttributes:(screen_char_t)c
               externalAttributes:(iTermExternalAttribute *)ea
-                       processed:(BOOL)processed {
+                       processed:(BOOL)processed
+     elideDefaultBackgroundColor:(BOOL)elideDefaultBackgroundColor {
     BOOL isBold = c.bold;
     BOOL isFaint = c.faint;
     NSColor *fgColor;
@@ -660,7 +662,8 @@ iTermCommandInfoViewControllerDelegate>
     }
     if (processed) {
         fgColor = [self.colorMap processedTextColorForTextColor:fgColor overBackgroundColor:bgColor disableMinimumContrast:NO];
-        bgColor = [self.colorMap processedBackgroundColorForBackgroundColor:bgColor];
+        bgColor = [self.colorMap processedBackgroundColorForBackgroundColor:bgColor
+                                                  inDeselectedCommandRegion:NO];
     }
     if (!c.invisible) {
         fgColor = [fgColor colorByPremultiplyingAlphaWithColor:bgColor];
@@ -689,7 +692,7 @@ iTermCommandInfoViewControllerDelegate>
             font = [NSFont systemFontOfSize:size];
         }
     }
-    if (![iTermAdvancedSettingsModel copyBackgroundColor]) {
+    if (![iTermAdvancedSettingsModel copyBackgroundColor] || elideDefaultBackgroundColor) {
         if (c.backgroundColorMode == ColorModeAlternate &&
             c.backgroundColor == ALTSEM_DEFAULT) {
             bgColor = [NSColor clearColor];
@@ -1019,7 +1022,8 @@ iTermCommandInfoViewControllerDelegate>
 - (NSDictionary *)urlActionHelperAttributes:(iTermURLActionHelper *)helper {
     CGFloat alpha = [self useTransparency] ? 1 - self.transparency : 1;
     NSColor *unprocessedColor = [self.colorMap colorForKey:kColorMapSelection];
-    NSColor *processedColor = [self.colorMap processedBackgroundColorForBackgroundColor:unprocessedColor];
+    NSColor *processedColor = [self.colorMap processedBackgroundColorForBackgroundColor:unprocessedColor
+                                                              inDeselectedCommandRegion:NO];
     NSColor *backgroundColor = [processedColor colorWithAlphaComponent:alpha];
 
     NSColor *textColor = [self.colorMap processedTextColorForTextColor:[self.colorMap colorForKey:kColorMapSelectedText]
@@ -1679,7 +1683,8 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
 
 - (ContentNavigationShortcutView *)addShortcutWithRange:(VT100GridAbsCoordRange)range
                                           keyEquivalent:(NSString *)keyEquivalent
-                                                 action:(void (^)(id<iTermContentNavigationShortcutView>))action {
+                                                 action:(void (^)(id<iTermContentNavigationShortcutView>,
+                                                                  NSEvent *))action {
     if (!self.contentNavigationShortcuts) {
         self.contentNavigationShortcuts = [NSMutableArray array];
     }
@@ -1732,6 +1737,7 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
             }];
         }
     }
+    [self clearHighlights:YES];
 }
 
 - (void)removeContentNavigationShortcutView:(id<iTermContentNavigationShortcutView>)view {
@@ -1745,7 +1751,7 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
     [[NSNotificationCenter defaultCenter] postNotificationName:iTermAnnotationVisibilityDidChange object:nil];
 }
 
-- (void)convertVisibleSearchResultsToContentNavigationShortcuts {
+- (void)convertVisibleSearchResultsToContentNavigationShortcutsWithAction:(iTermContentNavigationAction)action {
     [self removeContentNavigationShortcuts];
     const VT100GridRange relativeRange = [self rangeOfVisibleLines];
     const NSRange range = NSMakeRange(relativeRange.location + self.dataSource.totalScrollbackOverflow,
@@ -1799,8 +1805,40 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
         ContentNavigationShortcutView *view =
         [self addShortcutWithRange:result.internalAbsCoordRange
                      keyEquivalent:keyEquivalent
-                            action:^(id<iTermContentNavigationShortcutView> view){
-            [weakSelf.delegate textViewOpen:content workingDirectory:folder remoteHost:remoteHost];
+                            action:^(id<iTermContentNavigationShortcutView> view,
+                                     NSEvent *event){
+            switch (action) {
+                case iTermContentNavigationActionOpen: {
+                    PTYTextView *strongSelf = weakSelf;
+                    if (strongSelf) {
+                        if (event.modifierFlags & NSEventModifierFlagOption) {
+                            [strongSelf copyContentByShortcut:content
+                                                        event:event
+                                                         view:view
+                                                        range:windowedRange];
+                        } else {
+                            [strongSelf.delegate textViewOpen:content 
+                                             workingDirectory:folder
+                                                   remoteHost:remoteHost];
+                        }
+                    }
+                    break;
+                }
+                case iTermContentNavigationActionCopy: {
+                    PTYTextView *strongSelf = weakSelf;
+                    if (strongSelf) {
+                        if (event.modifierFlags & NSEventModifierFlagOption) {
+                            [strongSelf.delegate writeTask:content];
+                        } else {
+                            [strongSelf copyContentByShortcut:content
+                                                        event:event
+                                                         view:view
+                                                        range:windowedRange];
+                        }
+                    }
+                    break;
+                }
+            }
             [view popWithCompletion:^{
                 [weakSelf removeContentNavigationShortcutView:view];
             }];
@@ -1811,6 +1849,25 @@ toggleAnimationOfImage:(id<iTermImageInfoReading>)imageInfo {
     [layerOuter layoutWithin:self.enclosingScrollView.documentVisibleRect];
     [self refresh];
     [self.delegate textViewEnterShortcutNavigationMode];
+    [self.window makeFirstResponder:self];
+}
+
+- (void)copyContentByShortcut:(NSString *)content
+                        event:(NSEvent *)event
+                         view:(id<iTermContentNavigationShortcutView>)view
+                        range:(VT100GridWindowedRange)windowedRange {
+    [self copyString:content];
+    const NSPoint p = view.centerScreenCoordinate;
+    if (p.x == p.x) {
+        [ToastWindowController showToastWithMessage:@"Copied"
+                                           duration:1
+                                   screenCoordinate:p
+                                          pointSize:12];
+    }
+    const VT100GridAbsWindowedRange absWindowedRange =
+    VT100GridAbsWindowedRangeFromRelative(windowedRange,
+                                          self.dataSource.totalScrollbackOverflow);
+    [self selectAbsWindowedCoordRange:absWindowedRange];
 }
 
 #pragma mark - iTermCommandInfoViewControllerDelegate

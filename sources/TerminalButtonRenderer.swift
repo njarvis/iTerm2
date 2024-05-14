@@ -20,28 +20,38 @@ class TerminalButtonRendererTransientState: iTermMetalCellRendererTransientState
         var foregroundColor: vector_float4
         var backgroundColor: vector_float4
         var selectedColor: vector_float4
+        var shift: CGFloat
     }
     fileprivate var buttons = [Button]()
 
-    @objc(addButton:onScreenLine:column:foregroundColor:backgroundColor:selectedColor:)
+    @objc(addButton:onScreenLine:column:foregroundColor:backgroundColor:selectedColor:shift:)
     func add(terminalButton: TerminalButton,
              line: Int,
              column: Int,
              foregroundColor: vector_float4,
              backgroundColor: vector_float4,
-             selectedColor: vector_float4) {
+             selectedColor: vector_float4,
+             shift: CGFloat) {
         buttons.append(Button(terminalButton: terminalButton,
                               line: line,
                               column: column,
                               foregroundColor:foregroundColor,
                               backgroundColor:backgroundColor,
-                             selectedColor: selectedColor))
+                              selectedColor: selectedColor,
+                              shift: shift))
     }
 
     override func writeDebugInfo(toFolder folder: URL) {
         super.writeDebugInfo(toFolder: folder)
         let s = "buttons=\(buttons.map { $0.debugDescription })"
         try? s.write(to: folder.appendingPathComponent("state.txt"), atomically: false, encoding: .utf8)
+    }
+}
+
+extension NSSize: Hashable {
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(width)
+        hasher.combine(height)
     }
 }
 
@@ -54,6 +64,8 @@ class TerminalButtonRenderer: NSObject, iTermMetalCellRendererProtocol {
         var backgroundColor: vector_float4
         var buttonClassName: String
         var selected: Bool
+        var state: TerminalButton.State
+        var size: NSSize
     }
     private var textureCache: [TextureKey: MTLTexture] = [:]
     private var texturePool = iTermTexturePool()
@@ -64,7 +76,7 @@ class TerminalButtonRenderer: NSObject, iTermMetalCellRendererProtocol {
             device: device,
             vertexFunctionName: "iTermTerminalButtonVertexShader",
             fragmentFunctionName: "iTermTerminalButtonFragmentShader",
-            blending: iTermMetalBlending(),
+            blending: iTermMetalBlending.premultipliedCompositing(),
             piuElementSize: 0,
             transientStateClass: TerminalButtonRendererTransientState.self)!
     }
@@ -80,7 +92,7 @@ class TerminalButtonRenderer: NSObject, iTermMetalCellRendererProtocol {
         let tState = transientState as! TerminalButtonRendererTransientState
         for button in tState.buttons {
             if button.terminalButton.floating {
-                let rightSide = CGFloat(tState.configuration.viewportSizeExcludingLegacyScrollbars.x) - tState.margins.right
+                let rightSide = CGFloat(tState.configuration.viewportSizeExcludingLegacyScrollbars.x) - tState.margins.left - tState.cellConfiguration.cellSize.width * tState.configuration.scale
                 drawButton(button,
                            x: rightSide,
                            renderEncoder: frameData.renderEncoder,
@@ -104,7 +116,7 @@ class TerminalButtonRenderer: NSObject, iTermMetalCellRendererProtocol {
                               gridHeight: Int,
                               context: iTermMetalBufferPoolContext) -> MTLBuffer {
         let textureFrame = CGRect(x: 0, y: 0, width: 1, height: 1)
-        let y = CGFloat(gridHeight - button.line - 1) * cellHeight + bottomInset
+        let y = CGFloat(gridHeight - button.line - 1) * cellHeight + bottomInset - button.shift
         let frame = NSRect(x: x,
                            y: y,
                            width: button.terminalButton.desiredFrame.width * scale,
@@ -175,10 +187,13 @@ class TerminalButtonRenderer: NSObject, iTermMetalCellRendererProtocol {
         let key = TextureKey(foregroundColor: button.foregroundColor,
                              backgroundColor: button.backgroundColor,
                              buttonClassName: String(describing: type(of: button.terminalButton)),
-                             selected: button.terminalButton.selected)
+                             selected: button.terminalButton.selected,
+                             state: button.terminalButton.state,
+                             size: button.terminalButton.desiredFrame.size)
         if let texture = textureCache[key] {
             return texture
         }
+        let defaultScale = NSScreen.main?.backingScaleFactor ?? 1.0
         let image = button.terminalButton.image(
             backgroundColor: NSColor(
                 vector: button.backgroundColor,
@@ -189,8 +204,8 @@ class TerminalButtonRenderer: NSObject, iTermMetalCellRendererProtocol {
             selectedColor: NSColor(
                 vector: button.selectedColor,
                 colorSpace: tState.configuration.colorSpace),
-            cellSize: NSSize(width: tState.cellConfiguration.cellSize.width * tState.configuration.scale,
-                             height: tState.cellConfiguration.cellSize.height * tState.configuration.scale))
+            cellSize: NSSize(width: button.terminalButton.desiredFrame.size.width * tState.configuration.scale / defaultScale,
+                             height: button.terminalButton.desiredFrame.size.height * tState.configuration.scale / defaultScale))
         let texture = metalRenderer.texture(
             fromImage: iTermImageWrapper(image: image),
             context: tState.poolContext,

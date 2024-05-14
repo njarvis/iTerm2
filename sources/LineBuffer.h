@@ -50,6 +50,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Absolute block number of last block.
 @property(nonatomic, readonly) int largestAbsoluteBlockNumber;
 @property(nonatomic, readonly) BOOL dirty;
+@property(nonatomic, readonly) long long numberOfDroppedChars;
+@property(nonatomic, readonly) long long generation;
 // Returns the metadata associated with a line when wrapped to the specified width.
 - (iTermImmutableMetadata)metadataForLineNumber:(int)lineNum width:(int)width;
 
@@ -114,6 +116,7 @@ NS_ASSUME_NONNULL_BEGIN
                    options:(FindOptions)options
                       mode:(iTermFindMode)findMode
                withContext:(FindContext * _Nonnull)context;
+- (BOOL)setStartCoord:(VT100GridCoord)coord ofFindContext:(FindContext *)findContext width:(int)width;
 
 // Performs a search. Use prepareToSearchFor:startingAt:options:withContext: to initialize
 // the FindContext prior to calling this.
@@ -121,6 +124,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 // Returns an array of XYRange values
 - (NSArray<XYRange *> * _Nullable)convertPositions:(NSArray<ResultRange *> * _Nonnull)resultRanges
+                                        withWidth:(int)width;
+
+- (NSArray<XYRange *> * _Nullable)convertPositions:(NSArray<ResultRange *> * _Nonnull)resultRanges
+                              expandedResultRanges:(NSMutableArray<ResultRange *> * _Nullable)expandedResultRanges
                                         withWidth:(int)width;
 
 - (LineBufferPosition * _Nullable)positionForCoordinate:(VT100GridCoord)coord
@@ -138,6 +145,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (LineBufferPosition * _Nonnull)lastPosition;
 - (LineBufferPosition * _Nonnull)penultimatePosition;
 - (LineBufferPosition * _Nonnull)positionForStartOfLastLine;
+
+- (LineBufferPosition * _Nonnull)positionForStartOfLastLineBeforePosition:(LineBufferPosition *)limit;
+- (LineBufferPosition * _Nonnull)positionForStartOfResultRange:(ResultRange *)resultRange;
 
 // Convert the block,offset in a findcontext into an absolute position.
 - (long long)absPositionOfFindContext:(FindContext * _Nonnull)findContext;
